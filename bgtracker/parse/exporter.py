@@ -229,6 +229,13 @@ class LiveGameProcessor:
             # "D hh:mm:ss" prefix — skip it without ceremony.
             if not line or line[0] not in "DWE" or len(line) < 2 or line[1] != " ":
                 continue
+            # A session log holds many games, but hslog's player registry
+            # chokes when battletags reappear with new player ids. Each
+            # CREATE_GAME gets a completely fresh parser instead.
+            if line.endswith("- CREATE_GAME") and self._tracks:
+                self._tracks[-1].exporter.finalize()
+                self.parser = LogParser()
+                self._tracks = []
             try:
                 self.parser.read_line(line)
             except Exception:
