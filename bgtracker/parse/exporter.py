@@ -44,6 +44,7 @@ class BGExporter(EntityTreeExporter):
         self._hero_emitted: str | None = None
         self._pending_combat = False
         self._ended = False
+        self._end_emitted = False
 
     # -- friendly player detection -------------------------------------
     # Only the local player's cards are revealed in their HAND zone (hero
@@ -136,13 +137,50 @@ class BGExporter(EntityTreeExporter):
                     self._pending_combat = False
                     self._emit(ev.CombatEnd(snapshot=self.snapshot()))
             elif gametag == GameTag.STATE and value == State.COMPLETE and not self._ended:
+                # Placement tags land a few packets AFTER the COMPLETE state;
+                # defer GameEnd until we see one (or give up on next game).
                 self._ended = True
-                hero = self.friendly_hero()
-                placement = tag(hero, GameTag.PLAYER_LEADERBOARD_PLACE) if hero else None
-                self._emit(ev.GameEnd(placement=placement or None))
+                self._maybe_emit_end()
         elif gametag == GameTag.NEXT_OPPONENT_PLAYER_ID and value:
             self._emit(ev.NextOpponent(player_id=value))
+        elif gametag == GameTag.PLAYER_LEADERBOARD_PLACE and self._ended:
+            self._maybe_emit_end()
         return entity
+
+    def friendly_placement(self) -> int | None:
+        """Final placement from any friendly hero entity, regardless of zone.
+
+        A dead hero sits in GRAVEYARD when the placement tag lands, so the
+        in-play lookup can't see it.
+        """
+        fid = self.friendly_player_id()
+        if fid is None:
+            return None
+        best = None
+        for entity in self.game.entities:
+            if (
+                isinstance(entity, Card)
+                and entity.type == CardType.HERO
+                and tag(entity, GameTag.CONTROLLER) == fid
+                and tag(entity, GameTag.PLAYER_LEADERBOARD_PLACE)
+            ):
+                if best is None or entity.id > best.id:
+                    best = entity
+        return tag(best, GameTag.PLAYER_LEADERBOARD_PLACE) if best else None
+
+    def _maybe_emit_end(self):
+        if self._end_emitted:
+            return
+        placement = self.friendly_placement()
+        if placement:
+            self._end_emitted = True
+            self._emit(ev.GameEnd(placement=placement))
+
+    def finalize(self):
+        """Flush a pending GameEnd even if no placement ever appeared."""
+        if self._ended and not self._end_emitted:
+            self._end_emitted = True
+            self._emit(ev.GameEnd(placement=None))
 
 
 @dataclass
@@ -175,6 +213,8 @@ class LiveGameProcessor:
 
     def _drain(self) -> list[ev.Event]:
         for pt in self.parser.games[len(self._tracks):]:
+            if self._tracks:
+                self._tracks[-1].exporter.finalize()  # new game: flush pending end
             self._tracks.append(
                 _GameTrack(tree=pt, exporter=BGExporter(pt, self._queue.append, self.parser.player_manager))
             )
@@ -198,7 +238,13 @@ class LiveGameProcessor:
             if not track.started and track.exporter.game is not None:
                 track.started = True
                 game_type = self.parser.game_meta.get("GameType")
-                self._queue.append(ev.GameStart(game_type=int(game_type) if game_type else None))
+                start = getattr(track.tree, "start_time", None)
+                self._queue.append(
+                    ev.GameStart(
+                        game_type=int(game_type) if game_type else None,
+                        log_id=start.isoformat() if start else None,
+                    )
+                )
             if track.started:
                 track.exporter.maybe_emit_hero()
                 track.exporter.maybe_emit_combat()

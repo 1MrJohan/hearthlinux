@@ -37,11 +37,11 @@ class Pipeline:
             print_event(event)
             prediction = None
             match event:
-                case ev.GameStart():
+                case ev.GameStart(log_id=log_id):
                     self.memory.reset()
                     self._pending = None
                     if self.db:
-                        self._game_id = self.db.start_game()
+                        self._game_id = self.db.start_game(log_id)
                 case ev.TurnChange(turn=t):
                     self._turn = t
                 case ev.HeroPicked(card_id=cid):

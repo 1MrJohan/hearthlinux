@@ -10,6 +10,9 @@ from bgtracker.state.game import BoardSnapshot
 @dataclass(frozen=True)
 class GameStart:
     game_type: int | None = None
+    # Log-derived identity (game start timestamp) — stable across tracker
+    # restarts that replay the same log, used to dedupe history rows.
+    log_id: str | None = None
 
 
 @dataclass(frozen=True)

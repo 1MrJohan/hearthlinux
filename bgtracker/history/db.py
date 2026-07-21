@@ -22,6 +22,7 @@ DB_FILE = DATA_DIR / "history.db"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (
     id INTEGER PRIMARY KEY,
+    log_id TEXT UNIQUE,      -- game-start timestamp from the log; dedupes replays
     started_at TEXT NOT NULL,
     ended_at TEXT,
     hero_card_id TEXT,
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS combats (
     predicted_loss REAL,
     outcome TEXT,            -- 'win' | 'tie' | 'loss' | NULL (unknown)
     my_board TEXT,           -- JSON snapshot
-    opp_board TEXT
+    opp_board TEXT,
+    UNIQUE (game_id, turn)
 );
 """
 
@@ -62,8 +64,16 @@ class HistoryDB:
         self.conn = sqlite3.connect(path)
         self.conn.executescript(_SCHEMA)
 
-    def start_game(self) -> int:
-        cur = self.conn.execute("INSERT INTO games (started_at) VALUES (?)", (_now(),))
+    def start_game(self, log_id: str | None = None) -> int:
+        if log_id:
+            row = self.conn.execute(
+                "SELECT id FROM games WHERE log_id = ?", (log_id,)
+            ).fetchone()
+            if row:  # tracker restart replaying a known game: resume its row
+                return row[0]
+        cur = self.conn.execute(
+            "INSERT INTO games (log_id, started_at) VALUES (?, ?)", (log_id, _now())
+        )
         self.conn.commit()
         return cur.lastrowid
 
@@ -79,7 +89,7 @@ class HistoryDB:
         outcome: str | None,
     ) -> None:
         self.conn.execute(
-            "INSERT INTO combats (game_id, turn, opponent_hero, predicted_win,"
+            "INSERT OR REPLACE INTO combats (game_id, turn, opponent_hero, predicted_win,"
             " predicted_tie, predicted_loss, outcome, my_board, opp_board)"
             " VALUES (?,?,?,?,?,?,?,?,?)",
             (
