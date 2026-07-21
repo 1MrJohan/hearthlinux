@@ -12,7 +12,7 @@ def feed_all(lines):
 
 def test_minimal_game_event_sequence():
     _, events = feed_all(minimal_bg_game().lines)
-    kinds = [type(e).__name__ for e in events]
+    kinds = [type(e).__name__ for e in events if type(e).__name__ != "Standings"]
     assert kinds == [
         "GameStart",
         "HeroPicked",
@@ -51,7 +51,7 @@ def test_incremental_feed_matches_bulk():
     events = []
     for line in lines:  # one line at a time, like live tailing
         events.extend(proc.feed([line]))
-    kinds = [type(e).__name__ for e in events]
+    kinds = [type(e).__name__ for e in events if type(e).__name__ != "Standings"]
     assert kinds == [
         "GameStart",
         "HeroPicked",

@@ -40,14 +40,39 @@ class OverlayApp:
             flags=Gio.ApplicationFlags.NON_UNIQUE,
         )
         self.window: OverlayWindow | None = None
+        self.hover = None
         self.pipeline = None  # set by the caller for opponent-memory lookups
+        self.standings: tuple = ()
         self.app.connect("activate", self._on_activate)
+
+    def _on_hover_slot(self, slot: int | None) -> None:
+        win = self.window
+        if win is None:
+            return
+        if slot is None or slot >= len(self.standings):
+            win.clear_hover_board()
+            return
+        place, player_id, hero_card_id = self.standings[slot]
+        seen = self.pipeline.memory.last_seen(player_id) if self.pipeline else None
+        if seen:
+            win.set_hover_board(
+                f"#{place} {cards.name(hero_card_id)} — last seen turn {seen.turn}",
+                seen.board,
+            )
+        else:
+            win.set_hover_board(f"#{place} {cards.name(hero_card_id)} — not fought yet", None)
 
     def _on_activate(self, app):
         from bgtracker.config import load_config
 
-        self.window = OverlayWindow(application=app, cfg=load_config())
+        cfg = load_config()
+        self.window = OverlayWindow(application=app, cfg=cfg)
         self.window.present()
+        if cfg.extra.get("hover_strips", True):
+            from .hover import HoverStrips
+
+            self.hover = HoverStrips(application=app, cfg=cfg, on_slot=self._on_hover_slot)
+            self.hover.present()
 
     # Pipeline listener -------------------------------------------------
     def on_event(self, event: ev.Event, prediction: SimResult | None) -> None:
@@ -89,10 +114,14 @@ class OverlayApp:
                     )
                 else:
                     win.set_memory("next opponent: not seen yet")
+            case ev.Standings(places=places):
+                self.standings = places
             case ev.GameEnd(placement=p):
                 win.set_status(f"finished #{p}" if p else "game over")
                 win.set_odds(None, None, None)
                 win.clear_board()
+                win.clear_hover_board()
+                self.standings = ()
                 win.set_memory("")
 
     def show_memory(self, text: str) -> None:

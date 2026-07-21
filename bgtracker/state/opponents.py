@@ -18,8 +18,8 @@ class OpponentMemory:
     _seen: dict[int, SeenBoard] = field(default_factory=dict)
 
     def record(self, turn: int, board: PlayerBoard | None) -> None:
-        if board is not None:
-            self._seen[board.player_id] = SeenBoard(turn=turn, board=board)
+        if board is not None and board.bg_player_id:
+            self._seen[board.bg_player_id] = SeenBoard(turn=turn, board=board)
 
     def last_seen(self, player_id: int) -> SeenBoard | None:
         return self._seen.get(player_id)

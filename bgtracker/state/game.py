@@ -63,7 +63,8 @@ class Minion:
 
 @dataclass(frozen=True)
 class PlayerBoard:
-    player_id: int
+    player_id: int          # log controller id (shared slot 14 for opponents!)
+    bg_player_id: int       # hero PLAYER_ID tag — the real per-player identity
     hero_card_id: str | None
     hero_entity_id: int
     health: int
@@ -139,6 +140,7 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     minions.sort(key=lambda m: tag(m, GameTag.ZONE_POSITION))
     return PlayerBoard(
         player_id=player_id,
+        bg_player_id=tag(hero, GameTag.PLAYER_ID) if hero else 0,
         hero_card_id=hero.card_id if hero else None,
         hero_entity_id=hero.id if hero else 0,
         health=(tag(hero, GameTag.HEALTH) - tag(hero, GameTag.DAMAGE)) if hero else 0,

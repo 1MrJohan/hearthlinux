@@ -41,8 +41,24 @@ class NextOpponent:
 
 
 @dataclass(frozen=True)
+class Standings:
+    """Current leaderboard order: (place, player_id, hero_card_id) tuples."""
+
+    places: tuple[tuple[int, int, str | None], ...]
+
+
+@dataclass(frozen=True)
 class GameEnd:
     placement: int | None
 
 
-Event = GameStart | HeroPicked | TurnChange | CombatStart | CombatEnd | NextOpponent | GameEnd
+Event = (
+    GameStart
+    | HeroPicked
+    | TurnChange
+    | CombatStart
+    | CombatEnd
+    | NextOpponent
+    | Standings
+    | GameEnd
+)

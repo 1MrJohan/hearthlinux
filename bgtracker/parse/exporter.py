@@ -45,6 +45,8 @@ class BGExporter(EntityTreeExporter):
         self._pending_combat = False
         self._ended = False
         self._end_emitted = False
+        self._standings_dirty = False
+        self._standings: tuple = ()
 
     # -- friendly player detection -------------------------------------
     # Only the local player's cards are revealed in their HAND zone (hero
@@ -143,9 +145,31 @@ class BGExporter(EntityTreeExporter):
                 self._maybe_emit_end()
         elif gametag == GameTag.NEXT_OPPONENT_PLAYER_ID and value:
             self._emit(ev.NextOpponent(player_id=value))
-        elif gametag == GameTag.PLAYER_LEADERBOARD_PLACE and self._ended:
-            self._maybe_emit_end()
+        elif gametag == GameTag.PLAYER_LEADERBOARD_PLACE:
+            self._standings_dirty = True
+            if self._ended:
+                self._maybe_emit_end()
         return entity
+
+    def maybe_emit_standings(self):
+        if not self._standings_dirty:
+            return
+        self._standings_dirty = False
+        places: dict[int, tuple[int, int, str | None]] = {}
+        for entity in self.game.entities:
+            if not isinstance(entity, Card) or entity.type != CardType.HERO:
+                continue
+            if not entity.card_id or "PH" in entity.card_id or entity.card_id.startswith(BOB_HERO_ID):
+                continue
+            place = tag(entity, GameTag.PLAYER_LEADERBOARD_PLACE)
+            if place:
+                # PLAYER_ID is the stable per-player identity; the controller
+                # is a shared slot. Newest entity wins (ghost copies linger).
+                places[place] = (place, tag(entity, GameTag.PLAYER_ID), entity.card_id)
+        standings = tuple(places[p] for p in sorted(places))
+        if standings and standings != self._standings:
+            self._standings = standings
+            self._emit(ev.Standings(places=standings))
 
     def friendly_placement(self) -> int | None:
         """Final placement from any friendly hero entity, regardless of zone.
@@ -248,6 +272,7 @@ class LiveGameProcessor:
             if track.started:
                 track.exporter.maybe_emit_hero()
                 track.exporter.maybe_emit_combat()
+                track.exporter.maybe_emit_standings()
 
     @staticmethod
     def _is_complete(packet, is_last: bool) -> bool:

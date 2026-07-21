@@ -9,7 +9,7 @@ from .synthetic import minimal_bg_game
 
 
 def _board(pid, hp, armor=0):
-    return PlayerBoard(player_id=pid, hero_card_id="H", hero_entity_id=1,
+    return PlayerBoard(player_id=pid, bg_player_id=pid, hero_card_id="H", hero_entity_id=1,
                        health=hp, armor=armor, tier=1)
 
 

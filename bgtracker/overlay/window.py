@@ -67,7 +67,8 @@ class OverlayWindow(Gtk.Window):
         self.board = BoardPanel()
         self.memory = Gtk.Label(label="", xalign=0, wrap=True)
         self.memory.add_css_class("dim")
-        for w in (self.status, self.odds, self.damage, self.board, self.memory):
+        self.hover_board = BoardPanel()
+        for w in (self.status, self.odds, self.damage, self.board, self.memory, self.hover_board):
             box.append(w)
         self.set_child(box)
 
@@ -122,3 +123,9 @@ class OverlayWindow(Gtk.Window):
 
     def set_memory(self, text: str) -> None:
         self.memory.set_label(text)
+
+    def set_hover_board(self, title: str, board) -> None:
+        self.hover_board.show_board(title, board)
+
+    def clear_hover_board(self) -> None:
+        self.hover_board.clear()
