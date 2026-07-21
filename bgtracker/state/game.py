@@ -77,6 +77,7 @@ class BoardSnapshot:
     turn: int
     friendly: PlayerBoard | None
     opponent: PlayerBoard | None
+    damage_cap: int = 0  # BACON_COMBAT_DAMAGE_CAP; 0 = no cap active
 
 
 @dataclass

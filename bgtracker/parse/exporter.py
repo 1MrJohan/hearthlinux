@@ -90,6 +90,7 @@ class BGExporter(EntityTreeExporter):
             turn=self._turn,
             friendly=project_player_board(self.game, fid) if fid else None,
             opponent=project_player_board(self.game, opp_id) if opp_id else None,
+            damage_cap=tag(self.game, GameTag.BACON_COMBAT_DAMAGE_CAP, 0),
         )
 
     def maybe_emit_combat(self):

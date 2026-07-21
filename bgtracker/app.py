@@ -73,9 +73,15 @@ class Pipeline:
             return None
         try:
             result = await self.sim.simulate(info)
+            # BG caps combat damage until mid-game; the simulator reports
+            # uncapped numbers, so clamp what we show and record.
+            if snapshot.damage_cap:
+                result.avg_damage_won = min(result.avg_damage_won, snapshot.damage_cap)
+                result.avg_damage_lost = min(result.avg_damage_lost, snapshot.damage_cap)
+            cap_note = f", cap {snapshot.damage_cap}" if snapshot.damage_cap else ""
             print(
                 f"  odds: {result}  "
-                f"(dmg dealt ~{result.avg_damage_won:.0f} / taken ~{result.avg_damage_lost:.0f})"
+                f"(dmg dealt ~{result.avg_damage_won:.0f} / taken ~{result.avg_damage_lost:.0f}{cap_note})"
             )
             return result
         except Exception as exc:
