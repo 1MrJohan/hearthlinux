@@ -72,6 +72,8 @@ async def live(overlay=None) -> None:
     session = None
     tailer = None
     processor = None
+    session_started = None
+    warned_no_log = False
     try:
         while True:
             latest = newest_session_dir(logs_dir)
@@ -81,8 +83,22 @@ async def live(overlay=None) -> None:
                     print(f"session: {session.name}")
                     tailer = Tailer(power_log_path(session))
                     processor = LiveGameProcessor()
+                    session_started = asyncio.get_running_loop().time()
+                    warned_no_log = False
             if tailer and processor:
                 await pipeline.handle(processor.feed(tailer.read_new_lines()))
+                if (
+                    not warned_no_log
+                    and not tailer.path.exists()
+                    and session_started is not None
+                    and asyncio.get_running_loop().time() - session_started > 90
+                ):
+                    warned_no_log = True
+                    print(
+                        "WARNING: session is 90s old but Power.log has not appeared — "
+                        "power logging is not active. Run `python -m bgtracker doctor`, "
+                        "then fully restart Hearthstone."
+                    )
             await asyncio.sleep(cfg.poll_active)
     finally:
         if sim:
@@ -91,7 +107,7 @@ async def live(overlay=None) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
-    parser.add_argument("command", nargs="?", choices=["run", "stats"], default="run")
+    parser.add_argument("command", nargs="?", choices=["run", "stats", "doctor"], default="run")
     parser.add_argument("--replay", type=Path, help="replay a saved Power.log file")
     parser.add_argument("--overlay", action="store_true", help="show the on-screen overlay")
     parser.add_argument("--odds", action="store_true", help="run combat odds during replay")
@@ -107,7 +123,11 @@ def main() -> None:
     if not args.no_names:
         cards.load()
     try:
-        if args.command == "stats":
+        if args.command == "doctor":
+            from bgtracker.doctor import run as doctor_run
+
+            doctor_run()
+        elif args.command == "stats":
             from bgtracker.history.stats import report
 
             print(report())

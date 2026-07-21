@@ -36,6 +36,28 @@ def test_ensure_log_config_creates(tmp_path, monkeypatch):
     assert not changed
 
 
+def test_split_prefix_prefers_game_config_home(tmp_path, monkeypatch):
+    """Steam-shortcut setups: install in one prefix, game AppData in another.
+
+    The prefix holding options.txt (game-created) must win over the
+    install's own prefix.
+    """
+    install_prefix = tmp_path / "games" / "battlenet"
+    hs = _fake_prefix(install_prefix)
+
+    compat = tmp_path / "compatdata" / "123" / "pfx"
+    appdata_hs = compat / "drive_c" / "users" / "steamuser" / "AppData" / "Local" / "Blizzard" / "Hearthstone"
+    appdata_hs.mkdir(parents=True)
+    (appdata_hs / "options.txt").write_text("gxWindow=1\n")
+
+    monkeypatch.setattr(
+        "bgtracker.discovery._PREFIX_GLOBS", [str(tmp_path / "compatdata" / "*" / "pfx")]
+    )
+    path, changed = ensure_log_config(hs)
+    assert changed
+    assert path == appdata_hs / "log.config"
+
+
 def test_ensure_log_config_merges_existing(tmp_path, monkeypatch):
     monkeypatch.setattr("bgtracker.discovery._PREFIX_GLOBS", [])
     hs = _fake_prefix(tmp_path)
