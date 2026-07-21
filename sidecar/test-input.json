@@ -1,0 +1,37 @@
+{
+  "id": 1,
+  "op": "simulate",
+  "sims": 3000,
+  "input": {
+    "playerBoard": {
+      "player": {
+        "cardId": "TB_BaconShop_HERO_11",
+        "hpLeft": 30,
+        "tavernTier": 3,
+        "heroPowers": [],
+        "questEntities": [],
+        "friendly": true,
+        "entityId": 4
+      },
+      "board": [
+        {"entityId": 10, "cardId": "BG_CS2_182", "attack": 4, "health": 5, "taunt": false},
+        {"entityId": 11, "cardId": "BG_EX1_506", "attack": 2, "health": 3}
+      ]
+    },
+    "opponentBoard": {
+      "player": {
+        "cardId": "TB_BaconShop_HERO_22",
+        "hpLeft": 25,
+        "tavernTier": 2,
+        "heroPowers": [],
+        "questEntities": [],
+        "friendly": false,
+        "entityId": 5
+      },
+      "board": [
+        {"entityId": 20, "cardId": "BG_CS2_065", "attack": 1, "health": 7, "taunt": true}
+      ]
+    },
+    "gameState": {"currentTurn": 5}
+  }
+}
