@@ -20,9 +20,20 @@ _PREFIX_GLOBS = [
     "~/.var/app/com.usebottles.bottles/data/bottles/bottles/*",
 ]
 
+# Mirror HDT's generated file exactly: full key set, capitalized booleans,
+# CRLF line endings. The HS client's parser is picky — a partial/LF-only file
+# has been observed to break ALL logging (even the defaults).
+_CHANNEL = {
+    "LogLevel": "1",
+    "FilePrinting": "True",
+    "ConsolePrinting": "False",
+    "ScreenPrinting": "False",
+    "Verbose": "True",
+}
 LOG_CONFIG_SECTIONS = {
-    "Power": {"LogLevel": "1", "FilePrinting": "true", "ConsolePrinting": "false"},
-    "Bob": {"LogLevel": "1", "FilePrinting": "true", "ConsolePrinting": "false"},
+    "Power": dict(_CHANNEL),
+    "Zone": dict(_CHANNEL),
+    "Bob": dict(_CHANNEL),
 }
 
 
@@ -125,7 +136,7 @@ def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
         for name in order:
             out.append(f"[{name}]")
             out.extend(f"{k}={v}" for k, v in sections[name].items())
-            out.append("")
-        target.write_text("\n".join(out))
+        out.append("")
+        target.write_text("\r\n".join(out))
         log.info("Wrote %s (restart Hearthstone to enable logging)", target)
     return target, changed

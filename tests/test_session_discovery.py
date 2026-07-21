@@ -27,7 +27,8 @@ def test_ensure_log_config_creates(tmp_path):
     assert changed
     text = path.read_text()
     assert "steamuser" in str(path)
-    assert "[Power]" in text and "[Bob]" in text and "FilePrinting=true" in text
+    assert "[Power]" in text and "[Bob]" in text and "FilePrinting=True" in text
+    assert b"\r\n" in path.read_bytes()  # HS client wants CRLF
 
     # second run: no changes needed
     _, changed = ensure_log_config(hs)
