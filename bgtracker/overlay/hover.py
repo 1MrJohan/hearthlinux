@@ -46,6 +46,7 @@ class HoverStrips(Gtk.Window):
         self.top_frac = float(extra.get("leaderboard_top_frac", 0.16))
         self.bottom_frac = float(extra.get("leaderboard_bottom_frac", 0.85))
         width = int(extra.get("leaderboard_width_px", 96))
+        left_px = int(extra.get("leaderboard_left_px", 0))
 
         LayerShell.init_for_window(self)
         LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
@@ -59,6 +60,7 @@ class HoverStrips(Gtk.Window):
                     break
         for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM, LayerShell.Edge.LEFT):
             LayerShell.set_anchor(self, edge, True)
+        LayerShell.set_margin(self, LayerShell.Edge.LEFT, left_px)
         LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.NONE)
 
         self._height = monitor.get_geometry().height if monitor else 1440
