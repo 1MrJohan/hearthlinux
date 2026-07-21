@@ -64,6 +64,11 @@ class HoverStrips(Gtk.Window):
         LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.NONE)
 
         self._height = monitor.get_geometry().height if monitor else 1440
+        # In debug/calibration mode capture a wide area so pointer x can be
+        # measured anywhere near the leaderboard, not just inside the strip.
+        self.strip_width = width
+        if bool(extra.get("hover_debug", False)):
+            width = max(width, 420)
         self.set_default_size(width, -1)
 
         # fully transparent content — the strip is invisible unless
@@ -116,25 +121,25 @@ class HoverStrips(Gtk.Window):
         idx = int((y - top) / (bottom - top) * self.slots)
         return min(idx, self.slots - 1)
 
-    def _draw_debug(self, _area, cr, width, _height):
+    def _draw_debug(self, _area, cr, _width, _height):
         top, bottom = self._band()
         cr.set_source_rgba(1, 0.2, 0.2, 0.25)
-        cr.rectangle(0, top, width, bottom - top)
+        cr.rectangle(0, top, self.strip_width, bottom - top)
         cr.fill()
         cr.set_source_rgba(1, 1, 1, 0.6)
         for i in range(1, self.slots):
             y = top + (bottom - top) * i / self.slots
-            cr.rectangle(0, y, width, 1)
+            cr.rectangle(0, y, self.strip_width, 1)
             cr.fill()
 
     _cal_bucket = None
 
-    def _on_motion(self, _ctrl, _x, y):
+    def _on_motion(self, _ctrl, x, y):
         if self.debug:
-            bucket = int(y // 25)
+            bucket = (int(x // 25), int(y // 25))
             if bucket != self._cal_bucket:
                 self._cal_bucket = bucket
-                print(f"cal-y: {y:.0f}")
+                print(f"cal-xy: {x:.0f},{y:.0f}")
         slot = self._slot_at(y)
         if slot != self._current:
             self._current = slot
