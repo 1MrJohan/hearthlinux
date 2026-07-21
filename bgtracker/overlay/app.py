@@ -49,10 +49,12 @@ class OverlayApp:
         win = self.window
         if win is None:
             return
-        if slot is None or slot >= len(self.standings):
+        # Slot i is leaderboard position i+1; match by place, not list index.
+        entry = next((e for e in self.standings if e[0] == (slot + 1)), None) if slot is not None else None
+        if entry is None:
             win.clear_hover_board()
             return
-        place, player_id, hero_card_id = self.standings[slot]
+        place, player_id, hero_card_id = entry
         seen = self.pipeline.memory.last_seen(player_id) if self.pipeline else None
         if seen:
             win.set_hover_board(
@@ -76,6 +78,12 @@ class OverlayApp:
 
     # Pipeline listener -------------------------------------------------
     def on_event(self, event: ev.Event, prediction: SimResult | None) -> None:
+        # State updates must happen even before the window exists — events
+        # streamed during startup replay would otherwise be lost.
+        if isinstance(event, ev.Standings):
+            self.standings = event.places
+        elif isinstance(event, ev.GameStart):
+            self.standings = ()
         win = self.window
         if win is None:
             return
@@ -114,8 +122,6 @@ class OverlayApp:
                     )
                 else:
                     win.set_memory("next opponent: not seen yet")
-            case ev.Standings(places=places):
-                self.standings = places
             case ev.GameEnd(placement=p):
                 win.set_status(f"finished #{p}" if p else "game over")
                 win.set_odds(None, None, None)
