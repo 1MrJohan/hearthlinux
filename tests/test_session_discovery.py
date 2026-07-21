@@ -20,7 +20,8 @@ def _fake_prefix(tmp_path: Path) -> Path:
     return hs
 
 
-def test_ensure_log_config_creates(tmp_path):
+def test_ensure_log_config_creates(tmp_path, monkeypatch):
+    monkeypatch.setattr("bgtracker.discovery._PREFIX_GLOBS", [])
     hs = _fake_prefix(tmp_path)
     assert wine_prefix_of(hs) == tmp_path
     path, changed = ensure_log_config(hs)
@@ -35,7 +36,8 @@ def test_ensure_log_config_creates(tmp_path):
     assert not changed
 
 
-def test_ensure_log_config_merges_existing(tmp_path):
+def test_ensure_log_config_merges_existing(tmp_path, monkeypatch):
+    monkeypatch.setattr("bgtracker.discovery._PREFIX_GLOBS", [])
     hs = _fake_prefix(tmp_path)
     target = tmp_path / "drive_c/users/steamuser/AppData/Local/Blizzard/Hearthstone"
     target.mkdir(parents=True)

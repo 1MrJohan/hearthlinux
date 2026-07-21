@@ -81,22 +81,48 @@ def wine_prefix_of(hs_dir: Path) -> Path:
     raise FileNotFoundError(f"no drive_c above {hs_dir}")
 
 
-def _appdata_hs_dir(prefix: Path) -> Path:
-    """Pick the AppData Hearthstone dir where log.config belongs.
+def _candidate_appdata_dirs(hs_dir: Path) -> list[Path]:
+    """AppData/.../Blizzard/Hearthstone candidates across ALL known prefixes.
 
-    Prefer a user that already has Blizzard AppData; never pick Public.
+    The game's config home is not necessarily in the install's own prefix:
+    Steam shortcuts launch an external install (via Z:\\) while the game's
+    AppData lives in the shortcut's compatdata prefix. The dir the game
+    actually uses contains options.txt — prefer that, most recent first.
     """
-    users = prefix / "drive_c" / "users"
-    candidates = [u for u in sorted(users.iterdir()) if u.is_dir() and u.name != "Public"]
+    prefixes: list[Path] = []
+    for pattern in _PREFIX_GLOBS:
+        prefixes.extend(Path(p) for p in glob.glob(str(Path(pattern).expanduser())))
+    try:
+        install_prefix = wine_prefix_of(hs_dir)
+        if install_prefix not in prefixes:
+            prefixes.append(install_prefix)
+    except FileNotFoundError:
+        pass
+
+    candidates: list[Path] = []
+    for prefix in prefixes:
+        users = prefix / "drive_c" / "users"
+        if not users.is_dir():
+            continue
+        for user in sorted(users.iterdir()):
+            if not user.is_dir() or user.is_symlink() or user.name == "Public":
+                continue
+            candidates.append(user / "AppData" / "Local" / "Blizzard" / "Hearthstone")
+    return candidates
+
+
+def _appdata_hs_dir(hs_dir: Path) -> Path:
+    candidates = _candidate_appdata_dirs(hs_dir)
     if not candidates:
-        raise FileNotFoundError(f"no wine users under {users}")
-
-    def score(user: Path) -> tuple:
-        blizz = user / "AppData" / "Local" / "Blizzard"
-        return ((blizz / "Hearthstone").is_dir(), blizz.is_dir())
-
-    user = max(candidates, key=score)
-    return user / "AppData" / "Local" / "Blizzard" / "Hearthstone"
+        raise FileNotFoundError(f"no wine user profiles found for {hs_dir}")
+    # Game-created dirs (options.txt present) win, newest activity first.
+    used = [c for c in candidates if (c / "options.txt").is_file()]
+    if used:
+        return max(used, key=lambda c: (c / "options.txt").stat().st_mtime)
+    existing = [c for c in candidates if c.is_dir()]
+    if existing:
+        return existing[0]
+    return candidates[0]
 
 
 def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
@@ -105,7 +131,7 @@ def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
     Merges into an existing file without touching other sections. A True
     `changed` result means Hearthstone must be restarted to pick it up.
     """
-    target = _appdata_hs_dir(wine_prefix_of(hs_dir)) / "log.config"
+    target = _appdata_hs_dir(hs_dir) / "log.config"
     sections: dict[str, dict[str, str]] = {}
     order: list[str] = []
     if target.is_file():
