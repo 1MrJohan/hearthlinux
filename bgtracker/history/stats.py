@@ -45,7 +45,7 @@ def report(path: Path = DB_FILE) -> str:
     lines.append("")
     lines.append("== simulator calibration (predicted win% vs actual) ==")
     buckets = conn.execute(
-        "SELECT CAST(predicted_win / 10 AS INT) AS bucket,"
+        "SELECT MIN(CAST(predicted_win / 10 AS INT), 9) AS bucket,"
         " COUNT(*), SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END)"
         " FROM combats WHERE predicted_win IS NOT NULL AND outcome IS NOT NULL"
         " GROUP BY bucket ORDER BY bucket"
