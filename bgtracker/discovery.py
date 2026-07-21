@@ -182,7 +182,9 @@ def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
     appdata = _appdata_hs_dir(hs_dir)
     target = appdata / "log.config"
     changed = _merge_ini(target, LOG_CONFIG_SECTIONS)
-    changed |= _merge_ini(appdata / "client.config", CLIENT_CONFIG_SECTIONS)
+    # client.config (log size uncap) lives in the game INSTALL dir, next to
+    # Hearthstone.exe — not in AppData (matches HDT's EnsureClientLogConfig).
+    changed |= _merge_ini(hs_dir / "client.config", CLIENT_CONFIG_SECTIONS)
     if changed:
-        log.info("Wrote logging config in %s (restart Hearthstone to apply)", appdata)
+        log.info("Wrote logging config (restart Hearthstone to apply)")
     return target, changed
