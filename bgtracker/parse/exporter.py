@@ -162,6 +162,10 @@ class LiveGameProcessor:
 
     def feed(self, lines: list[str]) -> list[ev.Event]:
         for line in lines:
+            # Non-log content (blank lines, truncation banners) has no
+            # "D hh:mm:ss" prefix — skip it without ceremony.
+            if not line or line[0] not in "DWE" or len(line) < 2 or line[1] != " ":
+                continue
             try:
                 self.parser.read_line(line)
             except Exception:
