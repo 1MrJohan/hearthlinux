@@ -73,6 +73,15 @@ class SimClient:
                     return msg["result"]
 
     async def simulate(self, battle_info: dict) -> SimResult:
+        # Give the sidecar a duration budget below our own timeout so it
+        # returns a partial-but-valid result instead of us abandoning it.
+        battle_info = {
+            **battle_info,
+            "options": {
+                "maxAcceptableDuration": int(self.timeout * 1000 * 0.8),
+                **battle_info.get("options", {}),
+            },
+        }
         result = await self._request(
             {"op": "simulate", "input": battle_info, "sims": self.sims},
             timeout=self.timeout,

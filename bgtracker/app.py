@@ -79,7 +79,7 @@ class Pipeline:
             )
             return result
         except Exception as exc:
-            log.warning("simulation failed: %s", exc)
+            log.warning("simulation failed: %r", exc)
             print("  odds: unavailable")
             return None
 
