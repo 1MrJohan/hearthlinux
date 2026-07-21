@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS games (
     placement INTEGER,
     final_turn INTEGER
 );
+CREATE TABLE IF NOT EXISTS ratings (
+    id INTEGER PRIMARY KEY,
+    recorded_at TEXT NOT NULL,
+    rating INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS combats (
     id INTEGER PRIMARY KEY,
     game_id INTEGER NOT NULL REFERENCES games(id),
@@ -95,6 +100,12 @@ class HistoryDB:
         self.conn.execute(
             "UPDATE games SET ended_at=?, placement=?, final_turn=? WHERE id=?",
             (_now(), placement, final_turn, game_id),
+        )
+        self.conn.commit()
+
+    def record_rating(self, rating: int) -> None:
+        self.conn.execute(
+            "INSERT INTO ratings (recorded_at, rating) VALUES (?, ?)", (_now(), rating)
         )
         self.conn.commit()
 

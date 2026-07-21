@@ -19,7 +19,7 @@ from bgtracker.app import Pipeline
 from bgtracker.config import load_config
 from bgtracker.data import cards
 from bgtracker.history.db import HistoryDB
-from bgtracker.logwatch.session import newest_session_dir, power_log_path
+from bgtracker.logwatch.session import newest_session_dir, power_log_path, prune_old_sessions
 from bgtracker.logwatch.tailer import Tailer
 from bgtracker.parse.exporter import LiveGameProcessor
 from bgtracker.sim.client import SimClient
@@ -69,6 +69,9 @@ async def live(overlay=None) -> None:
         pipeline.listeners.append(overlay.on_event)
 
     logs_dir = hs_dir / "Logs"
+    removed = prune_old_sessions(logs_dir, cfg.log_keep_days, cfg.log_keep_min)
+    if removed:
+        print(f"pruned {len(removed)} old log session dir(s)")
     session = None
     tailer = None
     processor = None
@@ -124,7 +127,8 @@ def _reexec_with_layer_shell_preload() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
-    parser.add_argument("command", nargs="?", choices=["run", "stats", "doctor"], default="run")
+    parser.add_argument("command", nargs="?", choices=["run", "stats", "doctor", "mmr"], default="run")
+    parser.add_argument("value", nargs="?", type=int, help="rating value for the mmr command")
     parser.add_argument("--replay", type=Path, help="replay a saved Power.log file")
     parser.add_argument("--overlay", action="store_true", help="show the on-screen overlay")
     parser.add_argument("--odds", action="store_true", help="run combat odds during replay")
@@ -140,7 +144,14 @@ def main() -> None:
     if not args.no_names:
         cards.load()
     try:
-        if args.command == "doctor":
+        if args.command == "mmr":
+            if args.value is None:
+                parser.error("usage: bgtracker mmr <rating>")
+            db = HistoryDB()
+            db.record_rating(args.value)
+            db.close()
+            print(f"recorded rating {args.value}")
+        elif args.command == "doctor":
             from bgtracker.doctor import run as doctor_run
 
             doctor_run()

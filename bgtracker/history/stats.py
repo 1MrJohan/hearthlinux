@@ -30,6 +30,18 @@ def report(path: Path = DB_FILE) -> str:
             f"  avg place {avg_place:.2f}  top4 {100 * top4 / games:.0f}%"
         )
 
+    ratings = conn.execute(
+        "SELECT recorded_at, rating FROM ratings ORDER BY recorded_at"
+    ).fetchall()
+    if ratings:
+        lines.append("")
+        lines.append("== MMR (recorded via `bgtracker mmr <value>`) ==")
+        prev = None
+        for at, rating in ratings[-10:]:
+            delta = f" ({rating - prev:+d})" if prev is not None else ""
+            lines.append(f"  {at[:16]}  {rating}{delta}")
+            prev = rating
+
     lines.append("")
     lines.append("== simulator calibration (predicted win% vs actual) ==")
     buckets = conn.execute(

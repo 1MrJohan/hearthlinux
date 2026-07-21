@@ -28,6 +28,10 @@ class Config:
     sim_timeout: float = 6.0
     # Overlay
     overlay_scale: float = 1.0
+    # Log-session cleanup: prune Logs/Hearthstone_* dirs older than this,
+    # but always keep at least log_keep_min newest. 0 days disables pruning.
+    log_keep_days: int = 14
+    log_keep_min: int = 10
     extra: dict = field(default_factory=dict)
 
 
@@ -38,7 +42,10 @@ def load_config(path: Path | None = None) -> Config:
         raw = tomllib.loads(path.read_text())
         if "hearthstone_dir" in raw:
             cfg.hearthstone_dir = Path(raw.pop("hearthstone_dir")).expanduser()
-        for key in ("poll_active", "poll_idle", "sim_count", "sim_timeout", "overlay_scale"):
+        for key in (
+            "poll_active", "poll_idle", "sim_count", "sim_timeout",
+            "overlay_scale", "log_keep_days", "log_keep_min",
+        ):
             if key in raw:
                 setattr(cfg, key, raw.pop(key))
         cfg.extra = raw
