@@ -105,6 +105,18 @@ async def live(overlay=None) -> None:
             await sim.close()
 
 
+def _reexec_with_layer_shell_preload() -> None:
+    """gtk4-layer-shell must link before libwayland; from Python that means
+    LD_PRELOAD. Re-exec ourselves once with it set."""
+    import os
+
+    lib = "/usr/lib/libgtk4-layer-shell.so"
+    if os.environ.get("BGTRACKER_PRELOADED") or not os.path.exists(lib):
+        return
+    env = dict(os.environ, LD_PRELOAD=lib, BGTRACKER_PRELOADED="1")
+    os.execve(sys.executable, [sys.executable, "-m", "bgtracker", *sys.argv[1:]], env)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
     parser.add_argument("command", nargs="?", choices=["run", "stats", "doctor"], default="run")
@@ -134,6 +146,7 @@ def main() -> None:
         elif args.replay:
             asyncio.run(replay(args.replay, args.odds, args.record))
         elif args.overlay:
+            _reexec_with_layer_shell_preload()
             from bgtracker.overlay.app import OverlayApp
 
             overlay = OverlayApp()
