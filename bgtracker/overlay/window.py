@@ -42,6 +42,14 @@ class OverlayWindow(Gtk.Window):
 
         LayerShell.init_for_window(self)
         LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
+        wanted = cfg.extra.get("overlay_monitor")
+        if wanted:
+            from gi.repository import Gdk
+
+            for monitor in Gdk.Display.get_default().get_monitors():
+                if monitor.get_connector() == wanted:
+                    LayerShell.set_monitor(self, monitor)
+                    break
         for edge in _ANCHORS.get(corner, _ANCHORS["top-right"]):
             LayerShell.set_anchor(self, edge, True)
             LayerShell.set_margin(self, edge, int(40 * scale))
