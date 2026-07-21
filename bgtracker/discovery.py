@@ -30,10 +30,18 @@ _CHANNEL = {
     "ScreenPrinting": "False",
     "Verbose": "True",
 }
+# Zone is explicitly disabled: we don't consume it and its verbose output
+# races Power.log to the client's log-size cap.
 LOG_CONFIG_SECTIONS = {
     "Power": dict(_CHANNEL),
-    "Zone": dict(_CHANNEL),
     "Bob": dict(_CHANNEL),
+    "Zone": {**_CHANNEL, "FilePrinting": "False", "Verbose": "False"},
+}
+
+# The client silently STOPS ALL LOGGING once a log file hits its size cap
+# (~10MB) — fatal for long BG sessions. HDT/Firestone uncap it the same way.
+CLIENT_CONFIG_SECTIONS = {
+    "Log": {"FileSizeLimit.Int": "-1"},
 }
 
 
@@ -125,13 +133,11 @@ def _appdata_hs_dir(hs_dir: Path) -> Path:
     return candidates[0]
 
 
-def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
-    """Ensure log.config has the Power/Bob sections. Returns (path, changed).
+def _merge_ini(target: Path, wanted_sections: dict[str, dict[str, str]]) -> bool:
+    """Merge wanted keys into an ini file (CRLF), preserving other sections.
 
-    Merges into an existing file without touching other sections. A True
-    `changed` result means Hearthstone must be restarted to pick it up.
+    Returns True if the file was (re)written.
     """
-    target = _appdata_hs_dir(hs_dir) / "log.config"
     sections: dict[str, dict[str, str]] = {}
     order: list[str] = []
     if target.is_file():
@@ -147,7 +153,7 @@ def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
                 sections[current][key.strip()] = value.strip()
 
     changed = False
-    for name, wanted in LOG_CONFIG_SECTIONS.items():
+    for name, wanted in wanted_sections.items():
         sec = sections.setdefault(name, {})
         if name not in order:
             order.append(name)
@@ -164,5 +170,19 @@ def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
             out.extend(f"{k}={v}" for k, v in sections[name].items())
         out.append("")
         target.write_text("\r\n".join(out))
-        log.info("Wrote %s (restart Hearthstone to enable logging)", target)
+    return changed
+
+
+def ensure_log_config(hs_dir: Path) -> tuple[Path, bool]:
+    """Ensure log.config (channels) and client.config (size cap) are set.
+
+    Returns (log.config path, changed). A True `changed` means Hearthstone
+    must be restarted to pick the files up.
+    """
+    appdata = _appdata_hs_dir(hs_dir)
+    target = appdata / "log.config"
+    changed = _merge_ini(target, LOG_CONFIG_SECTIONS)
+    changed |= _merge_ini(appdata / "client.config", CLIENT_CONFIG_SECTIONS)
+    if changed:
+        log.info("Wrote logging config in %s (restart Hearthstone to apply)", appdata)
     return target, changed
