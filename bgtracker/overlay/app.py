@@ -31,7 +31,14 @@ class OverlayApp:
     """Owns the Gtk.Application + window; listener plugs into the Pipeline."""
 
     def __init__(self):
-        self.app = Gtk.Application(application_id="dev.bgtracker.overlay")
+        from gi.repository import Gio
+
+        # NON_UNIQUE: a stale instance must never make a new launch silently
+        # defer to it and exit.
+        self.app = Gtk.Application(
+            application_id="dev.bgtracker.overlay",
+            flags=Gio.ApplicationFlags.NON_UNIQUE,
+        )
         self.window: OverlayWindow | None = None
         self.pipeline = None  # set by the caller for opponent-memory lookups
         self.app.connect("activate", self._on_activate)
