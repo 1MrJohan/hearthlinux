@@ -41,7 +41,7 @@ class BGExporter(EntityTreeExporter):
         self._board_state = SHOP
         self._turn = 0
         self._friendly_id: int | None = None
-        self._hero_emitted = False
+        self._hero_emitted: str | None = None
         self._ended = False
 
     # -- friendly player detection -------------------------------------
@@ -92,12 +92,15 @@ class BGExporter(EntityTreeExporter):
         )
 
     def maybe_emit_hero(self):
-        if self._hero_emitted:
-            return
         hero = self.friendly_hero()
-        if hero is not None and hero.card_id:
-            self._hero_emitted = True
-            self._emit(ev.HeroPicked(card_id=hero.card_id))
+        if hero is None or not hero.card_id:
+            return
+        # Placeholder hero entities (e.g. BaconPHhero) sit in play until the
+        # pick resolves; wait for the real one, and re-emit on change.
+        if "PH" in hero.card_id or hero.card_id == self._hero_emitted:
+            return
+        self._hero_emitted = hero.card_id
+        self._emit(ev.HeroPicked(card_id=hero.card_id))
 
     # -- tag-change hooks ----------------------------------------------
     def handle_tag_change(self, packet):
