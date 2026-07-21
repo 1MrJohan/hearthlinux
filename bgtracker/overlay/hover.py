@@ -64,8 +64,12 @@ class HoverStrips(Gtk.Window):
         self._height = monitor.get_geometry().height if monitor else 1440
         self.set_default_size(width, -1)
 
-        # fully transparent content — the strip is invisible
+        # fully transparent content — the strip is invisible unless
+        # hover_debug is set, which tints the band and slot boundaries.
+        self.debug = bool(extra.get("hover_debug", False))
         area = Gtk.DrawingArea()
+        if self.debug:
+            area.set_draw_func(self._draw_debug)
         self.set_child(area)
         css = Gtk.CssProvider()
         css.load_from_data(b"window { background: transparent; }")
@@ -103,10 +107,23 @@ class HoverStrips(Gtk.Window):
         idx = int((y - top) / (bottom - top) * self.slots)
         return min(idx, self.slots - 1)
 
+    def _draw_debug(self, _area, cr, width, _height):
+        top, bottom = self._band()
+        cr.set_source_rgba(1, 0.2, 0.2, 0.25)
+        cr.rectangle(0, top, width, bottom - top)
+        cr.fill()
+        cr.set_source_rgba(1, 1, 1, 0.6)
+        for i in range(1, self.slots):
+            y = top + (bottom - top) * i / self.slots
+            cr.rectangle(0, y, width, 1)
+            cr.fill()
+
     def _on_motion(self, _ctrl, _x, y):
         slot = self._slot_at(y)
         if slot != self._current:
             self._current = slot
+            if self.debug:
+                print(f"hover: slot {slot} (y={y:.0f})")
             self.on_slot(slot)
 
     def _on_leave(self, _ctrl):
