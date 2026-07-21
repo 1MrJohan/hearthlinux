@@ -15,7 +15,7 @@ def snapshot_from_synthetic() -> BoardSnapshot:
 def test_maps_snapshot_to_battle_info():
     info = to_battle_info(snapshot_from_synthetic())
     assert info is not None
-    assert info["gameState"]["currentTurn"] == 2
+    assert info["gameState"]["currentTurn"] == 1
 
     player = info["playerBoard"]
     assert player["player"]["cardId"] == "TB_BaconShop_HERO_11"

@@ -27,7 +27,7 @@ def test_combat_snapshot_contents():
     _, events = feed_all(minimal_bg_game().lines)
     combat = next(e for e in events if isinstance(e, ev.CombatStart))
     snap = combat.snapshot
-    assert snap.turn == 2
+    assert snap.turn == 1
     assert snap.friendly.hero_card_id == "TB_BaconShop_HERO_11"
     assert snap.friendly.tier == 2
     assert snap.friendly.health == 40

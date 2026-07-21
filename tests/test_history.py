@@ -30,13 +30,13 @@ def test_pipeline_records_game(tmp_path):
     games = db.conn.execute(
         "SELECT hero_card_id, placement, final_turn FROM games"
     ).fetchall()
-    assert games == [("TB_BaconShop_HERO_11", 3, 2)]
+    assert games == [("TB_BaconShop_HERO_11", 3, 1)]
 
     combats = db.conn.execute(
         "SELECT turn, opponent_hero, outcome FROM combats"
     ).fetchall()
     assert len(combats) == 1
     turn, opp_hero, outcome = combats[0]
-    assert turn == 2 and opp_hero == "TB_BaconShop_HERO_22"
+    assert turn == 1 and opp_hero == "TB_BaconShop_HERO_22"
     # synthetic log doesn't change HP during combat -> tie
     assert outcome == "tie"

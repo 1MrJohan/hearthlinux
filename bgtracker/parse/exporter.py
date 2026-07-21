@@ -106,8 +106,12 @@ class BGExporter(EntityTreeExporter):
 
         if isinstance(entity, Game):
             if gametag == GameTag.TURN:
-                self._turn = value
-                self._emit(ev.TurnChange(turn=value))
+                # BG increments the internal counter for every recruit AND
+                # combat phase; the turn shown in-game is (raw + 1) // 2.
+                bg_turn = (value + 1) // 2
+                if bg_turn != self._turn:
+                    self._turn = bg_turn
+                    self._emit(ev.TurnChange(turn=bg_turn))
             elif gametag == GameTag.BOARD_VISUAL_STATE and value != self._board_state:
                 self._board_state = value
                 if value == COMBAT:
