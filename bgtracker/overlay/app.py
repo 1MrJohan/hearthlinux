@@ -17,7 +17,7 @@ gi.require_version("Gtk", "4.0")
 from gi.events import GLibEventLoopPolicy  # noqa: E402
 from gi.repository import Gtk  # noqa: E402
 
-from bgtracker.headless import render_board_line, render_minion  # noqa: E402
+from bgtracker.headless import render_board_line  # noqa: E402
 from bgtracker.data import cards  # noqa: E402
 from bgtracker.parse import events as ev  # noqa: E402
 from bgtracker.sim.client import SimResult  # noqa: E402
@@ -37,7 +37,9 @@ class OverlayApp:
         self.app.connect("activate", self._on_activate)
 
     def _on_activate(self, app):
-        self.window = OverlayWindow(application=app)
+        from bgtracker.config import load_config
+
+        self.window = OverlayWindow(application=app, cfg=load_config())
         self.window.present()
 
     # Pipeline listener -------------------------------------------------
@@ -49,7 +51,7 @@ class OverlayApp:
             case ev.GameStart():
                 win.set_status("game started — pick a hero")
                 win.set_odds(None, None, None)
-                win.set_board("")
+                win.clear_board()
                 win.set_memory("")
             case ev.HeroPicked(card_id=cid):
                 win.set_status(f"playing {cards.name(cid)}")
@@ -63,13 +65,10 @@ class OverlayApp:
                         prediction.tied_percent,
                         prediction.lost_percent,
                     )
+                    win.set_damage(prediction.avg_damage_won, prediction.avg_damage_lost)
                 else:
                     win.set_odds(None, None, None)
-                if s.opponent is not None:
-                    win.set_board(
-                        f"vs {cards.name(s.opponent.hero_card_id)}: "
-                        + ", ".join(render_minion(m) for m in s.opponent.minions)
-                    )
+                win.set_board("vs", s.opponent)
             case ev.CombatEnd(snapshot=s):
                 you = s.friendly
                 if you:
@@ -86,7 +85,7 @@ class OverlayApp:
             case ev.GameEnd(placement=p):
                 win.set_status(f"finished #{p}" if p else "game over")
                 win.set_odds(None, None, None)
-                win.set_board("")
+                win.clear_board()
                 win.set_memory("")
 
     def show_memory(self, text: str) -> None:

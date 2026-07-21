@@ -73,7 +73,10 @@ class Pipeline:
             return None
         try:
             result = await self.sim.simulate(info)
-            print(f"  odds: {result}")
+            print(
+                f"  odds: {result}  "
+                f"(dmg dealt ~{result.avg_damage_won:.0f} / taken ~{result.avg_damage_lost:.0f})"
+            )
             return result
         except Exception as exc:
             log.warning("simulation failed: %s", exc)
