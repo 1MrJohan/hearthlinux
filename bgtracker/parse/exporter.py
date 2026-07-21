@@ -42,6 +42,7 @@ class BGExporter(EntityTreeExporter):
         self._turn = 0
         self._friendly_id: int | None = None
         self._hero_emitted: str | None = None
+        self._pending_combat = False
         self._ended = False
 
     # -- friendly player detection -------------------------------------
@@ -67,7 +68,7 @@ class BGExporter(EntityTreeExporter):
             if isinstance(e, Card)
             and e.type == CardType.HERO
             and tag(e, GameTag.ZONE) == Zone.PLAY
-            and e.card_id != BOB_HERO_ID
+            and not e.card_id.startswith(BOB_HERO_ID)  # skins: TB_BaconShopBob_SKIN_*
         ]
 
     def friendly_hero(self) -> Card | None:
@@ -90,6 +91,14 @@ class BGExporter(EntityTreeExporter):
             friendly=project_player_board(self.game, fid) if fid else None,
             opponent=project_player_board(self.game, opp_id) if opp_id else None,
         )
+
+    def maybe_emit_combat(self):
+        if not self._pending_combat:
+            return
+        snap = self.snapshot()
+        if snap.opponent is not None:
+            self._pending_combat = False
+            self._emit(ev.CombatStart(snapshot=snap))
 
     def maybe_emit_hero(self):
         hero = self.friendly_hero()
@@ -118,8 +127,12 @@ class BGExporter(EntityTreeExporter):
             elif gametag == GameTag.BOARD_VISUAL_STATE and value != self._board_state:
                 self._board_state = value
                 if value == COMBAT:
-                    self._emit(ev.CombatStart(snapshot=self.snapshot()))
+                    # The opponent's board may materialize a few packets after
+                    # the flag flips; emission is deferred until it exists.
+                    self._pending_combat = True
+                    self.maybe_emit_combat()
                 elif value == SHOP:
+                    self._pending_combat = False
                     self._emit(ev.CombatEnd(snapshot=self.snapshot()))
             elif gametag == GameTag.STATE and value == State.COMPLETE and not self._ended:
                 self._ended = True
@@ -183,6 +196,7 @@ class LiveGameProcessor:
                 self._queue.append(ev.GameStart(game_type=int(game_type) if game_type else None))
             if track.started:
                 track.exporter.maybe_emit_hero()
+                track.exporter.maybe_emit_combat()
 
     @staticmethod
     def _is_complete(packet, is_last: bool) -> bool:
