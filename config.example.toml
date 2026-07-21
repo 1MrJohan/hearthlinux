@@ -1,0 +1,17 @@
+# Copy to ~/.config/hs-bg-tracker/config.toml and edit as needed.
+# All keys are optional.
+
+# Explicit Hearthstone install dir (the folder containing Logs/).
+# Default: auto-discover across Steam compatdata and ~/Games (Lutris) prefixes.
+# hearthstone_dir = "/home/you/Games/battlenet/drive_c/Program Files (x86)/Hearthstone"
+
+# Log poll intervals (seconds)
+# poll_active = 0.25
+# poll_idle = 2.0
+
+# Combat simulator
+# sim_count = 8000     # simulations per combat; more = slower + more accurate
+# sim_timeout = 6.0    # seconds before giving up on a combat's odds
+
+# Overlay
+# overlay_scale = 1.0

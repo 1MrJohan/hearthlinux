@@ -44,8 +44,9 @@ class Minion:
     tier: int = 1
     enchantments: tuple[Enchantment, ...] = ()
 
-    def __str__(self) -> str:
-        kw = "".join(
+    @property
+    def flags(self) -> str:
+        return "".join(
             flag
             for flag, on in [
                 ("T", self.taunt), ("D", self.divine_shield), ("P", self.poisonous),
@@ -54,6 +55,9 @@ class Minion:
             ]
             if on
         )
+
+    def __str__(self) -> str:
+        kw = self.flags
         return f"{self.card_id or '?'} {self.attack}/{self.health}{' [' + kw + ']' if kw else ''}"
 
 

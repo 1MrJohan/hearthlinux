@@ -1,8 +1,9 @@
-"""Entry point: live tracking, fixture replay, and (later) stats.
+"""Entry point.
 
-  python -m bgtracker                    # live headless tracking with odds
-  python -m bgtracker --replay FILE      # replay a saved Power.log at full speed
-  python -m bgtracker --replay FILE --odds   # replay with combat odds
+  python -m bgtracker                        # live tracking (odds + history)
+  python -m bgtracker --replay FILE          # replay a saved Power.log
+  python -m bgtracker --replay FILE --odds --record
+  python -m bgtracker stats                  # match history + calibration report
 """
 
 from __future__ import annotations
@@ -14,32 +15,16 @@ import sys
 from pathlib import Path
 
 from bgtracker import discovery
+from bgtracker.app import Pipeline
 from bgtracker.config import load_config
-from bgtracker.headless import print_event
+from bgtracker.data import cards
+from bgtracker.history.db import HistoryDB
 from bgtracker.logwatch.session import newest_session_dir, power_log_path
 from bgtracker.logwatch.tailer import Tailer
-from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 from bgtracker.sim.client import SimClient
-from bgtracker.sim.mapper import to_battle_info
 
 log = logging.getLogger("bgtracker")
-
-
-async def handle_events(events: list[ev.Event], sim: SimClient | None) -> None:
-    for event in events:
-        print_event(event)
-        if sim is not None and isinstance(event, ev.CombatStart):
-            info = to_battle_info(event.snapshot)
-            if info is None:
-                print("  odds: n/a (board incomplete)")
-                continue
-            try:
-                result = await sim.simulate(info)
-                print(f"  odds: {result}")
-            except Exception as exc:
-                log.warning("simulation failed: %s", exc)
-                print("  odds: unavailable")
 
 
 async def start_sim(cfg) -> SimClient | None:
@@ -51,9 +36,10 @@ async def start_sim(cfg) -> SimClient | None:
     return None
 
 
-async def replay(path: Path, with_odds: bool) -> None:
+async def replay(path: Path, with_odds: bool, record: bool) -> None:
     cfg = load_config()
     sim = await start_sim(cfg) if with_odds else None
+    pipeline = Pipeline(sim=sim, db=HistoryDB() if record else None)
     processor = LiveGameProcessor()
     try:
         with path.open(encoding="utf-8", errors="replace") as f:
@@ -61,15 +47,15 @@ async def replay(path: Path, with_odds: bool) -> None:
             for line in f:
                 batch.append(line.rstrip("\n"))
                 if len(batch) >= 2000:
-                    await handle_events(processor.feed(batch), sim)
+                    await pipeline.handle(processor.feed(batch))
                     batch = []
-            await handle_events(processor.feed(batch), sim)
+            await pipeline.handle(processor.feed(batch))
     finally:
         if sim:
             await sim.close()
 
 
-async def live() -> None:
+async def live(overlay=None) -> None:
     cfg = load_config()
     hs_dir = discovery.find_hearthstone_dir(cfg.hearthstone_dir)
     print(f"tracking: {hs_dir}")
@@ -77,6 +63,10 @@ async def live() -> None:
     if changed:
         print("log.config written — restart Hearthstone for logging to take effect")
     sim = await start_sim(cfg)
+    pipeline = Pipeline(sim=sim, db=HistoryDB())
+    if overlay is not None:
+        overlay.pipeline = pipeline
+        pipeline.listeners.append(overlay.on_event)
 
     logs_dir = hs_dir / "Logs"
     session = None
@@ -92,7 +82,7 @@ async def live() -> None:
                     tailer = Tailer(power_log_path(session))
                     processor = LiveGameProcessor()
             if tailer and processor:
-                await handle_events(processor.feed(tailer.read_new_lines()), sim)
+                await pipeline.handle(processor.feed(tailer.read_new_lines()))
             await asyncio.sleep(cfg.poll_active)
     finally:
         if sim:
@@ -101,8 +91,12 @@ async def live() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
+    parser.add_argument("command", nargs="?", choices=["run", "stats"], default="run")
     parser.add_argument("--replay", type=Path, help="replay a saved Power.log file")
+    parser.add_argument("--overlay", action="store_true", help="show the on-screen overlay")
     parser.add_argument("--odds", action="store_true", help="run combat odds during replay")
+    parser.add_argument("--record", action="store_true", help="write replayed games to history")
+    parser.add_argument("--no-names", action="store_true", help="skip card-name DB download")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -110,9 +104,20 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    if not args.no_names:
+        cards.load()
     try:
-        if args.replay:
-            asyncio.run(replay(args.replay, args.odds))
+        if args.command == "stats":
+            from bgtracker.history.stats import report
+
+            print(report())
+        elif args.replay:
+            asyncio.run(replay(args.replay, args.odds, args.record))
+        elif args.overlay:
+            from bgtracker.overlay.app import OverlayApp
+
+            overlay = OverlayApp()
+            overlay.run_with(live(overlay))
         else:
             asyncio.run(live())
     except KeyboardInterrupt:

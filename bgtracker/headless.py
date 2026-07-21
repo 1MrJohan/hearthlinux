@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+from bgtracker.data import cards
 from bgtracker.parse import events as ev
-from bgtracker.state.game import BoardSnapshot, PlayerBoard
+from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard
+
+
+def render_minion(m: Minion) -> str:
+    kw = m.flags
+    return f"{cards.name(m.card_id)} {m.attack}/{m.health}{' [' + kw + ']' if kw else ''}"
+
+
+def render_board_line(board: PlayerBoard) -> str:
+    return ", ".join(render_minion(m) for m in board.minions) or "(empty board)"
 
 
 def _board_lines(label: str, board: PlayerBoard | None) -> list[str]:
     if board is None:
         return [f"  {label}: <unknown>"]
     head = (
-        f"  {label}: {board.hero_card_id or '?'} "
+        f"  {label}: {cards.name(board.hero_card_id)} "
         f"HP {board.health}+{board.armor} armor, tier {board.tier}"
     )
-    return [head] + [f"    {i + 1}. {m}" for i, m in enumerate(board.minions)]
+    return [head] + [f"    {i + 1}. {render_minion(m)}" for i, m in enumerate(board.minions)]
 
 
 def render_snapshot(snap: BoardSnapshot) -> str:
@@ -27,7 +37,7 @@ def print_event(event: ev.Event) -> None:
         case ev.GameStart(game_type=gt):
             print(f"=== game start (type {gt}) ===")
         case ev.HeroPicked(card_id=cid):
-            print(f"hero: {cid}")
+            print(f"hero: {cards.name(cid)}")
         case ev.TurnChange(turn=t):
             print(f"-- turn {t} --")
         case ev.CombatStart(snapshot=s):
