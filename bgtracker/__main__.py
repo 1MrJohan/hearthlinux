@@ -141,6 +141,15 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    if not args.verbose:
+        # hslog warns (on the root logger) about quirks it already works
+        # around; keep them out of normal output.
+        class _DropHslogNoise(logging.Filter):
+            def filter(self, record):
+                return "Broken option nesting" not in record.getMessage()
+
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(_DropHslogNoise())
     if not args.no_names:
         cards.load()
     try:

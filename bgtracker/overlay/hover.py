@@ -94,10 +94,17 @@ class HoverStrips(Gtk.Window):
         surface = self.get_surface()
         if surface is None:
             return
-        top, bottom = self._band()
-        region = cairo.Region(
-            cairo.RectangleInt(0, top, self.get_width() or 96, bottom - top)
-        )
+        if self.debug:
+            # calibration: capture the whole column so pointer y is visible
+            # anywhere along the left edge
+            region = cairo.Region(
+                cairo.RectangleInt(0, 0, self.get_width() or 96, self._height)
+            )
+        else:
+            top, bottom = self._band()
+            region = cairo.Region(
+                cairo.RectangleInt(0, top, self.get_width() or 96, bottom - top)
+            )
         surface.set_input_region(region)
 
     def _slot_at(self, y: float) -> int | None:
@@ -118,7 +125,14 @@ class HoverStrips(Gtk.Window):
             cr.rectangle(0, y, width, 1)
             cr.fill()
 
+    _cal_bucket = None
+
     def _on_motion(self, _ctrl, _x, y):
+        if self.debug:
+            bucket = int(y // 25)
+            if bucket != self._cal_bucket:
+                self._cal_bucket = bucket
+                print(f"cal-y: {y:.0f}")
         slot = self._slot_at(y)
         if slot != self._current:
             self._current = slot

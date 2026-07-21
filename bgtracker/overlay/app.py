@@ -52,10 +52,16 @@ class OverlayApp:
         # Slot i is leaderboard position i+1; match by place, not list index.
         entry = next((e for e in self.standings if e[0] == (slot + 1)), None) if slot is not None else None
         if entry is None:
+            if slot is not None:
+                log.info("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, self.standings)
             win.clear_hover_board()
             return
         place, player_id, hero_card_id = entry
         seen = self.pipeline.memory.last_seen(player_id) if self.pipeline else None
+        log.info(
+            "hover-lookup: slot %s -> place %s %s pid=%s seen=%s",
+            slot, place, hero_card_id, player_id, f"turn {seen.turn}" if seen else None,
+        )
         if seen:
             win.set_hover_board(
                 f"#{place} {cards.name(hero_card_id)} — last seen turn {seen.turn}",
