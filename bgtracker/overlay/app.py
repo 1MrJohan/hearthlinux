@@ -95,9 +95,9 @@ class OverlayApp:
 
     def run_with(self, coro: Coroutine) -> None:
         """Run the GTK app and the given coroutine on one shared loop."""
-        asyncio.set_event_loop_policy(GLibEventLoopPolicy())
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        policy = GLibEventLoopPolicy()
+        asyncio.set_event_loop_policy(policy)
+        loop = policy.get_event_loop()
         task = loop.create_task(coro)
         task.add_done_callback(self._on_task_done)
         try:

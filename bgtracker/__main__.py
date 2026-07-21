@@ -113,7 +113,12 @@ def _reexec_with_layer_shell_preload() -> None:
     lib = "/usr/lib/libgtk4-layer-shell.so"
     if os.environ.get("BGTRACKER_PRELOADED") or not os.path.exists(lib):
         return
-    env = dict(os.environ, LD_PRELOAD=lib, BGTRACKER_PRELOADED="1")
+    env = dict(
+        os.environ,
+        LD_PRELOAD=lib,
+        BGTRACKER_PRELOADED="1",
+        PYTHONUNBUFFERED=os.environ.get("PYTHONUNBUFFERED", "1"),
+    )
     os.execve(sys.executable, [sys.executable, "-m", "bgtracker", *sys.argv[1:]], env)
 
 
