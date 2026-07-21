@@ -95,9 +95,9 @@ async def live(overlay=None) -> None:
                 ):
                     warned_no_log = True
                     print(
-                        "WARNING: session is 90s old but Power.log has not appeared — "
-                        "power logging is not active. Run `python -m bgtracker doctor`, "
-                        "then fully restart Hearthstone."
+                        "note: no Power.log yet this session — normal if you haven't "
+                        "entered a match. If it stays missing during a game, logging "
+                        "is broken: run `python -m bgtracker doctor` and restart Hearthstone."
                     )
             await asyncio.sleep(cfg.poll_active)
     finally:
