@@ -60,3 +60,15 @@ def test_incremental_feed_matches_bulk():
         "CombatEnd",
         "GameEnd",
     ]
+
+
+def test_two_games_in_one_batch():
+    """A single feed() batch spanning two games must parse both cleanly
+    (fresh parser per CREATE_GAME; every track advanced)."""
+    lines = minimal_bg_game().lines + minimal_bg_game().lines
+    proc = LiveGameProcessor()
+    events = proc.feed(lines)
+    kinds = [type(e).__name__ for e in events if type(e).__name__ != "Standings"]
+    assert kinds.count("GameStart") == 2
+    assert kinds.count("GameEnd") == 2
+    assert kinds.count("CombatStart") == 2

@@ -231,9 +231,13 @@ class LiveGameProcessor:
                 continue
             # A session log holds many games, but hslog's player registry
             # chokes when battletags reappear with new player ids. Each
-            # CREATE_GAME gets a completely fresh parser instead.
-            if line.endswith("- CREATE_GAME") and self._tracks:
-                self._tracks[-1].exporter.finalize()
+            # CREATE_GAME gets a completely fresh parser instead. Check
+            # parser.games (not _tracks): within one large batch the tracks
+            # only materialize at drain time.
+            if line.endswith("- CREATE_GAME") and self.parser.games:
+                self._register_and_advance()  # flush the finished game's events
+                if self._tracks:
+                    self._tracks[-1].exporter.finalize()
                 self.parser = LogParser()
                 self._tracks = []
             try:
@@ -242,15 +246,20 @@ class LiveGameProcessor:
                 log.exception("parser choked on line: %r", line[:200])
         return self._drain()
 
-    def _drain(self) -> list[ev.Event]:
+    def _register_and_advance(self) -> None:
         for pt in self.parser.games[len(self._tracks):]:
             if self._tracks:
                 self._tracks[-1].exporter.finalize()  # new game: flush pending end
             self._tracks.append(
                 _GameTrack(tree=pt, exporter=BGExporter(pt, self._queue.append, self.parser.player_manager))
             )
-        if self._tracks:
-            self._advance(self._tracks[-1])
+        # Advance every track: a single large batch can contain whole games
+        # before the current one; finished tracks cost nothing to revisit.
+        for track in self._tracks:
+            self._advance(track)
+
+    def _drain(self) -> list[ev.Event]:
+        self._register_and_advance()
         out = list(self._queue)
         self._queue.clear()
         return out
