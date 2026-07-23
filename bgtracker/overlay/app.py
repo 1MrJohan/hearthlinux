@@ -174,7 +174,12 @@ class OverlayApp:
                 win.set_phase("Recruit Phase", _hero_meta(you))
                 win.set_status("")
                 win.set_combat(False)
-                win.set_odds(None, None, None)
+                # Odds deliberately stay up through the shop phase. Combat
+                # resolves in seconds and the sim is awaited before the overlay
+                # hears about it at all, so clearing here leaves almost no
+                # window to read the forecast — and none while shopping, which
+                # is when you want to know how the fight went. The next
+                # CombatStart replaces them.
                 # The design shows the enemy board only during combat.
                 win.clear_board()
             case ev.NextOpponent(player_id=pid) if self.pipeline is not None:
