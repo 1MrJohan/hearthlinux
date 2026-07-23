@@ -14,6 +14,8 @@ Styling lives in `theme.py`; this module is layout and plumbing only.
 
 from __future__ import annotations
 
+import logging
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -28,12 +30,13 @@ from .hud import HudPanel  # noqa: E402
 from .rail import LeaderboardRail  # noqa: E402
 from .widgets import BoardPanel  # noqa: E402
 
+log = logging.getLogger(__name__)
+
 
 class OverlayWindow(Gtk.Window):
     def __init__(self, application: Gtk.Application, cfg: Config | None = None):
         super().__init__(application=application)
         cfg = cfg or Config()
-        self.scale = scale = max(0.5, min(3.0, cfg.overlay_scale))
         self.edit = bool(cfg.extra.get("overlay_edit", False))
 
         LayerShell.init_for_window(self)
@@ -56,6 +59,21 @@ class OverlayWindow(Gtk.Window):
         geo = monitor.get_geometry() if monitor else None
         self._mon_w = geo.width if geo else 2560
         self._mon_h = geo.height if geo else 1440
+
+        # Scale needs the monitor, so it is resolved here rather than up front:
+        # an unset overlay_scale means "match the mock's proportions on this
+        # display" instead of silently rendering 1180px-stage sizes 1:1.
+        self.scale = scale = (
+            theme.auto_scale(self._mon_h)
+            if cfg.overlay_scale is None
+            else theme.clamp_scale(cfg.overlay_scale)
+        )
+        log.info(
+            "overlay scale %.2f on %s (%dx%d)%s", scale,
+            monitor.get_connector() if monitor else "default monitor",
+            self._mon_w, self._mon_h,
+            "" if cfg.overlay_scale is None else " — from overlay_scale",
+        )
 
         self.canvas = Gtk.Fixed()
         self.set_child(self.canvas)
@@ -128,7 +146,12 @@ class OverlayWindow(Gtk.Window):
 
         theme.install(self.get_display(), scale)
         self.connect("realize", self._apply_input_region)
-        self.connect("map", lambda *_: GLib.idle_add(self._apply_input_region))
+        self.connect("map", lambda *_: GLib.idle_add(self._on_mapped))
+
+    def _on_mapped(self) -> bool:
+        for name in self._panels:
+            self._clamp_panel(name)
+        return self._apply_input_region()
 
     # -- panel construction / dragging ----------------------------------
     def _make_panel(
@@ -233,8 +256,31 @@ class OverlayWindow(Gtk.Window):
     def _set_content(self, name: str, has_content: bool) -> None:
         self._has_content[name] = has_content
         self._panels[name].set_visible(self.edit or has_content)
+        self._clamp_panel(name)
         if self.edit:
             self._apply_input_region()
+
+    def _clamp_panel(self, name: str) -> None:
+        """Nudge a panel back on-screen if its content has outgrown its position.
+
+        A board's width depends on how many minions it holds, and every size
+        scales with the monitor, so a position saved at one scale can put a
+        full seven-minion board off the right edge. Display-only — the config
+        keeps whatever the user dragged, so this never silently rewrites their
+        layout.
+        """
+        panel = self._panels[name]
+        if not panel.get_visible():
+            return
+        _, nat = panel.get_preferred_size()
+        if nat.width <= 0 or nat.height <= 0:
+            return
+        x, y = self._pos[name]
+        nx = max(0, min(x, self._mon_w - nat.width))
+        ny = max(0, min(y, self._mon_h - nat.height))
+        if (nx, ny) != (x, y):
+            self._pos[name] = [nx, ny]
+            self.canvas.move(panel, nx, ny)
 
     def rail_rect(self) -> tuple[int, int, int, int] | None:
         """Monitor-space rect of the leaderboard rail, for the hover poll."""

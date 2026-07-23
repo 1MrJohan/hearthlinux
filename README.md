@@ -75,6 +75,12 @@ card-art minion tiles, tavern buffs, and a leaderboard rail of hero portraits
 whose rows open a scout popout on hover. Panels are individually draggable —
 set `overlay_edit = true` in config, arrange them, then hit **Lock layout**.
 
+Panel sizes derive from the monitor by default, so the HUD covers the same
+share of screen as the design mock (1080p ~1.53, 1440p ~2.04, 4K capped at
+3.0); set `overlay_scale` to override. Panels that outgrow their saved
+position — a seven-minion board, say — are nudged back on-screen at startup
+without rewriting your layout.
+
 Styling and design tokens live in `bgtracker/overlay/theme.py`. Cinzel and
 Alegreya Sans (both SIL OFL) ship in `bgtracker/assets/fonts/` and are
 registered at runtime with `Pango.FontMap.add_font_file` — no system font

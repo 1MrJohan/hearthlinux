@@ -14,4 +14,7 @@
 # sim_timeout = 6.0    # seconds before giving up on a combat's odds
 
 # Overlay
-# overlay_scale = 1.0
+# Size of every panel, font and gem. Unset = derived from the monitor height
+# so the HUD covers the same share of screen as the design mock
+# (1080p ~1.53, 1440p ~2.04, 4K capped at 3.0). Set it to override.
+# overlay_scale = 2.0

@@ -80,6 +80,28 @@ BUFF_COLOURS = {
     "Spell": "#a97fd0",
 }
 
+# The prototype stage every design token was drawn against. It is a full
+# gameplay screenshot, so monitor-height / stage-height reproduces the mock's
+# proportions on any display.
+DESIGN_STAGE_W = 1180
+DESIGN_STAGE_H = 707
+MIN_SCALE, MAX_SCALE = 0.5, 3.0
+
+
+def auto_scale(monitor_height: int) -> float:
+    """Scale that makes the overlay occupy the same share of screen as the mock.
+
+    1080p -> ~1.53, 1440p -> ~2.04, 4K -> clamped to 3.0.
+    """
+    if monitor_height <= 0:
+        return 1.0
+    return clamp_scale(round(monitor_height / DESIGN_STAGE_H, 2))
+
+
+def clamp_scale(scale: float) -> float:
+    return max(MIN_SCALE, min(MAX_SCALE, scale))
+
+
 # Panel widths from the 1180x707 prototype stage, scaled to the monitor.
 HUD_W = 300
 BUFFS_W = 176

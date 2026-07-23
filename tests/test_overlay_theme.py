@@ -54,6 +54,25 @@ def test_px_never_collapses_a_visible_edge():
     assert theme.px(12, 2.0) == 24
 
 
+@pytest.mark.parametrize(
+    "monitor_height,expected",
+    [(1080, 1.53), (1440, 2.04), (2160, 3.0), (720, 1.02)],
+)
+def test_auto_scale_matches_the_mock_proportions(monitor_height, expected):
+    assert theme.auto_scale(monitor_height) == expected
+
+
+@pytest.mark.parametrize("monitor_height", [0, -1, 10, 100_000])
+def test_auto_scale_survives_nonsense_geometry(monitor_height):
+    # A missing monitor reports 0; clamping keeps the overlay renderable.
+    assert theme.MIN_SCALE <= theme.auto_scale(monitor_height) <= theme.MAX_SCALE
+
+
+def test_stylesheet_parses_at_the_auto_scale_for_common_monitors():
+    for height in (720, 1080, 1440, 2160):
+        assert parse_errors(theme.stylesheet(theme.auto_scale(height))) == []
+
+
 def test_pip_colours_exclude_golden():
     # "G" is the tile border treatment, not a keyword pip.
     assert "G" not in theme.PIP_COLOURS

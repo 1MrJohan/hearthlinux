@@ -26,8 +26,9 @@ class Config:
     # Combat simulator
     sim_count: int = 8000
     sim_timeout: float = 6.0
-    # Overlay
-    overlay_scale: float = 1.0
+    # Overlay. None = derive from the monitor height so the HUD occupies the
+    # same share of the screen as the design mock (1080p ~1.53, 1440p ~2.04).
+    overlay_scale: float | None = None
     # Log-session cleanup: prune Logs/Hearthstone_* dirs older than this,
     # but always keep at least log_keep_min newest. 0 days disables pruning.
     log_keep_days: int = 14
