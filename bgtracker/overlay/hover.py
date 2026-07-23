@@ -36,6 +36,13 @@ from bgtracker.config import Config, update_config_values  # noqa: E402
 log = logging.getLogger(__name__)
 
 
+def _inside(rect: tuple[int, int, int, int] | None, x: float, y: float) -> bool:
+    if rect is None:
+        return False
+    rx, ry, rw, rh = rect
+    return rx <= x < rx + rw and ry <= y < ry + rh
+
+
 class HoverStrips(Gtk.Window):
     """on_slot(index | None) fires as the pointer enters/leaves portrait boxes."""
 
@@ -46,14 +53,20 @@ class HoverStrips(Gtk.Window):
         on_slot: Callable[[int | None], None],
         slots: int = 8,
         rail_rect: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        hud_rect: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        on_hud: Callable[[bool], None] | None = None,
     ):
         super().__init__(application=application)
         self.on_slot = on_slot
         self.slots = slots
-        # Our own leaderboard rail is hovered through the same pointer poll, so
-        # it needs no input region and the overlay stays click-through.
+        # Our own leaderboard rail and the HUD are hovered through this same
+        # pointer poll, so neither needs an input region and the overlay stays
+        # click-through — the game keeps its own hover behaviour.
         self.rail_rect = rail_rect
+        self.hud_rect = hud_rect
+        self.on_hud = on_hud
         self._current: int | None = None
+        self._hud_hot = False
 
         extra = cfg.extra
         self.top_frac = float(extra.get("leaderboard_top_frac", 0.16))
@@ -142,9 +155,9 @@ class HoverStrips(Gtk.Window):
         rect = self.rail_rect()
         if rect is None:
             return None
-        x, y, w, h = rect
-        if h <= 0 or not (x <= lx < x + w and y <= ly < y + h):
+        if not _inside(rect, lx, ly):
             return None
+        _, y, _, h = rect
         return min(int((ly - y) / h * self.slots), self.slots - 1)
 
     def _set_input_region(self, *_):
@@ -231,6 +244,11 @@ class HoverStrips(Gtk.Window):
         except Exception:
             return True  # transient; keep polling
         lx, ly = p.root_x - self._mon_x, p.root_y - self._mon_y
+        if self.on_hud is not None:
+            hot = _inside(self.hud_rect() if self.hud_rect else None, lx, ly)
+            if hot != self._hud_hot:
+                self._hud_hot = hot
+                self.on_hud(hot)
         slot = self._slot_at_xy(lx, ly)
         if slot is None:
             slot = self._rail_slot_at_xy(lx, ly)

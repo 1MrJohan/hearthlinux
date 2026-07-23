@@ -82,9 +82,22 @@ class HudPanel(Gtk.Box):
         self.pills.append(self.taken[0])
         self.append(self.pills)
 
+        # Stands in for the forecast once the fight is over; hovering the HUD
+        # swaps it back for the real thing.
+        self.hint = Gtk.Label(label="▾ last fight", xalign=0)
+        self.hint.add_css_class("odds-hint")
+        self.append(self.hint)
+
+        # Forecast display state. The numbers are kept after combat so they can
+        # be recalled, but they only take up room while the fight is live or
+        # while the pointer is over the HUD.
+        self._odds: tuple[float, float, float] | None = None
+        self._damage: tuple[float, float] | None = None
+        self._live = False
+        self._hovered = False
+
         self.set_turn(None)
         self.set_odds(None, None, None)
-        self.set_damage(None, None)
 
     # -- construction ---------------------------------------------------
     def _build_medallion(self, scale: float) -> Gtk.Widget:
@@ -174,25 +187,47 @@ class HudPanel(Gtk.Box):
             self.medallion.remove_css_class("combat")
 
     def set_odds(self, win: float | None, tie: float | None, loss: float | None) -> None:
-        visible = win is not None
-        self.odds_box.set_visible(visible)
-        self._sync_body()
-        if not visible:
-            return
-        for key, value in (("win", win), ("tie", tie), ("loss", loss)):
-            self.odds_labels[key].set_label(f"{value:.0f}%")
-        widths = bar_widths(win, tie, loss, self.track)
-        for key, width in zip(("win", "tie", "loss"), widths):
-            segment = self.bar_segments[key]
-            segment.set_visible(width > 0)
-            segment.set_size_request(width, -1)
+        """Set the forecast. A fresh forecast is always shown expanded."""
+        self._odds = None if win is None else (win, tie, loss)
+        self._live = self._odds is not None
+        if self._odds is None:
+            self._damage = None
+        else:
+            for key, value in (("win", win), ("tie", tie), ("loss", loss)):
+                self.odds_labels[key].set_label(f"{value:.0f}%")
+            widths = bar_widths(win, tie, loss, self.track)
+            for key, width in zip(("win", "tie", "loss"), widths):
+                segment = self.bar_segments[key]
+                segment.set_visible(width > 0)
+                segment.set_size_request(width, -1)
+        self._sync_odds()
 
     def set_damage(self, dealt: float | None, taken: float | None) -> None:
-        visible = dealt is not None
-        self.pills.set_visible(visible)
-        if visible:
+        self._damage = None if dealt is None else (dealt, taken)
+        if self._damage is not None:
             self.dealt[1].set_label(f"{dealt:.0f}")
             self.taken[1].set_label(f"{taken:.0f}")
+        self._sync_odds()
+
+    def set_forecast_live(self, live: bool) -> None:
+        """Whether the fight is still on. Once it isn't, the block collapses."""
+        self._live = live
+        self._sync_odds()
+
+    def set_hovered(self, hovered: bool) -> None:
+        """Pointer over the HUD — recall the last forecast while it is."""
+        if hovered == self._hovered:
+            return
+        self._hovered = hovered
+        self._sync_odds()
+
+    def _sync_odds(self) -> None:
+        have = self._odds is not None
+        expanded = have and (self._live or self._hovered)
+        self.odds_box.set_visible(expanded)
+        self.pills.set_visible(expanded and self._damage is not None)
+        self.hint.set_visible(have and not expanded)
+        self._sync_body()
 
     def _sync_body(self) -> None:
         self.body.set_visible(self.medallion.get_visible() or self.odds_box.get_visible())

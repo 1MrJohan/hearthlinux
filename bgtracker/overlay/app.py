@@ -121,7 +121,13 @@ class OverlayApp:
             self.hover = HoverStrips(
                 application=app, cfg=cfg, on_slot=self._on_hover_slot,
                 rail_rect=self.window.rail_rect,
+                hud_rect=self.window.hud_rect,
+                on_hud=self._on_hud_hover,
             )
+
+    def _on_hud_hover(self, hovered: bool) -> None:
+        if self.window is not None:
+            self.window.set_hud_hovered(hovered)
             self.hover.present()
 
     # Pipeline listener -------------------------------------------------
@@ -174,12 +180,11 @@ class OverlayApp:
                 win.set_phase("Recruit Phase", _hero_meta(you))
                 win.set_status("")
                 win.set_combat(False)
-                # Odds deliberately stay up through the shop phase. Combat
-                # resolves in seconds and the sim is awaited before the overlay
-                # hears about it at all, so clearing here leaves almost no
-                # window to read the forecast — and none while shopping, which
-                # is when you want to know how the fight went. The next
-                # CombatStart replaces them.
+                # The forecast is kept, not discarded: the fight resolves in
+                # seconds and the sim is awaited before the overlay hears about
+                # it at all, so it collapses to a hint here and comes back when
+                # the pointer is over the HUD. The next CombatStart replaces it.
+                win.set_forecast_live(False)
                 # The design shows the enemy board only during combat.
                 win.clear_board()
             case ev.NextOpponent(player_id=pid) if self.pipeline is not None:

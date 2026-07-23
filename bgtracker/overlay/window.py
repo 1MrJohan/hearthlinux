@@ -313,16 +313,29 @@ class OverlayWindow(Gtk.Window):
             self._pos[name] = [nx, ny]
             self.canvas.move(panel, nx, ny)
 
-    def rail_rect(self) -> tuple[int, int, int, int] | None:
-        """Monitor-space rect of the leaderboard rail, for the hover poll."""
-        panel = self._panels["rail"]
+    def _panel_rect(self, name: str) -> tuple[int, int, int, int] | None:
+        panel = self._panels[name]
         if not panel.get_visible():
             return None
         _, nat = panel.get_preferred_size()
         if nat.width <= 0 or nat.height <= 0:
             return None
-        x, y = self._pos["rail"]
+        x, y = self._pos[name]
         return (x, y, nat.width, nat.height)
+
+    def rail_rect(self) -> tuple[int, int, int, int] | None:
+        """Monitor-space rect of the leaderboard rail, for the hover poll."""
+        return self._panel_rect("rail")
+
+    def hud_rect(self) -> tuple[int, int, int, int] | None:
+        """Monitor-space rect of the HUD, for the hover poll."""
+        return self._panel_rect("hud")
+
+    def set_hud_hovered(self, hovered: bool) -> None:
+        self.hud.set_hovered(hovered)
+
+    def set_forecast_live(self, live: bool) -> None:
+        self.hud.set_forecast_live(live)
 
     # -- update API (call from the GLib/asyncio loop) -------------------
     def set_phase(self, title: str, meta: str = "") -> None:

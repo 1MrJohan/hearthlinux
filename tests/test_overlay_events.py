@@ -81,6 +81,13 @@ def test_odds_survive_the_end_of_combat():
     assert win.last("set_damage") == (14, 9), "damage forecast was cleared too"
 
 
+def test_combat_end_collapses_the_forecast_rather_than_dropping_it():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    assert win.last("set_forecast_live") == (False,)
+
+
 def test_a_new_combat_replaces_the_previous_forecast():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
