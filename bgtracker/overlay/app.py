@@ -54,6 +54,10 @@ def _board_meta(board) -> str:
 class OverlayApp:
     """Owns the Gtk.Application + window; listener plugs into the Pipeline."""
 
+    # Class-level defaults so a bare __new__ (tests) still has them.
+    _in_combat = False
+    _shop_meta = ""
+
     def __init__(self):
         from gi.repository import Gio
 
@@ -143,6 +147,7 @@ class OverlayApp:
             return
         match event:
             case ev.GameStart():
+                self._in_combat = False
                 win.set_phase("Hero Select")
                 win.set_status("Waiting — choose your hero")
                 win.set_turn(None)
@@ -157,6 +162,7 @@ class OverlayApp:
             case ev.TurnChange(turn=t):
                 win.set_turn(t)
             case ev.CombatStart(snapshot=s):
+                self._in_combat = True
                 win.set_phase("Combat Forecast", _combat_meta(s))
                 win.set_status("")
                 win.set_turn(s.turn)
@@ -176,14 +182,17 @@ class OverlayApp:
             case ev.Standings(places=places):
                 win.set_standings(places)
             case ev.CombatEnd(snapshot=s):
-                you = s.friendly
-                win.set_phase("Recruit Phase", _hero_meta(you))
+                # The engine has resolved the fight, but the client is still
+                # animating it for another 20-45s. Bank the post-combat state
+                # and leave the display alone until ShopReady.
+                self._shop_meta = _hero_meta(s.friendly)
+            case ev.ShopReady() if self._in_combat:
+                self._in_combat = False
+                win.set_phase("Recruit Phase", self._shop_meta)
                 win.set_status("")
                 win.set_combat(False)
-                # The forecast is kept, not discarded: the fight resolves in
-                # seconds and the sim is awaited before the overlay hears about
-                # it at all, so it collapses to a hint here and comes back when
-                # the pointer is over the HUD. The next CombatStart replaces it.
+                # The forecast is kept, not discarded: it collapses to a hint
+                # here and comes back while the pointer is over the HUD.
                 win.set_forecast_live(False)
                 # The design shows the enemy board only during combat.
                 win.clear_board()
@@ -196,6 +205,7 @@ class OverlayApp:
                 else:
                     win.set_next_board("Next Opponent", "not scouted yet", None)
             case ev.GameEnd(placement=p):
+                self._in_combat = False
                 win.set_phase("Game Over", f"finished #{p}" if p else "")
                 win.set_status(f"Finished #{p}" if p else "Game over")
                 win.set_turn(None)

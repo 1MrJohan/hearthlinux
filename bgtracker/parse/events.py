@@ -36,6 +36,17 @@ class CombatEnd:
 
 
 @dataclass(frozen=True)
+class ShopReady:
+    """The combat animation finished and the player is back at the shop.
+
+    CombatEnd fires when the engine has *resolved* the fight, which happens
+    about a second after it starts; the client then spends 20-45s animating
+    it. Anything the player looks at — the phase title, the odds — must follow
+    this event instead, or it changes while they are still watching the fight.
+    """
+
+
+@dataclass(frozen=True)
 class NextOpponent:
     player_id: int
 
@@ -87,6 +98,7 @@ Event = (
     | TurnChange
     | CombatStart
     | CombatEnd
+    | ShopReady
     | NextOpponent
     | Standings
     | GameEnd

@@ -69,6 +69,13 @@ Hearthstone (Wine/Proton) → Power.log → tailer → hslog exporter → typed 
 
 - **Phase detection**: `BOARD_VISUAL_STATE` on the GAME entity (1 = shop,
   2 = combat); both boards are snapshotted at the 1→2 transition.
+  Power.log carries two streams of these. `GameState` is authoritative and is
+  what hslog parses, but it leaves combat ~1s after entering it — that is just
+  how long the engine takes to resolve the fight. `PowerTaskList` is the
+  client's animation queue, and its flip back to shop is when the player
+  actually stops watching (median 23s later, up to 48s). Snapshots and history
+  follow `GameState`; anything on screen follows the `ShopReady` event, which
+  is raised from the `PowerTaskList` marker.
 - **Odds accuracy**: the mapper currently covers stats/keywords/tier
   ("Tier 0"). `bgtracker stats` prints a calibration table (predicted vs
   actual win rate) that shows when mapping gaps matter; enchantment, hero

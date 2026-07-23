@@ -12,6 +12,7 @@ the entity tree at the 1->2 transition, which is when we snapshot.
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -39,6 +40,17 @@ COMBAT = 2
 
 # Hero tags that move a player's leaderboard HP.
 _HERO_HP_TAGS = frozenset({GameTag.HEALTH, GameTag.DAMAGE, GameTag.ARMOR})
+
+# Power.log carries two streams. GameState is the authoritative game state and
+# is what hslog parses; it flips out of combat about a second after flipping
+# in, because that is how long the engine takes to resolve the fight.
+# PowerTaskList is the client's animation queue — its flip back to shop is when
+# the player actually stops watching the battle (median 23s later, up to 48s).
+# Nothing the player looks at should be driven by the GameState timing.
+_ANIMATION_SHOP = re.compile(
+    r"PowerTaskList\.DebugPrintPower\(\).*"
+    r"TAG_CHANGE Entity=GameEntity tag=BOARD_VISUAL_STATE value=1"
+)
 
 
 class BGExporter(EntityTreeExporter):
@@ -263,11 +275,14 @@ class LiveGameProcessor:
     _queue: deque = field(default_factory=deque)
 
     def feed(self, lines: list[str]) -> list[ev.Event]:
+        shop_ready = 0
         for line in lines:
             # Non-log content (blank lines, truncation banners) has no
             # "D hh:mm:ss" prefix — skip it without ceremony.
             if not line or line[0] not in "DWE" or len(line) < 2 or line[1] != " ":
                 continue
+            if _ANIMATION_SHOP.search(line):
+                shop_ready += 1
             # A session log holds many games, but hslog's player registry
             # chokes when battletags reappear with new player ids. Each
             # CREATE_GAME gets a completely fresh parser instead. Check
@@ -283,7 +298,12 @@ class LiveGameProcessor:
                 self.parser.read_line(line)
             except Exception:
                 log.exception("parser choked on line: %r", line[:200])
-        return self._drain()
+        out = self._drain()
+        # Appended after the batch's parsed events so a combat's resolution
+        # always precedes its animation finishing. A live poll covers a
+        # fraction of a second, so nothing else can slip between them.
+        out.extend(ev.ShopReady() for _ in range(shop_ready))
+        return out
 
     def _register_and_advance(self) -> None:
         for pt in self.parser.games[len(self._tracks):]:

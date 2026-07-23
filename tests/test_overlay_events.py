@@ -69,6 +69,7 @@ def test_phase_title_flips_across_a_whole_game():
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     seen.append(win.last("set_phase")[0])
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.ShopReady(), None)
     seen.append(win.last("set_phase")[0])
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     seen.append(win.last("set_phase")[0])
@@ -81,19 +82,54 @@ def test_phase_title_flips_across_a_whole_game():
     ]
 
 
+def test_combat_display_survives_the_engine_resolving_the_fight():
+    """CombatEnd fires ~1s in; the player watches for 20-45s more.
+
+    Acting on it flips the HUD to Recruit Phase and collapses the odds while
+    the battle is still animating on screen.
+    """
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    assert win.last("set_phase")[0] == "Combat Forecast"
+    assert win.last("set_forecast_live") is None, "forecast collapsed too early"
+    assert win.last("clear_board") is None, "enemy board cleared mid-animation"
+
+
+def test_shop_ready_ends_the_combat_display():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_phase") == ("Recruit Phase", "18 HP · Tavern 3")
+    assert win.last("set_forecast_live") == (False,)
+    assert win.last("set_combat") == (False,)
+
+
+def test_shop_ready_outside_combat_is_ignored():
+    """The marker also fires around hero select; it must not clobber the phase."""
+    app, win = _app()
+    app.on_event(ev.GameStart(), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_phase")[0] == "Hero Select"
+
+
 def test_phase_meta_reports_your_hp_not_the_opponents():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     assert win.last("set_phase")[1].startswith("18 HP")   # friendly board
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.ShopReady(), None)
     assert win.last("set_phase")[1] == "18 HP · Tavern 3"
 
 
-def test_medallion_pulses_only_during_combat():
+def test_medallion_pulses_for_the_whole_visible_fight():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     assert win.last("set_combat") == (True,)
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    assert win.last("set_combat") == (True,), "stopped pulsing mid-animation"
+    app.on_event(ev.ShopReady(), None)
     assert win.last("set_combat") == (False,)
 
 
@@ -125,13 +161,6 @@ def test_odds_survive_the_end_of_combat():
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
     assert win.last("set_odds") == (63, 9, 28), "odds were cleared when combat ended"
     assert win.last("set_damage") == (14, 9), "damage forecast was cleared too"
-
-
-def test_combat_end_collapses_the_forecast_rather_than_dropping_it():
-    app, win = _app()
-    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
-    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
-    assert win.last("set_forecast_live") == (False,)
 
 
 def test_a_new_combat_replaces_the_previous_forecast():
