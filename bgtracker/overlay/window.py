@@ -32,6 +32,10 @@ from .widgets import BoardPanel  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+# Minimum grabbable body for a panel in layout mode, so an empty one is still
+# big enough to aim at.
+GRAB_MIN_W, GRAB_MIN_H = 160, 60
+
 
 class OverlayWindow(Gtk.Window):
     def __init__(self, application: Gtk.Application, cfg: Config | None = None):
@@ -84,6 +88,8 @@ class OverlayWindow(Gtk.Window):
         self._pos: dict[str, list[int]] = {}
         self._has_content: dict[str, bool] = {}
         self._drag_base = (0, 0)
+        self._dragging: str | None = None
+        self._region_rects: list[tuple[int, int, int, int]] = []
         self.lock_btn: Gtk.Button | None = None
 
         # -- HUD panel: phase, turn medallion, odds, damage -----------------
@@ -141,7 +147,11 @@ class OverlayWindow(Gtk.Window):
             self.lock_btn = Gtk.Button(label="✔ Lock layout")
             self.lock_btn.add_css_class("lockbtn")
             self.lock_btn.connect("clicked", self._on_lock)
-            self._lock_pos = (self._mon_w // 2 - int(90 * scale), 24)
+            # Bottom-centre, as in the mock. Emphatically not the top: that sits
+            # over Hearthstone's own UI, where a stray click silently drops you
+            # out of layout mode with no way back but editing the config.
+            self._lock_pos = (self._mon_w // 2 - int(90 * scale),
+                              self._mon_h - int(100 * scale))
             self.canvas.put(self.lock_btn, *self._lock_pos)
 
         theme.install(self.get_display(), scale)
@@ -151,6 +161,14 @@ class OverlayWindow(Gtk.Window):
     def _on_mapped(self) -> bool:
         for name in self._panels:
             self._clamp_panel(name)
+        if self.lock_btn is not None:
+            # Centre it exactly now that its size is known.
+            _, nat = self.lock_btn.get_preferred_size()
+            self._lock_pos = (
+                max(0, self._mon_w // 2 - nat.width // 2),
+                max(0, self._mon_h - nat.height - int(14 * self.scale)),
+            )
+            self.canvas.move(self.lock_btn, *self._lock_pos)
         return self._apply_input_region()
 
     # -- panel construction / dragging ----------------------------------
@@ -203,6 +221,7 @@ class OverlayWindow(Gtk.Window):
 
     def _drag_begin(self, _gesture, _sx, _sy, name):
         self._drag_base = tuple(self._pos[name])
+        self._dragging = name
 
     def _drag_update(self, _gesture, ox, oy, name):
         bx, by = self._drag_base
@@ -213,6 +232,7 @@ class OverlayWindow(Gtk.Window):
         self._apply_input_region()
 
     def _drag_end(self, _gesture, _ox, _oy, name):
+        self._dragging = None
         x, y = self._pos[name]
         update_config_values({f"pos_{name}_x": x, f"pos_{name}_y": y})
 
@@ -238,18 +258,29 @@ class OverlayWindow(Gtk.Window):
         if not self.edit:
             surface.set_input_region(cairo.Region())  # fully click-through
             return False
-        region = cairo.Region()
         items = [(self._pos[n][0], self._pos[n][1], w)
                  for n, w in self._panels.items() if w.get_visible()]
         if self.lock_btn is not None:
             items.append((self._lock_pos[0], self._lock_pos[1], self.lock_btn))
         pad = 8
+        rects = []
         for x, y, w in items:
             _, nat = w.get_preferred_size()
-            region.union(cairo.RectangleInt(
-                int(x - pad), int(y - pad),
-                int(nat.width + 2 * pad), int(nat.height + 2 * pad),
-            ))
+            # An empty panel in layout mode is barely a grip's worth of pixels;
+            # give it a grabbable body so it can still be dragged into place.
+            width = max(nat.width, GRAB_MIN_W)
+            height = max(nat.height, GRAB_MIN_H)
+            rects.append((int(x - pad), int(y - pad),
+                          int(width + 2 * pad), int(height + 2 * pad)))
+        # Panel sizes change with every board update; re-uploading an identical
+        # region hundreds of times a second is pure churn.
+        if rects == self._region_rects:
+            return False
+        self._region_rects = rects
+        log.debug("input region: %d rect(s) %s", len(rects), rects)
+        region = cairo.Region()
+        for rect in rects:
+            region.union(cairo.RectangleInt(*rect))
         surface.set_input_region(region)
         return False
 
@@ -270,8 +301,8 @@ class OverlayWindow(Gtk.Window):
         layout.
         """
         panel = self._panels[name]
-        if not panel.get_visible():
-            return
+        if not panel.get_visible() or self._dragging == name:
+            return  # never yank a panel out from under the pointer mid-drag
         _, nat = panel.get_preferred_size()
         if nat.width <= 0 or nat.height <= 0:
             return
