@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="display:flex;justify-content:center">
+  <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+    <div style="{{ colStyle }}">
+      <sc-if value="{{ hasArt }}" hint-placeholder-val="{{ true }}"><img src="{{ renderUrl }}" alt="{{ label }}" style="{{ renderImgStyle }}" /></sc-if>
+      <sc-if value="{{ noArt }}" hint-placeholder-val="{{ true }}"><div style="{{ slotStyle }}"><span style="{{ nameStyleC }}">{{ label }}</span></div></sc-if>
+      <div style="{{ statsStyle }}">{{ statLine }}</div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ isRedesign }}" hint-placeholder-val="{{ true }}">
+    <div style="{{ tileStyle }}">
+      <div style="{{ portraitWrapStyle }}">
+        <div style="{{ portraitStyle }}">
+          <sc-if value="{{ hasArt }}" hint-placeholder-val="{{ true }}"><img src="{{ artCrop }}" alt="{{ label }}" style="{{ artImgStyle }}" /></sc-if>
+        </div>
+        <span style="{{ atkStyle }}">{{ atk }}</span>
+        <span style="{{ hpStyle }}">{{ hp }}</span>
+      </div>
+      <div style="{{ nameStyle }}">{{ label }}</div>
+      <div style="{{ pipsWrapStyle }}">
+        <sc-for list="{{ pips }}" as="p" hint-placeholder-count="1">
+          <span style="{{ p.style }}">{{ p.l }}</span>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:110,&quot;height&quot;:150},&quot;label&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Imp Gang Boss&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;atk&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:2,&quot;tsType&quot;:&quot;number&quot;},&quot;hp&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:4,&quot;tsType&quot;:&quot;number&quot;},&quot;art&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;BRM_006&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Card&quot;},&quot;keywords&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Card&quot;},&quot;tint&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#b23a2e&quot;,&quot;options&quot;:[&quot;#b23a2e&quot;,&quot;#9fb0c0&quot;,&quot;#d8a53a&quot;,&quot;#7a5a2b&quot;,&quot;#8a6bc4&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Card&quot;},&quot;golden&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Card&quot;},&quot;skin&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;oak&quot;,&quot;parchment&quot;,&quot;current&quot;],&quot;default&quot;:&quot;oak&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Card&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const skin = p.skin || 'oak';
+    const label = p.label ?? 'Minion';
+    const atk = p.atk ?? 0, hp = p.hp ?? 0;
+    const golden = !!p.golden;
+    const tint = p.tint || '#6a8bb0';
+    const kw = String(p.keywords || '').toUpperCase();
+    const artId = p.art ? String(p.art) : '';
+    const hasArt = !!artId;
+    const artCrop = hasArt ? ('https://art.hearthstonejson.com/v1/256x/' + artId + '.jpg') : '';
+    const renderUrl = hasArt ? ('https://art.hearthstonejson.com/v1/render/latest/enUS/256x/' + artId + '.png') : '';
+    const MAP = { T:'#9bb0c3', D:'#ffd873', P:'#74c957', V:'#46b98a', W:'#86c9ef', R:'#d78cf0', S:'#c2cad6' };
+    const kwList = [...kw].filter(c => MAP[c]);
+
+    const isCurrent = skin === 'current';
+    const isParch = skin === 'parchment';
+    const isRedesign = !isCurrent;
+
+    // ---- Current (faithful recreation of the GTK overlay tile) ----
+    const flags = kwList.join('');
+    const statLine = `${atk}/${hp}${flags ? ' ' + flags : ''}`;
+    const colStyle = { display:'flex', flexDirection:'column', alignItems:'center', gap:'2px', width:'88px',
+      fontFamily:"'Cantarell','Ubuntu','Noto Sans',system-ui,sans-serif" };
+    const slotStyle = { width:'88px', height:'116px', borderRadius:'4px', display:'flex', alignItems:'center',
+      justifyContent:'center', padding:'4px', boxSizing:'border-box',
+      background:'rgba(255,255,255,0.03)', border:'1px dashed rgba(255,255,255,0.16)' };
+    const nameStyleC = { color:'#e8e8e8', fontSize:'12px', lineHeight:'1.15', textAlign:'center' };
+    const statsStyle = { color:'#e8e8e8', fontSize:'13px', fontWeight:'700', textAlign:'center' };
+
+    // ---- Redesign tiles (Dark Oak default, Parchment variant) ----
+    const portraitStyle = {
+      position:'relative', overflow:'hidden',
+      width:'52px', height:'52px', borderRadius:'50%',
+      background:`radial-gradient(circle at 38% 30%, rgba(255,255,255,0.6), ${tint} 52%, rgba(0,0,0,0.55))`,
+      boxShadow: isParch
+        ? 'inset 0 2px 5px rgba(255,255,255,0.35), inset 0 -3px 6px rgba(0,0,0,0.35)'
+        : 'inset 0 2px 6px rgba(255,255,255,0.28), inset 0 -4px 8px rgba(0,0,0,0.55)',
+      border: isParch ? '2px solid #8a6a3c' : '2px solid rgba(0,0,0,0.5)' };
+    // art crop is a square card-art frame; scale up + shift so the character face fills the circle
+    const artImgStyle = { position:'absolute', top:'-22%', left:'-6%', width:'112%', height:'150%',
+      objectFit:'cover', objectPosition:'center 32%' };
+    const renderImgStyle = { width:'82px', height:'auto', display:'block', filter:'drop-shadow(0 3px 5px rgba(0,0,0,0.6))' };
+    const portraitWrapStyle = { position:'relative', width:'58px', height:'58px' };
+
+    const gemBase = { position:'absolute', bottom:'-4px', width:'25px', height:'25px', borderRadius:'50%',
+      display:'flex', alignItems:'center', justifyContent:'center', fontSize:'14px', fontWeight:'800',
+      color:'#fff', textShadow:'0 1px 2px rgba(0,0,0,0.85)', fontFamily:"'Cinzel',serif",
+      border:'1.5px solid rgba(255,255,255,0.35)', boxShadow:'0 2px 4px rgba(0,0,0,0.5)' };
+    const atkStyle = { ...gemBase, left:'-5px',
+      background:'radial-gradient(circle at 40% 32%, #ffe6a6, #e0a53a 55%, #a9701c)' };
+    const hpStyle = { ...gemBase, right:'-5px',
+      background:'radial-gradient(circle at 40% 32%, #ff9e84, #d5462c 55%, #8f2317)' };
+
+    const nameStyle = { fontSize:'10px', lineHeight:'1.05', textAlign:'center', maxWidth:'80px',
+      fontWeight: isParch ? '700' : '600', letterSpacing:'0.2px',
+      color: isParch ? '#4a3720' : '#f1e2c4',
+      textShadow: isParch ? 'none' : '0 1px 2px rgba(0,0,0,0.8)',
+      display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden',
+      fontFamily:"'Alegreya Sans','Segoe UI',sans-serif" };
+    const pipsWrapStyle = { display:'flex', gap:'2px', flexWrap:'wrap', justifyContent:'center', minHeight:'13px' };
+    const pips = kwList.map(c => ({ l:c, style:{
+      width:'13px', height:'13px', borderRadius:'3px', fontSize:'9px', fontWeight:'800',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      color:'#1a1206', background:MAP[c], boxShadow:'0 1px 1px rgba(0,0,0,0.5)',
+      fontFamily:"'Alegreya Sans',sans-serif" } }));
+
+    const tileStyle = { position:'relative', width:'80px', boxSizing:'border-box',
+      display:'flex', flexDirection:'column', alignItems:'center', gap:'3px', padding:'6px 4px 5px',
+      borderRadius:'10px',
+      background: isParch
+        ? 'linear-gradient(180deg,#efe3c6,#dcc99e)'
+        : 'linear-gradient(180deg,rgba(46,33,21,0.96),rgba(24,16,9,0.97))',
+      border: golden ? '2px solid transparent' : (isParch ? '1.5px solid #b8935a' : '1px solid rgba(190,150,84,0.4)'),
+      boxShadow: golden
+        ? '0 0 0 2px #7a5a20, 0 0 14px rgba(246,210,120,0.75), inset 0 0 12px rgba(246,210,120,0.35)'
+        : (isParch ? '0 3px 8px rgba(60,40,18,0.4)' : '0 4px 10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06)'),
+      backgroundClip: golden ? 'padding-box' : undefined };
+    if (golden) {
+      tileStyle.backgroundImage = isParch
+        ? 'linear-gradient(180deg,#efe3c6,#dcc99e), linear-gradient(140deg,#fff2b0,#d4af37 45%,#8a6410)'
+        : 'linear-gradient(180deg,rgba(46,33,21,0.96),rgba(24,16,9,0.97)), linear-gradient(140deg,#fff2b0,#d4af37 45%,#8a6410)';
+      tileStyle.backgroundOrigin = 'border-box';
+      tileStyle.backgroundClip = 'padding-box, border-box';
+    }
+
+    return { skin, label, atk, hp, isCurrent, isRedesign, statLine,
+      hasArt, noArt:!hasArt, artCrop, renderUrl, artImgStyle, renderImgStyle,
+      colStyle, slotStyle, nameStyleC, statsStyle,
+      tileStyle, portraitWrapStyle, portraitStyle, atkStyle, hpStyle, nameStyle, pipsWrapStyle, pips };
+  }
+}
+</script>
+</body>
+</html>
