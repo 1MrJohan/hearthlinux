@@ -1,7 +1,9 @@
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 from bgtracker.sim.mapper import to_battle_info
-from bgtracker.state.game import BoardSnapshot
+from dataclasses import replace
+
+from bgtracker.state.game import BoardSnapshot, Minion
 
 from .synthetic import minimal_bg_game
 
@@ -33,3 +35,36 @@ def test_maps_snapshot_to_battle_info():
 def test_incomplete_snapshot_maps_to_none():
     snap = BoardSnapshot(turn=1, friendly=None, opponent=None)
     assert to_battle_info(snap) is None
+
+
+def test_hand_is_sent_so_start_of_combat_cards_are_simulated():
+    """Flighty Scout, Diremuck Forager and friends act from hand.
+
+    Without the hand the simulator sees a smaller board than the one that
+    actually fights, which reads as a near-certain loss for a hand-based build.
+    """
+    snap = snapshot_from_synthetic()
+    held = Minion(entity_id=99, card_id="BG32_330", position=0, attack=7, health=7)
+    snap = replace(snap, friendly=replace(snap.friendly, hand=(held,)))
+
+    player = to_battle_info(snap)["playerBoard"]["player"]
+    [in_hand] = player["hand"]
+    assert (in_hand["cardId"], in_hand["attack"], in_hand["health"]) == ("BG32_330", 7, 7)
+    assert in_hand["friendly"] is True
+
+
+def test_opponent_hand_is_never_sent():
+    """Their hand is hidden — the cards carry no id, so nothing to project.
+
+    Sending a guessed or empty opponent hand would let the simulator invent
+    start-of-combat effects the opponent may not have.
+    """
+    snap = snapshot_from_synthetic()
+    assert snap.opponent.hand == ()
+    assert "hand" not in to_battle_info(snap)["opponentBoard"]["player"]
+
+
+def test_hand_is_omitted_when_the_player_holds_nothing():
+    snap = snapshot_from_synthetic()
+    snap = replace(snap, friendly=replace(snap.friendly, hand=()))
+    assert "hand" not in to_battle_info(snap)["playerBoard"]["player"]

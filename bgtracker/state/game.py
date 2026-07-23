@@ -73,6 +73,12 @@ class PlayerBoard:
     armor: int
     tier: int
     minions: tuple[Minion, ...] = ()
+    # Minions held in hand. Several Battlegrounds cards act from hand at the
+    # start of combat — Flighty Scout summons a copy of itself, Diremuck
+    # Forager pulls Murlocs out, Choral Mrrrglr eats the hand's stats — so a
+    # forecast that ignores the hand can be wildly wrong for those builds.
+    # Only the friendly hand is ever populated; the opponent's is hidden.
+    hand: tuple[Minion, ...] = ()
     hero_power_id: str | None = None      # active hero power (start-of-combat)
     hero_power_used: bool = False
     # tribe/aura bonuses applied to minions summoned during combat; keys match
@@ -205,11 +211,20 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     hero = None
     hero_power = None
     minions: list[Card] = []
+    hand: list[Card] = []
     enchants: dict[int, list[Enchantment]] = {}
     for entity in game.entities:
-        if not isinstance(entity, Card) or tag(entity, GameTag.ZONE) != Zone.PLAY:
+        if not isinstance(entity, Card):
             continue
         if tag(entity, GameTag.CONTROLLER) != player_id:
+            continue
+        zone = tag(entity, GameTag.ZONE)
+        if zone == Zone.HAND:
+            # A card with no id is an opponent's hidden card; nothing to send.
+            if entity.type == CardType.MINION and entity.card_id:
+                hand.append(entity)
+            continue
+        if zone != Zone.PLAY:
             continue
         ctype = entity.type
         if ctype == CardType.MINION:
@@ -241,6 +256,7 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
         armor=tag(hero, GameTag.ARMOR) if hero else 0,
         tier=tag(hero, GameTag.PLAYER_TECH_LEVEL, 1) if hero else 1,
         minions=tuple(_minion_from(m, enchants) for m in minions),
+        hand=tuple(_minion_from(m, enchants) for m in hand),
         hero_power_id=hero_power.card_id if hero_power else None,
         hero_power_used=bool(tag(hero_power, GameTag.EXHAUSTED)) if hero_power else False,
         global_info=_global_info(player),
