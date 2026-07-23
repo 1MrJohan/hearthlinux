@@ -89,18 +89,21 @@ async def run(overlay, interval: float = 4.0) -> None:
     buffs = ev.Buffs(entries=(("Blood Gem", 2, 2), ("Elemental", 4, 3)),
                      spells=("BG28_800", "BG28_168"))  # Careful Investment, Shiny Ring
 
-    # (event, prediction) pairs, replayed in order.
+    # (event, prediction, dwell) — dwell is how long the resulting state stays
+    # on screen. Each phase gets a full interval so the flip between Hero
+    # Select, Combat Forecast and Recruit Phase is actually watchable; the
+    # bookkeeping events in between pass straight through.
     script = [
-        (ev.GameStart(), None),
-        (_standings(), None),
-        (ev.HeroPicked(card_id="TB_BaconShop_HERO_43"), None),
-        (ev.TurnChange(turn=7), None),
-        (buffs, None),
-        (ev.CombatStart(snapshot=combat), odds),
-        (ev.NextOpponent(player_id=4), None),
-        (ev.CombatEnd(snapshot=combat), None),
+        (ev.GameStart(), None, interval),
+        (_standings(), None, 0.0),
+        (ev.HeroPicked(card_id="TB_BaconShop_HERO_43"), None, 0.0),
+        (ev.TurnChange(turn=7), None, 0.0),
+        (buffs, None, 0.0),
+        (ev.CombatStart(snapshot=combat), odds, interval),
+        (ev.NextOpponent(player_id=4), None, 0.0),
+        (ev.CombatEnd(snapshot=combat), None, interval),
     ]
 
-    for event, prediction in itertools.cycle(script):
+    for event, prediction, dwell in itertools.cycle(script):
         overlay.on_event(event, prediction)
-        await asyncio.sleep(interval if isinstance(event, (ev.CombatStart, ev.CombatEnd)) else 0.4)
+        await asyncio.sleep(dwell or 0.05)

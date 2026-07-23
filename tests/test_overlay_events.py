@@ -59,6 +59,52 @@ ODDS = SimResult(won_percent=63, tied_percent=9, lost_percent=28,
 SNAPSHOT = BoardSnapshot(turn=7, friendly=_board(18), opponent=_board(27, 5))
 
 
+def test_phase_title_flips_across_a_whole_game():
+    """Hero select -> combat -> recruit -> combat -> game over."""
+    app, win = _app()
+    seen = []
+
+    app.on_event(ev.GameStart(), None)
+    seen.append(win.last("set_phase")[0])
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    seen.append(win.last("set_phase")[0])
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    seen.append(win.last("set_phase")[0])
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    seen.append(win.last("set_phase")[0])
+    app.on_event(ev.GameEnd(placement=1), None)
+    seen.append(win.last("set_phase")[0])
+
+    assert seen == [
+        "Hero Select", "Combat Forecast", "Recruit Phase",
+        "Combat Forecast", "Game Over",
+    ]
+
+
+def test_phase_meta_reports_your_hp_not_the_opponents():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    assert win.last("set_phase")[1].startswith("18 HP")   # friendly board
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    assert win.last("set_phase")[1] == "18 HP · Tavern 3"
+
+
+def test_medallion_pulses_only_during_combat():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    assert win.last("set_combat") == (True,)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    assert win.last("set_combat") == (False,)
+
+
+def test_turn_number_tracks_turn_changes():
+    app, win = _app()
+    app.on_event(ev.TurnChange(turn=7), None)
+    assert win.last("set_turn") == (7,)
+    app.on_event(ev.GameStart(), None)
+    assert win.last("set_turn") == (None,)
+
+
 def test_combat_start_shows_the_forecast():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)

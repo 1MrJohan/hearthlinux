@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 
 from bgtracker import discovery
@@ -108,6 +109,43 @@ async def live(overlay=None) -> None:
             await sim.close()
 
 
+def _warn_if_already_running() -> None:
+    """Point out other live instances before they get blamed on the code.
+
+    Launches are deliberately NON_UNIQUE so a stale instance can never swallow
+    a new one, but the flip side is that an old process keeps running the code
+    it was started with — editing a file changes nothing about it. Two
+    overlays also stack on screen and split clicks between them.
+    """
+    import os
+
+    me = os.getpid()
+    others = []
+    try:
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit() or int(entry.name) == me:
+                continue
+            try:
+                argv = entry.joinpath("cmdline").read_bytes().split(b"\0")
+                started = entry.stat().st_mtime
+            except OSError:
+                continue  # process exited, or not ours to read
+            # argv[0] must be the interpreter itself, so wrappers that merely
+            # mention the module (timeout, sh -c, the shell history) don't count.
+            if argv and b"python" in argv[0] and b"bgtracker" in argv:
+                others.append((int(entry.name), started))
+    except OSError:
+        return  # no /proc; nothing to check
+    for pid, started in others:
+        age = (time.time() - started) / 60
+        print(
+            f"warning: bgtracker is already running (pid {pid}, started "
+            f"{age:.0f} min ago). It is still running the code it launched "
+            f"with. Use `kill {pid}` if you meant to replace it.",
+            file=sys.stderr,
+        )
+
+
 def _reexec_with_layer_shell_preload() -> None:
     """gtk4-layer-shell must link before libwayland; from Python that means
     LD_PRELOAD. Re-exec ourselves once with it set."""
@@ -173,7 +211,9 @@ def main() -> None:
         elif args.replay:
             asyncio.run(replay(args.replay, args.odds, args.record))
         elif args.overlay:
+            # After the re-exec, so it is not printed twice.
             _reexec_with_layer_shell_preload()
+            _warn_if_already_running()
             from bgtracker.overlay.app import OverlayApp
 
             overlay = OverlayApp()
@@ -184,6 +224,7 @@ def main() -> None:
             else:
                 overlay.run_with(live(overlay))
         else:
+            _warn_if_already_running()
             asyncio.run(live())
     except KeyboardInterrupt:
         sys.exit(0)
