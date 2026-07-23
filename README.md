@@ -36,6 +36,35 @@ cover the overlay).
 .venv/bin/python -m bgtracker --replay FILE --odds   # replay a saved Power.log
 ```
 
+### Launching with the game
+
+`scripts/steam-launch.sh` runs the tracker for exactly as long as Hearthstone
+is up. Point Steam at it — *Properties > Launch Options*:
+
+```
+/path/to/hs-bg-tracker/scripts/steam-launch.sh %command%
+```
+
+Or run it standalone with no arguments (Lutris, Bottles, hand-launched):
+`scripts/steam-launch.sh &`.
+
+It watches for the `Hearthstone.exe` process rather than tying itself to the
+wrapper, because the wrapper's lifetime is the whole Battle.net session — it
+spans time at the launcher and outlives quitting the game. Quitting and
+reopening within one session works. Each start uses `--replace`, so a game
+always gets a tracker running current code. Activity is logged to
+`~/.cache/hs-bg-tracker/launch.log`.
+
+Detection matches the process *name*, never the command line — a cmdline match
+also hits any shell or launcher that merely mentions the game. If your build
+reports a different name (check with `pgrep -x Hearthstone.exe` while in a
+match), set `BGTRACKER_GAME_PROC` to the right one.
+
+A systemd user service is the tempting alternative and the awkward one: the
+overlay needs `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR` and `DISPLAY` (the hover
+poll talks to XWayland) plus the `gtk4-layer-shell` `LD_PRELOAD`. A child of
+the game launch inherits all of that; a user unit does not.
+
 Restarting is cheap and safe mid-game: the tailer reads each session log from
 the top, so a fresh tracker replays the whole session (~3s for an 86MB log)
 and rebuilds the current game's state. You never need to quit Hearthstone or
