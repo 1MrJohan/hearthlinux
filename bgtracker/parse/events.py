@@ -52,6 +52,18 @@ class GameEnd:
     placement: int | None
 
 
+@dataclass(frozen=True)
+class Buffs:
+    """Friendly player's tavern buffs and held tavern spells/trinkets.
+
+    entries: (label, atk, health) accumulating counters.
+    spells:  card ids of persistent tavern spells/trinkets held.
+    """
+
+    entries: tuple[tuple[str, int, int], ...]
+    spells: tuple[str, ...] = ()
+
+
 Event = (
     GameStart
     | HeroPicked
@@ -61,4 +73,5 @@ Event = (
     | NextOpponent
     | Standings
     | GameEnd
+    | Buffs
 )

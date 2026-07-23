@@ -16,6 +16,7 @@ CACHE_FILE = CACHE_DIR / "cards.json"
 CACHE_MAX_AGE = 7 * 24 * 3600
 
 _by_id: dict[str, dict] = {}
+_pool_spells: set[str] | None = None
 
 
 def load(refresh: bool = False) -> bool:
@@ -39,6 +40,8 @@ def load(refresh: bool = False) -> bool:
     if not CACHE_FILE.is_file():
         return False
     _by_id = {c["id"]: c for c in json.loads(CACHE_FILE.read_bytes())}
+    global _pool_spells
+    _pool_spells = None
     return True
 
 
@@ -51,3 +54,16 @@ def name(card_id: str | None) -> str:
 
 def get(card_id: str) -> dict | None:
     return _by_id.get(card_id)
+
+
+def pool_spell_ids() -> set[str]:
+    """Card ids of Battlegrounds pool spells (Easterly Winds & co).
+
+    Classifies by the stable `isBattlegroundsPoolSpell` flag rather than the
+    entity CARDTYPE, which the game morphs at runtime. Recomputed until the DB
+    is actually loaded so a pre-load call can't cache an empty set.
+    """
+    global _pool_spells
+    if _pool_spells is None and _by_id:
+        _pool_spells = {cid for cid, c in _by_id.items() if c.get("isBattlegroundsPoolSpell")}
+    return _pool_spells or set()

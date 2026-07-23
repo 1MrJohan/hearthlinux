@@ -43,17 +43,34 @@ def report(path: Path = DB_FILE) -> str:
             prev = rating
 
     lines.append("")
-    lines.append("== simulator calibration (predicted win% vs actual) ==")
+    lines.append("== simulator calibration ==")
+    lines.append("  predicted win% -> actual outcomes (ties are damage-free, not misses):")
     buckets = conn.execute(
-        "SELECT MIN(CAST(predicted_win / 10 AS INT), 9) AS bucket,"
-        " COUNT(*), SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END)"
+        "SELECT MIN(CAST(predicted_win / 10 AS INT), 9) AS bucket, COUNT(*),"
+        " SUM(outcome = 'win'), SUM(outcome = 'tie'), SUM(outcome = 'loss')"
         " FROM combats WHERE predicted_win IS NOT NULL AND outcome IS NOT NULL"
         " GROUP BY bucket ORDER BY bucket"
     ).fetchall()
     if not buckets:
-        lines.append("  (no recorded combats with predictions)")
-    for bucket, n, wins in buckets:
+        lines.append("    (no recorded combats with predictions)")
+    for bucket, n, wins, ties, losses in buckets:
         low = min(bucket, 9) * 10
-        lines.append(f"  predicted {low:3d}-{low + 10:3d}%: {n:4d} combats, actual win {100 * wins / n:.0f}%")
+        lines.append(
+            f"    {low:3d}-{low + 10:3d}%: {n:4d} combats  "
+            f"win {100 * wins / n:3.0f}%  tie {100 * ties / n:3.0f}%  loss {100 * losses / n:3.0f}%"
+        )
+    # Loss calibration is the damage-relevant view: how often a predicted loss
+    # actually costs you HP.
+    lines.append("")
+    lines.append("  predicted loss% -> actual loss% (damage-relevant):")
+    loss_buckets = conn.execute(
+        "SELECT MIN(CAST(predicted_loss / 10 AS INT), 9) AS bucket, COUNT(*),"
+        " SUM(outcome = 'loss')"
+        " FROM combats WHERE predicted_loss IS NOT NULL AND outcome IS NOT NULL"
+        " GROUP BY bucket ORDER BY bucket"
+    ).fetchall()
+    for bucket, n, losses in loss_buckets:
+        low = min(bucket, 9) * 10
+        lines.append(f"    {low:3d}-{low + 10:3d}%: {n:4d} combats, actual loss {100 * losses / n:.0f}%")
     conn.close()
     return "\n".join(lines)

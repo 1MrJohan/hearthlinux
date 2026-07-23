@@ -17,7 +17,6 @@ gi.require_version("Gtk", "4.0")
 from gi.events import GLibEventLoopPolicy  # noqa: E402
 from gi.repository import Gtk  # noqa: E402
 
-from bgtracker.headless import render_board_line  # noqa: E402
 from bgtracker.data import cards  # noqa: E402
 from bgtracker.parse import events as ev  # noqa: E402
 from bgtracker.sim.client import SimResult  # noqa: E402
@@ -98,7 +97,8 @@ class OverlayApp:
                 win.set_status("game started — pick a hero")
                 win.set_odds(None, None, None)
                 win.clear_board()
-                win.set_memory("")
+                win.clear_next_board()
+                win.set_buffs(())
             case ev.HeroPicked(card_id=cid):
                 win.set_status(f"playing {cards.name(cid)}")
             case ev.TurnChange(turn=t):
@@ -115,6 +115,8 @@ class OverlayApp:
                 else:
                     win.set_odds(None, None, None)
                 win.set_board("vs", s.opponent)
+            case ev.Buffs(entries=e, spells=sp):
+                win.set_buffs(e, sp)
             case ev.CombatEnd(snapshot=s):
                 you = s.friendly
                 if you:
@@ -122,23 +124,19 @@ class OverlayApp:
             case ev.NextOpponent(player_id=pid) if self.pipeline is not None:
                 seen = self.pipeline.memory.last_seen(pid)
                 if seen and seen.board:
-                    win.set_memory(
-                        f"next: {cards.name(seen.board.hero_card_id)} "
-                        f"(turn {seen.turn}): {render_board_line(seen.board)}"
+                    win.set_next_board(
+                        f"next (last seen turn {seen.turn})", seen.board
                     )
                 else:
-                    win.set_memory("next opponent: not seen yet")
+                    win.set_next_board("next opponent — not seen yet", None)
             case ev.GameEnd(placement=p):
                 win.set_status(f"finished #{p}" if p else "game over")
                 win.set_odds(None, None, None)
                 win.clear_board()
                 win.clear_hover_board()
                 self.standings = ()
-                win.set_memory("")
-
-    def show_memory(self, text: str) -> None:
-        if self.window:
-            self.window.set_memory(text)
+                win.clear_next_board()
+                win.set_buffs(())
 
     def run_with(self, coro: Coroutine) -> None:
         """Run the GTK app and the given coroutine on one shared loop."""

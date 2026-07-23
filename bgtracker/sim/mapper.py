@@ -38,16 +38,24 @@ def _entity(minion: Minion, friendly: bool) -> dict:
 
 
 def _board(board: PlayerBoard, friendly: bool) -> dict:
+    # NOTE: hero powers are deliberately NOT sent. The sim needs per-power
+    # `info` state to apply start-of-combat effects correctly; sending just an
+    # id (info=0) makes it misapply even non-combat powers (verified: swung a
+    # 16% combat to 0%). globalInfo is safe — it only buffs minions summoned
+    # during combat to match the current tribe-aura level.
+    player = {
+        "cardId": board.hero_card_id or "",
+        "entityId": board.hero_entity_id,
+        "hpLeft": board.health + board.armor,
+        "tavernTier": board.tier,
+        "heroPowers": [],
+        "questEntities": [],
+        "friendly": friendly,
+    }
+    if board.global_info:
+        player["globalInfo"] = board.global_info
     return {
-        "player": {
-            "cardId": board.hero_card_id or "",
-            "entityId": board.hero_entity_id,
-            "hpLeft": board.health + board.armor,
-            "tavernTier": board.tier,
-            "heroPowers": [],
-            "questEntities": [],
-            "friendly": friendly,
-        },
+        "player": player,
         "board": [_entity(m, friendly) for m in board.minions],
     }
 

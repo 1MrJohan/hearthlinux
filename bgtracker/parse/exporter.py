@@ -22,7 +22,13 @@ from hslog import packets as hspackets
 from hslog.export import EntityTreeExporter
 
 from bgtracker.parse import events as ev
-from bgtracker.state.game import BoardSnapshot, project_player_board, tag
+from bgtracker.state.game import (
+    BoardSnapshot,
+    project_player_board,
+    read_active_spells,
+    read_buffs,
+    tag,
+)
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +53,9 @@ class BGExporter(EntityTreeExporter):
         self._end_emitted = False
         self._standings_dirty = False
         self._standings: tuple = ()
+        # (entries, spells) — seeded empty so the first read of an unbuffed
+        # player doesn't look like a change and emit a no-op Buffs event.
+        self._buffs: tuple = ((), ())
 
     # -- friendly player detection -------------------------------------
     # Only the local player's cards are revealed in their HAND zone (hero
@@ -103,6 +112,16 @@ class BGExporter(EntityTreeExporter):
         if snap.opponent is not None:
             self._pending_combat = False
             self._emit(ev.CombatStart(snapshot=snap))
+
+    def maybe_emit_buffs(self):
+        fid = self.friendly_player_id()
+        if fid is None:
+            return
+        entries = read_buffs(self.game, fid).entries
+        spells = read_active_spells(self.game, fid)
+        if (entries, spells) != self._buffs:
+            self._buffs = (entries, spells)
+            self._emit(ev.Buffs(entries=entries, spells=spells))
 
     def maybe_emit_hero(self):
         hero = self.friendly_hero()
@@ -289,6 +308,7 @@ class LiveGameProcessor:
                 track.exporter.maybe_emit_hero()
                 track.exporter.maybe_emit_combat()
                 track.exporter.maybe_emit_standings()
+                track.exporter.maybe_emit_buffs()
 
     @staticmethod
     def _is_complete(packet, is_last: bool) -> bool:
