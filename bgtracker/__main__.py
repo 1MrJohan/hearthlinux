@@ -131,6 +131,8 @@ def main() -> None:
     parser.add_argument("value", nargs="?", type=int, help="rating value for the mmr command")
     parser.add_argument("--replay", type=Path, help="replay a saved Power.log file")
     parser.add_argument("--overlay", action="store_true", help="show the on-screen overlay")
+    parser.add_argument("--demo", action="store_true",
+                        help="with --overlay: feed the overlay fake data (no game needed)")
     parser.add_argument("--odds", action="store_true", help="run combat odds during replay")
     parser.add_argument("--record", action="store_true", help="write replayed games to history")
     parser.add_argument("--no-names", action="store_true", help="skip card-name DB download")
@@ -175,7 +177,12 @@ def main() -> None:
             from bgtracker.overlay.app import OverlayApp
 
             overlay = OverlayApp()
-            overlay.run_with(live(overlay))
+            if args.demo:
+                from bgtracker.overlay import demo
+
+                overlay.run_with(demo.run(overlay))
+            else:
+                overlay.run_with(live(overlay))
         else:
             asyncio.run(live())
     except KeyboardInterrupt:

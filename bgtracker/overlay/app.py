@@ -26,6 +26,31 @@ from .window import OverlayWindow  # noqa: E402
 log = logging.getLogger(__name__)
 
 
+def _hero_meta(board) -> str:
+    """`18 HP · Tavern 3` — the dim line beside the phase title."""
+    if board is None:
+        return ""
+    return f"{board.health + board.armor} HP · Tavern {board.tier}"
+
+
+def _combat_meta(snapshot) -> str:
+    """`18 HP · vs Tickatus` — your HP and who you are up against."""
+    you, opponent = snapshot.friendly, snapshot.opponent
+    hp = f"{you.health + you.armor} HP" if you else ""
+    versus = f"vs {cards.name(opponent.hero_card_id)}" if opponent else ""
+    return " · ".join(part for part in (hp, versus) if part)
+
+
+def _board_meta(board) -> str:
+    """`Tickatus · 27 HP · Tavern 5` — the enemy board's subtitle."""
+    if board is None:
+        return ""
+    return (
+        f"{cards.name(board.hero_card_id)} · "
+        f"{board.health + board.armor} HP · Tavern {board.tier}"
+    )
+
+
 class OverlayApp:
     """Owns the Gtk.Application + window; listener plugs into the Pipeline."""
 
@@ -49,36 +74,54 @@ class OverlayApp:
         if win is None:
             return
         # Slot i is leaderboard position i+1; match by place, not list index.
-        entry = next((e for e in self.standings if e[0] == (slot + 1)), None) if slot is not None else None
+        entry = next((e for e in self.standings if e.place == (slot + 1)), None) if slot is not None else None
+        win.set_hot_place(entry.place if entry else None)
         if entry is None:
             if slot is not None:
                 log.info("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, self.standings)
             win.clear_hover_board()
             return
-        place, player_id, hero_card_id = entry
-        seen = self.pipeline.memory.last_seen(player_id) if self.pipeline else None
+        seen = self.pipeline.memory.last_seen(entry.player_id) if self.pipeline else None
         log.info(
             "hover-lookup: slot %s -> place %s %s pid=%s seen=%s",
-            slot, place, hero_card_id, player_id, f"turn {seen.turn}" if seen else None,
+            slot, entry.place, entry.hero_card_id, entry.player_id,
+            f"turn {seen.turn}" if seen else None,
         )
-        if seen:
-            win.set_hover_board(
-                f"#{place} {cards.name(hero_card_id)} — last seen turn {seen.turn}",
-                seen.board,
-            )
+        if entry.dead:
+            status = "eliminated"
+        elif seen:
+            status = f"last seen · turn {seen.turn}"
+        elif entry.you:
+            status = "this is you"
         else:
-            win.set_hover_board(f"#{place} {cards.name(hero_card_id)} — not fought yet", None)
+            status = "not scouted yet"
+        win.set_hover_board(
+            f"#{entry.place} {cards.name(entry.hero_card_id)}",
+            status,
+            seen.board if seen else None,
+            hero_card_id=entry.hero_card_id,
+            dead=entry.dead,
+        )
 
     def _on_activate(self, app):
         from bgtracker.config import load_config
 
+        from . import theme
+
+        # Must precede any widget construction: Pango caches the face it picks
+        # for a description, so one lookup before registration would pin the
+        # whole overlay to the fallback font for the process's lifetime.
+        theme.register_fonts()
         cfg = load_config()
         self.window = OverlayWindow(application=app, cfg=cfg)
         self.window.present()
         if cfg.extra.get("hover_strips", True):
             from .hover import HoverStrips
 
-            self.hover = HoverStrips(application=app, cfg=cfg, on_slot=self._on_hover_slot)
+            self.hover = HoverStrips(
+                application=app, cfg=cfg, on_slot=self._on_hover_slot,
+                rail_rect=self.window.rail_rect,
+            )
             self.hover.present()
 
     # Pipeline listener -------------------------------------------------
@@ -94,17 +137,24 @@ class OverlayApp:
             return
         match event:
             case ev.GameStart():
-                win.set_status("game started — pick a hero")
+                win.set_phase("Hero Select")
+                win.set_status("Waiting — choose your hero")
+                win.set_turn(None)
+                win.set_combat(False)
                 win.set_odds(None, None, None)
                 win.clear_board()
                 win.clear_next_board()
+                win.set_standings(())
                 win.set_buffs(())
             case ev.HeroPicked(card_id=cid):
-                win.set_status(f"playing {cards.name(cid)}")
+                win.set_status(f"Playing {cards.name(cid)}")
             case ev.TurnChange(turn=t):
-                win.set_status(f"turn {t}")
+                win.set_turn(t)
             case ev.CombatStart(snapshot=s):
-                win.set_status(f"combat — turn {s.turn}")
+                win.set_phase("Combat Forecast", _combat_meta(s))
+                win.set_status("")
+                win.set_turn(s.turn)
+                win.set_combat(True)
                 if prediction is not None:
                     win.set_odds(
                         prediction.won_percent,
@@ -114,27 +164,37 @@ class OverlayApp:
                     win.set_damage(prediction.avg_damage_won, prediction.avg_damage_lost)
                 else:
                     win.set_odds(None, None, None)
-                win.set_board("vs", s.opponent)
+                win.set_board("Enemy Board", _board_meta(s.opponent), s.opponent)
             case ev.Buffs(entries=e, spells=sp):
                 win.set_buffs(e, sp)
+            case ev.Standings(places=places):
+                win.set_standings(places)
             case ev.CombatEnd(snapshot=s):
                 you = s.friendly
-                if you:
-                    win.set_status(f"shopping — HP {you.health + you.armor}, tier {you.tier}")
+                win.set_phase("Recruit Phase", _hero_meta(you))
+                win.set_status("")
+                win.set_combat(False)
+                win.set_odds(None, None, None)
+                # The design shows the enemy board only during combat.
+                win.clear_board()
             case ev.NextOpponent(player_id=pid) if self.pipeline is not None:
                 seen = self.pipeline.memory.last_seen(pid)
                 if seen and seen.board:
                     win.set_next_board(
-                        f"next (last seen turn {seen.turn})", seen.board
+                        "Next Opponent", f"last seen · turn {seen.turn}", seen.board
                     )
                 else:
-                    win.set_next_board("next opponent — not seen yet", None)
+                    win.set_next_board("Next Opponent", "not scouted yet", None)
             case ev.GameEnd(placement=p):
-                win.set_status(f"finished #{p}" if p else "game over")
+                win.set_phase("Game Over", f"finished #{p}" if p else "")
+                win.set_status(f"Finished #{p}" if p else "Game over")
+                win.set_turn(None)
+                win.set_combat(False)
                 win.set_odds(None, None, None)
                 win.clear_board()
                 win.clear_hover_board()
                 self.standings = ()
+                win.set_standings(())
                 win.clear_next_board()
                 win.set_buffs(())
 

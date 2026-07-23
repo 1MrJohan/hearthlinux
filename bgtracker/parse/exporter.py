@@ -37,6 +37,9 @@ BOB_HERO_ID = "TB_BaconShopBob"
 SHOP = 1
 COMBAT = 2
 
+# Hero tags that move a player's leaderboard HP.
+_HERO_HP_TAGS = frozenset({GameTag.HEALTH, GameTag.DAMAGE, GameTag.ARMOR})
+
 
 class BGExporter(EntityTreeExporter):
     """EntityTreeExporter that emits BG events as tag changes stream in."""
@@ -168,13 +171,19 @@ class BGExporter(EntityTreeExporter):
             self._standings_dirty = True
             if self._ended:
                 self._maybe_emit_end()
+        elif gametag in _HERO_HP_TAGS and getattr(entity, "type", None) == CardType.HERO:
+            # The rail shows live HP, which changes far more often than a
+            # player's place. maybe_emit_standings() dedupes, so flagging on
+            # every hero HP tick costs nothing but keeps the numbers current.
+            self._standings_dirty = True
         return entity
 
     def maybe_emit_standings(self):
         if not self._standings_dirty:
             return
         self._standings_dirty = False
-        places: dict[int, tuple[int, int, str | None]] = {}
+        friendly = self.friendly_player_id()
+        places: dict[int, ev.Standing] = {}
         for entity in self.game.entities:
             if not isinstance(entity, Card) or entity.type != CardType.HERO:
                 continue
@@ -182,9 +191,20 @@ class BGExporter(EntityTreeExporter):
                 continue
             place = tag(entity, GameTag.PLAYER_LEADERBOARD_PLACE)
             if place:
+                health = tag(entity, GameTag.HEALTH) - tag(entity, GameTag.DAMAGE)
                 # PLAYER_ID is the stable per-player identity; the controller
                 # is a shared slot. Newest entity wins (ghost copies linger).
-                places[place] = (place, tag(entity, GameTag.PLAYER_ID), entity.card_id)
+                places[place] = ev.Standing(
+                    place=place,
+                    player_id=tag(entity, GameTag.PLAYER_ID),
+                    hero_card_id=entity.card_id,
+                    health=health,
+                    armor=tag(entity, GameTag.ARMOR),
+                    # A dead hero is moved out of PLAY; its HP may still read
+                    # positive, so zone is the reliable signal.
+                    dead=health <= 0 or tag(entity, GameTag.ZONE) != Zone.PLAY,
+                    you=bool(friendly) and tag(entity, GameTag.CONTROLLER) == friendly,
+                )
         standings = tuple(places[p] for p in sorted(places))
         if standings and standings != self._standings:
             self._standings = standings

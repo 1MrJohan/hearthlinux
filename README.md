@@ -30,6 +30,7 @@ cover the overlay).
 ```bash
 .venv/bin/python -m bgtracker                 # live tracking, console output
 .venv/bin/python -m bgtracker --overlay       # live tracking + on-screen overlay
+.venv/bin/python -m bgtracker --overlay --demo  # overlay with fake data, no game needed
 .venv/bin/python -m bgtracker stats           # match history + sim calibration
 .venv/bin/python -m bgtracker --replay FILE --odds   # replay a saved Power.log
 ```
@@ -65,6 +66,28 @@ Hearthstone (Wine/Proton) → Power.log → tailer → hslog exporter → typed 
   power, and quest mapping land next based on it.
 - Card names/data from HearthstoneJSON, cached in `~/.cache/hs-bg-tracker/`.
   Card data and art are Blizzard's copyright; personal use only.
+
+### Overlay
+
+The overlay uses the "Dark Oak" skin (see `design_handoff_overlay_redesign/`):
+a HUD with turn medallion and win/tie/loss bar, an enemy-board panel of
+card-art minion tiles, tavern buffs, and a leaderboard rail of hero portraits
+whose rows open a scout popout on hover. Panels are individually draggable —
+set `overlay_edit = true` in config, arrange them, then hit **Lock layout**.
+
+Styling and design tokens live in `bgtracker/overlay/theme.py`. Cinzel and
+Alegreya Sans (both SIL OFL) ship in `bgtracker/assets/fonts/` and are
+registered at runtime with `Pango.FontMap.add_font_file` — no system font
+install needed. Registration must happen before any font lookup, since Pango
+caches the face it resolves per description.
+
+Hovering never captures the pointer: the rail and the game's own leaderboard
+are both detected by polling the X11 cursor, so the overlay stays
+click-through and Blizzard's native board preview keeps working.
+
+`--overlay --demo` renders every state (hero select, combat, shop, golden
+minion, eliminated player) without a live match — use it when changing the
+skin.
 
 ## Development
 

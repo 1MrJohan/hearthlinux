@@ -45,10 +45,14 @@ class HoverStrips(Gtk.Window):
         cfg: Config,
         on_slot: Callable[[int | None], None],
         slots: int = 8,
+        rail_rect: Callable[[], tuple[int, int, int, int] | None] | None = None,
     ):
         super().__init__(application=application)
         self.on_slot = on_slot
         self.slots = slots
+        # Our own leaderboard rail is hovered through the same pointer poll, so
+        # it needs no input region and the overlay stays click-through.
+        self.rail_rect = rail_rect
         self._current: int | None = None
 
         extra = cfg.extra
@@ -130,6 +134,18 @@ class HoverStrips(Gtk.Window):
         s = min(int((ly - top) / (bottom - top) * self.slots), self.slots - 1)
         x = self._box_x(s)
         return s if x <= lx < x + self.strip_width else None
+
+    def _rail_slot_at_xy(self, lx: float, ly: float) -> int | None:
+        """Which row of our own leaderboard rail the pointer is over."""
+        if self.rail_rect is None:
+            return None
+        rect = self.rail_rect()
+        if rect is None:
+            return None
+        x, y, w, h = rect
+        if h <= 0 or not (x <= lx < x + w and y <= ly < y + h):
+            return None
+        return min(int((ly - y) / h * self.slots), self.slots - 1)
 
     def _set_input_region(self, *_):
         import cairo
@@ -214,7 +230,10 @@ class HoverStrips(Gtk.Window):
             p = self._xroot.query_pointer()
         except Exception:
             return True  # transient; keep polling
-        slot = self._slot_at_xy(p.root_x - self._mon_x, p.root_y - self._mon_y)
+        lx, ly = p.root_x - self._mon_x, p.root_y - self._mon_y
+        slot = self._slot_at_xy(lx, ly)
+        if slot is None:
+            slot = self._rail_slot_at_xy(lx, ly)
         if slot != self._current:
             self._current = slot
             self.on_slot(slot)

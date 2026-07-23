@@ -1,3 +1,5 @@
+from hearthstone.enums import GameTag
+
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 
@@ -60,6 +62,39 @@ def test_incremental_feed_matches_bulk():
         "CombatEnd",
         "GameEnd",
     ]
+
+
+def test_standings_carry_rail_fields():
+    """The leaderboard rail renders straight off these fields."""
+    _, events = feed_all(minimal_bg_game().lines)
+    standings = [e for e in events if isinstance(e, ev.Standings)]
+    assert standings, "no Standings emitted"
+    [entry] = standings[-1].places
+    assert entry.place == 3
+    assert entry.hero_card_id == "TB_BaconShop_HERO_11"
+    assert entry.health == 40 and entry.total_health == 40
+    assert entry.you is True      # the synthetic game is played from our seat
+    assert entry.dead is False
+
+
+def test_hero_hp_change_refreshes_standings():
+    """HP moves far more often than place; the rail must not show stale HP."""
+    game = minimal_bg_game()
+    proc = LiveGameProcessor()
+    proc.feed(game.lines)
+    exporter = proc.current_exporter
+    before = exporter._standings[0].health
+
+    # Damage the friendly hero the way a lost combat would.
+    hero = next(
+        e for e in exporter.game.entities
+        if getattr(e, "card_id", None) == "TB_BaconShop_HERO_11"
+    )
+    hero.tags[GameTag.DAMAGE] = 7
+    exporter._standings_dirty = True
+    exporter.maybe_emit_standings()
+
+    assert exporter._standings[0].health == before - 7
 
 
 def test_two_games_in_one_batch():

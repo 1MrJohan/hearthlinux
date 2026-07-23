@@ -8,6 +8,8 @@ a dashed border, the window accepts pointer input over the panels only (empty
 space still passes clicks to the game), and dragging a panel saves its new
 position to config. An on-screen "Lock layout" button flips edit mode back off
 live — no restart needed.
+
+Styling lives in `theme.py`; this module is layout and plumbing only.
 """
 
 from __future__ import annotations
@@ -21,28 +23,10 @@ from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: 
 from bgtracker.config import Config, update_config_values  # noqa: E402
 from bgtracker.data import cards  # noqa: E402
 
+from . import theme  # noqa: E402
+from .hud import HudPanel  # noqa: E402
+from .rail import LeaderboardRail  # noqa: E402
 from .widgets import BoardPanel  # noqa: E402
-
-CSS_TEMPLATE = """
-window {{ background: transparent; }}
-.hud {{
-    background-color: rgba(15, 18, 24, 0.82);
-    color: #e8e8e8;
-    border-radius: 10px;
-    padding: {pad}px {pad2}px;
-}}
-.hud .odds {{ font-size: {odds_px}px; font-weight: bold; }}
-.hud .dim  {{ color: #9a9a9a; font-size: {dim_px}px; }}
-.hud .line {{ font-size: {line_px}px; }}
-.hud .stats {{ font-size: {line_px}px; font-weight: bold; }}
-.grip {{ color: #7fd0ff; font-size: {dim_px}px; font-weight: bold; }}
-.editing {{ border: 2px dashed rgba(127, 208, 255, 0.9); }}
-.lockbtn {{
-    background-color: rgba(30, 120, 200, 0.96);
-    color: #ffffff; border-radius: 8px;
-    padding: 8px 16px; font-weight: bold;
-}}
-"""
 
 
 class OverlayWindow(Gtk.Window):
@@ -77,40 +61,52 @@ class OverlayWindow(Gtk.Window):
         self.set_child(self.canvas)
 
         self._panels: dict[str, Gtk.Widget] = {}
+        self._frames: dict[str, Gtk.Widget] = {}
         self._grips: dict[str, Gtk.Label] = {}
         self._pos: dict[str, list[int]] = {}
         self._has_content: dict[str, bool] = {}
         self._drag_base = (0, 0)
         self.lock_btn: Gtk.Button | None = None
 
-        # -- HUD panel: status, odds, damage, and the live/combat board -----
-        self.status = Gtk.Label(label="waiting for game…", xalign=0)
-        self.status.add_css_class("dim")
-        self.odds = Gtk.Label(label="", xalign=0)
-        self.odds.add_css_class("odds")
-        self.damage = Gtk.Label(label="", xalign=0)
-        self.damage.add_css_class("dim")
-        self.board = BoardPanel()
-        self._make_panel("hud", "HUD", [self.status, self.odds, self.damage, self.board])
+        # -- HUD panel: phase, turn medallion, odds, damage -----------------
+        self.hud = HudPanel(scale)
+        self._make_panel("hud", "HUD", [self.hud], width=theme.HUD_W)
+
+        # -- enemy board: the opponent you are about to fight ---------------
+        self.board = BoardPanel(scale=scale)
+        self._make_panel("board", "Enemy board", [self.board])
 
         # -- buffs panel: accumulating tavern buffs, its own movable view ---
-        self.buffs = Gtk.Label(label="", xalign=0, wrap=True)
-        self.buffs.add_css_class("stats")
-        self._make_panel("buffs", "Buffs", [self.buffs])
+        self.buffs = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=theme.px(5, scale))
+        buffs_title = Gtk.Label(label="Tavern Buffs", xalign=0)
+        buffs_title.add_css_class("title")
+        self._make_panel("buffs", "Buffs", [buffs_title, self.buffs], width=theme.BUFFS_W)
+        self._buff_rows: list[Gtk.Widget] = []
 
-        # -- next-opponent panel: last-seen board as card tiles -------------
-        self.next_board = BoardPanel()
+        # -- next-opponent panel: last-seen board as minion tiles -----------
+        self.next_board = BoardPanel(scale=scale)
         self._make_panel("next", "Next opponent", [self.next_board])
 
-        # -- hover panel: last-seen board of a leaderboard portrait ---------
-        self.hover_board = BoardPanel()
-        self._make_panel("hover", "Hover board", [self.hover_board])
+        # -- scout popout: last-seen board of a leaderboard portrait --------
+        self.hover_board = BoardPanel(show_orb=True, scale=scale)
+        notch = Gtk.Label(label="◀")
+        notch.add_css_class("notch")
+        notch.set_valign(Gtk.Align.START)
+        notch.set_margin_top(theme.px(22, scale))
+        self._make_panel("hover", "Scout", [self.hover_board], leading=notch)
+
+        # -- leaderboard rail: standings with hero orbs ---------------------
+        self.rail = LeaderboardRail(scale)
+        self._make_panel("rail", "Leaderboard", [self.rail], width=theme.RAIL_W,
+                         frame_class="rail")
 
         defaults = {
             "hud": (self._mon_w - int(400 * scale), int(40)),
+            "board": (self._mon_w // 2 - int(320 * scale), int(12 * scale)),
             "next": (self._mon_w - int(400 * scale), int(360 * scale)),
             "hover": (int(self._mon_w * 0.13), int(self._mon_h * 0.30)),
             "buffs": (int(self._mon_w * 0.34), int(40)),
+            "rail": (int(12 * scale), int(self._mon_h * 0.08)),
         }
         for name, (dx, dy) in defaults.items():
             x = int(cfg.extra.get(f"pos_{name}_x", dx))
@@ -120,9 +116,8 @@ class OverlayWindow(Gtk.Window):
 
         # hud always shows; the rest only when they have something (or edit)
         self._set_content("hud", True)
-        self._set_content("next", False)
-        self._set_content("hover", False)
-        self._set_content("buffs", False)
+        for name in ("board", "next", "hover", "buffs", "rail"):
+            self._set_content(name, False)
 
         if self.edit:
             self.lock_btn = Gtk.Button(label="✔ Lock layout")
@@ -131,34 +126,51 @@ class OverlayWindow(Gtk.Window):
             self._lock_pos = (self._mon_w // 2 - int(90 * scale), 24)
             self.canvas.put(self.lock_btn, *self._lock_pos)
 
-        provider = Gtk.CssProvider()
-        provider.load_from_data(
-            CSS_TEMPLATE.format(
-                pad=int(12 * scale), pad2=int(16 * scale),
-                odds_px=int(22 * scale), dim_px=int(12 * scale),
-                line_px=int(13 * scale),
-            ).encode()
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+        theme.install(self.get_display(), scale)
         self.connect("realize", self._apply_input_region)
         self.connect("map", lambda *_: GLib.idle_add(self._apply_input_region))
 
     # -- panel construction / dragging ----------------------------------
-    def _make_panel(self, name: str, title: str, content: list[Gtk.Widget]) -> None:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.add_css_class("hud")
-        box.set_size_request(int(220 * self.scale), -1)
+    def _make_panel(
+        self,
+        name: str,
+        title: str,
+        content: list[Gtk.Widget],
+        width: int | None = None,
+        leading: Gtk.Widget | None = None,
+        frame_class: str | None = None,
+    ) -> None:
+        """Build a draggable panel.
+
+        `width` fixes the frame width in design px (scaled). `leading` is a
+        decoration placed *outside* the oak frame — the scout popout's notch.
+        `frame_class` adds a variant class to the frame (the rail's sub-frame).
+        """
+        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=theme.px(4, self.scale))
+        frame.add_css_class("hud")
+        if frame_class:
+            frame.add_css_class(frame_class)
+        frame.set_size_request(
+            theme.px(width, self.scale) if width else int(220 * self.scale), -1
+        )
         grip = Gtk.Label(label=f"⠿ {title}", xalign=0)
         grip.add_css_class("grip")
         grip.set_visible(self.edit)
-        box.append(grip)
+        frame.append(grip)
         for w in content:
-            box.append(w)
+            frame.append(w)
         if self.edit:
-            box.add_css_class("editing")
+            frame.add_css_class("editing")
+
+        if leading is not None:
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            box.append(leading)
+            box.append(frame)
+        else:
+            box = frame
+
         self._panels[name] = box
+        self._frames[name] = frame
         self._grips[name] = grip
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._drag_begin, name)
@@ -186,7 +198,7 @@ class OverlayWindow(Gtk.Window):
         update_config_values({"overlay_edit": False})
         for name, panel in self._panels.items():
             self._grips[name].set_visible(False)
-            panel.remove_css_class("editing")
+            self._frames[name].remove_css_class("editing")
             panel.set_visible(self._has_content.get(name, False))
         if self.lock_btn is not None:
             self.canvas.remove(self.lock_btn)
@@ -224,60 +236,100 @@ class OverlayWindow(Gtk.Window):
         if self.edit:
             self._apply_input_region()
 
+    def rail_rect(self) -> tuple[int, int, int, int] | None:
+        """Monitor-space rect of the leaderboard rail, for the hover poll."""
+        panel = self._panels["rail"]
+        if not panel.get_visible():
+            return None
+        _, nat = panel.get_preferred_size()
+        if nat.width <= 0 or nat.height <= 0:
+            return None
+        x, y = self._pos["rail"]
+        return (x, y, nat.width, nat.height)
+
     # -- update API (call from the GLib/asyncio loop) -------------------
+    def set_phase(self, title: str, meta: str = "") -> None:
+        self.hud.set_phase(title, meta)
+
     def set_status(self, text: str) -> None:
-        self.status.set_label(text)
+        self.hud.set_status(text)
+
+    def set_turn(self, turn: int | None) -> None:
+        self.hud.set_turn(turn)
+
+    def set_combat(self, combat: bool) -> None:
+        self.hud.set_combat(combat)
 
     def set_odds(self, win: float | None, tie: float | None, loss: float | None) -> None:
+        self.hud.set_odds(win, tie, loss)
         if win is None:
-            self.odds.set_label("")
-            self.damage.set_label("")
-            return
-        self.odds.set_markup(
-            f'<span foreground="#6fd66f">{win:.0f}%</span> / '
-            f'<span foreground="#d6c96f">{tie:.0f}%</span> / '
-            f'<span foreground="#d66f6f">{loss:.0f}%</span>'
-        )
+            self.hud.set_damage(None, None)
 
     def set_damage(self, dealt: float | None, taken: float | None) -> None:
-        if dealt is None:
-            self.damage.set_label("")
-        else:
-            self.damage.set_label(f"dmg dealt ~{dealt:.0f} / taken ~{taken:.0f}")
+        self.hud.set_damage(dealt, taken)
 
     def set_buffs(self, entries, spells=()) -> None:
-        lines = [
-            f'<span foreground="#e0b0ff">{label}</span> +{atk}/+{hp}'
-            for label, atk, hp in entries
-        ]
-        for cid in spells:
-            name = GLib.markup_escape_text(cards.name(cid))
-            lines.append(f'<span foreground="#7fd0ff">⚡ {name}</span>')
-        if not lines:
-            self.buffs.set_label("")
-            self._set_content("buffs", False)
-            return
-        self.buffs.set_markup("\n".join(lines))
-        self._set_content("buffs", True)
+        for row in self._buff_rows:
+            self.buffs.remove(row)
+        self._buff_rows.clear()
+        for label, atk, hp in entries:
+            self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
+        for card_id in spells:
+            self._buff_rows.append(self._spell_chip(cards.name(card_id)))
+        for row in self._buff_rows:
+            self.buffs.append(row)
+        self._set_content("buffs", bool(self._buff_rows))
 
-    def set_board(self, title: str, board) -> None:
-        self.board.show_board(title, board)
+    def _buff_chip(self, label: str, value: str) -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=theme.px(7, self.scale))
+        dot = Gtk.Box()
+        dot.add_css_class("buff-dot")
+        dot.add_css_class(f"buff-{label.lower().replace(' ', '')}")
+        dot.set_valign(Gtk.Align.CENTER)
+        name = Gtk.Label(label=label, xalign=0)
+        name.add_css_class("buff-label")
+        name.set_hexpand(True)
+        amount = Gtk.Label(label=value, xalign=1)
+        amount.add_css_class("buff-val")
+        row.append(dot)
+        row.append(name)
+        row.append(amount)
+        return row
+
+    def _spell_chip(self, name: str) -> Gtk.Widget:
+        label = Gtk.Label(label=f"✦ {name}", xalign=0)
+        label.add_css_class("spell")
+        label.set_wrap(True)
+        return label
+
+    def set_board(self, title: str, subtitle: str = "", board=None) -> None:
+        self.board.show_board(title, subtitle, board)
+        self._set_content("board", True)
 
     def clear_board(self) -> None:
         self.board.clear()
+        self._set_content("board", False)
 
-    def set_next_board(self, title: str, board) -> None:
-        self.next_board.show_board(title, board)
+    def set_next_board(self, title: str, subtitle: str = "", board=None) -> None:
+        self.next_board.show_board(title, subtitle, board)
         self._set_content("next", True)
 
     def clear_next_board(self) -> None:
         self.next_board.clear()
         self._set_content("next", False)
 
-    def set_hover_board(self, title: str, board) -> None:
-        self.hover_board.show_board(title, board)
+    def set_hover_board(self, title: str, subtitle: str = "", board=None,
+                        hero_card_id: str | None = None, dead: bool = False) -> None:
+        self.hover_board.show_board(title, subtitle, board, hero_card_id, dead)
         self._set_content("hover", True)
 
     def clear_hover_board(self) -> None:
         self.hover_board.clear()
         self._set_content("hover", False)
+
+    def set_standings(self, standings) -> None:
+        self.rail.set_standings(standings)
+        self._set_content("rail", bool(standings))
+
+    def set_hot_place(self, place: int | None) -> None:
+        self.rail.set_hot(place)

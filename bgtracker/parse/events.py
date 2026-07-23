@@ -41,10 +41,27 @@ class NextOpponent:
 
 
 @dataclass(frozen=True)
-class Standings:
-    """Current leaderboard order: (place, player_id, hero_card_id) tuples."""
+class Standing:
+    """One player's row on the leaderboard."""
 
-    places: tuple[tuple[int, int, str | None], ...]
+    place: int
+    player_id: int          # hero PLAYER_ID tag — the stable per-player identity
+    hero_card_id: str | None
+    health: int = 0
+    armor: int = 0
+    dead: bool = False
+    you: bool = False
+
+    @property
+    def total_health(self) -> int:
+        return self.health + self.armor
+
+
+@dataclass(frozen=True)
+class Standings:
+    """Current leaderboard order, best place first."""
+
+    places: tuple[Standing, ...]
 
 
 @dataclass(frozen=True)
