@@ -30,10 +30,19 @@ cover the overlay).
 ```bash
 .venv/bin/python -m bgtracker                 # live tracking, console output
 .venv/bin/python -m bgtracker --overlay       # live tracking + on-screen overlay
+.venv/bin/python -m bgtracker --overlay --replace  # …restarting any instance already running
 .venv/bin/python -m bgtracker --overlay --demo  # overlay with fake data, no game needed
 .venv/bin/python -m bgtracker stats           # match history + sim calibration
 .venv/bin/python -m bgtracker --replay FILE --odds   # replay a saved Power.log
 ```
+
+Restarting is cheap and safe mid-game: the tailer reads each session log from
+the top, so a fresh tracker replays the whole session (~3s for an 86MB log)
+and rebuilds the current game's state. You never need to quit Hearthstone or
+wait for a match to end. Launches are NON_UNIQUE so a stale instance can't
+swallow a new one — which also means an old process keeps running the code it
+started with, so `--replace` (or the startup warning naming the old pid) is
+how you make sure you're looking at your latest changes.
 
 Overlay smoke test (run before first `--overlay`, see checklist inside):
 

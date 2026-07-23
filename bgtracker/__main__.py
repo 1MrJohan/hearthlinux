@@ -109,18 +109,12 @@ async def live(overlay=None) -> None:
             await sim.close()
 
 
-def _warn_if_already_running() -> None:
-    """Point out other live instances before they get blamed on the code.
-
-    Launches are deliberately NON_UNIQUE so a stale instance can never swallow
-    a new one, but the flip side is that an old process keeps running the code
-    it was started with — editing a file changes nothing about it. Two
-    overlays also stack on screen and split clicks between them.
-    """
+def _running_instances() -> list[tuple[int, float]]:
+    """Other live bgtracker processes as (pid, start time)."""
     import os
 
     me = os.getpid()
-    others = []
+    found = []
     try:
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit() or int(entry.name) == me:
@@ -133,17 +127,50 @@ def _warn_if_already_running() -> None:
             # argv[0] must be the interpreter itself, so wrappers that merely
             # mention the module (timeout, sh -c, the shell history) don't count.
             if argv and b"python" in argv[0] and b"bgtracker" in argv:
-                others.append((int(entry.name), started))
+                found.append((int(entry.name), started))
     except OSError:
-        return  # no /proc; nothing to check
-    for pid, started in others:
-        age = (time.time() - started) / 60
-        print(
-            f"warning: bgtracker is already running (pid {pid}, started "
-            f"{age:.0f} min ago). It is still running the code it launched "
-            f"with. Use `kill {pid}` if you meant to replace it.",
-            file=sys.stderr,
-        )
+        pass  # no /proc; nothing to check
+    return found
+
+
+def _handle_existing_instances(replace: bool) -> None:
+    """Replace or flag other live instances.
+
+    Launches are deliberately NON_UNIQUE so a stale instance can never swallow
+    a new one, but the flip side is that an old process keeps running the code
+    it was started with — editing a file changes nothing about it. Two overlays
+    also stack on screen and split clicks between them.
+    """
+    import os
+    import signal
+
+    others = _running_instances()
+    if not others:
+        return
+    if not replace:
+        for pid, started in others:
+            print(
+                f"warning: bgtracker is already running (pid {pid}, started "
+                f"{(time.time() - started) / 60:.0f} min ago). It is still "
+                f"running the code it launched with. Re-run with --replace to "
+                f"take over, or `kill {pid}`.",
+                file=sys.stderr,
+            )
+        return
+    for pid, _ in others:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+    # Give them a moment to go, so two overlays never share the screen.
+    deadline = time.time() + 3.0
+    while time.time() < deadline and _running_instances():
+        time.sleep(0.05)
+    survivors = [pid for pid, _ in _running_instances()]
+    if survivors:
+        print(f"warning: could not stop pid(s) {survivors}", file=sys.stderr)
+    else:
+        print(f"replaced {len(others)} running instance(s)")
 
 
 def _reexec_with_layer_shell_preload() -> None:
@@ -171,6 +198,8 @@ def main() -> None:
     parser.add_argument("--overlay", action="store_true", help="show the on-screen overlay")
     parser.add_argument("--demo", action="store_true",
                         help="with --overlay: feed the overlay fake data (no game needed)")
+    parser.add_argument("--replace", action="store_true",
+                        help="stop any bgtracker already running and take over")
     parser.add_argument("--odds", action="store_true", help="run combat odds during replay")
     parser.add_argument("--record", action="store_true", help="write replayed games to history")
     parser.add_argument("--no-names", action="store_true", help="skip card-name DB download")
@@ -213,7 +242,7 @@ def main() -> None:
         elif args.overlay:
             # After the re-exec, so it is not printed twice.
             _reexec_with_layer_shell_preload()
-            _warn_if_already_running()
+            _handle_existing_instances(args.replace)
             from bgtracker.overlay.app import OverlayApp
 
             overlay = OverlayApp()
@@ -224,7 +253,7 @@ def main() -> None:
             else:
                 overlay.run_with(live(overlay))
         else:
-            _warn_if_already_running()
+            _handle_existing_instances(args.replace)
             asyncio.run(live())
     except KeyboardInterrupt:
         sys.exit(0)
