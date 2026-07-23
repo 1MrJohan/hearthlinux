@@ -17,6 +17,7 @@ CACHE_MAX_AGE = 7 * 24 * 3600
 
 _by_id: dict[str, dict] = {}
 _pool_spells: set[str] | None = None
+_trinkets: set[str] | None = None
 
 
 def load(refresh: bool = False) -> bool:
@@ -40,8 +41,9 @@ def load(refresh: bool = False) -> bool:
     if not CACHE_FILE.is_file():
         return False
     _by_id = {c["id"]: c for c in json.loads(CACHE_FILE.read_bytes())}
-    global _pool_spells
+    global _pool_spells, _trinkets
     _pool_spells = None
+    _trinkets = None
     return True
 
 
@@ -67,3 +69,21 @@ def pool_spell_ids() -> set[str]:
     if _pool_spells is None and _by_id:
         _pool_spells = {cid for cid, c in _by_id.items() if c.get("isBattlegroundsPoolSpell")}
     return _pool_spells or set()
+
+
+def trinket_ids() -> set[str]:
+    """Card ids of Battlegrounds trinkets.
+
+    Classified from the card DB rather than the entity's runtime CARDTYPE,
+    which the game morphs (the same reason pool spells are matched by flag).
+    Whether a trinket is *equipped* is a zone question, not a type one: the
+    equipped ones sit in PLAY, while offers and rejected discoveries pile up
+    in SETASIDE and REMOVEDFROMGAME.
+    """
+    global _trinkets
+    if _trinkets is None and _by_id:
+        _trinkets = {
+            cid for cid, c in _by_id.items()
+            if c.get("type") == "BATTLEGROUND_TRINKET"
+        }
+    return _trinkets or set()

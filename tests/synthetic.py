@@ -53,6 +53,12 @@ def minimal_bg_game() -> LogBuilder:
              ATK=2, HEALTH=3, ZONE_POSITION=1)
     b.entity(8, "BG_CS2_065", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=2,
              ATK=1, HEALTH=7, TAUNT=1, ZONE_POSITION=1)
+    # an equipped trinket (PLAY) and one merely offered (SETASIDE): only the
+    # equipped one is real, and the zone is the only thing telling them apart
+    b.entity(9, "BG30_MagicItem_988", CARDTYPE="BATTLEGROUND_TRINKET",
+             ZONE="PLAY", CONTROLLER=1, TAG_SCRIPT_DATA_NUM_1=3)
+    b.entity(10, "BG30_MagicItem_820", CARDTYPE="BATTLEGROUND_TRINKET",
+             ZONE="SETASIDE", CONTROLLER=1)
     # combat phase round-trip
     b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 2)
     b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 1)

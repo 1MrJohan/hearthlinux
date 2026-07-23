@@ -60,6 +60,18 @@ def _board(board: PlayerBoard, friendly: bool) -> dict:
     # the opponent's hand is hidden, so it projects empty.
     if board.hand:
         player["hand"] = [_entity(m, friendly) for m in board.hand]
+    # Equipped trinkets. Most are economy effects the simulator ignores, but
+    # some act at the start of combat. Visible for both players.
+    if board.trinkets:
+        player["trinkets"] = [
+            {
+                "cardId": t.card_id,
+                "entityId": t.entity_id,
+                "scriptDataNum1": t.num1,
+                "scriptDataNum2": t.num2,
+            }
+            for t in board.trinkets
+        ]
     return {
         "player": player,
         "board": [_entity(m, friendly) for m in board.minions],

@@ -3,6 +3,8 @@ from bgtracker.parse.exporter import LiveGameProcessor
 from bgtracker.sim.mapper import to_battle_info
 from dataclasses import replace
 
+from hearthstone.enums import CardType
+
 from bgtracker.state.game import BoardSnapshot, Minion
 
 from .synthetic import minimal_bg_game
@@ -53,18 +55,66 @@ def test_hand_is_sent_so_start_of_combat_cards_are_simulated():
     assert in_hand["friendly"] is True
 
 
-def test_opponent_hand_is_never_sent():
-    """Their hand is hidden — the cards carry no id, so nothing to project.
+def test_only_revealed_hand_cards_are_projected():
+    """Hidden cards carry no id, so they can't be sent even in principle.
 
-    Sending a guessed or empty opponent hand would let the simulator invent
-    start-of-combat effects the opponent may not have.
+    The opponent's hand is mostly hidden but the log does reveal some of it
+    during combat, so it is not always empty — what we can see, we send.
     """
     snap = snapshot_from_synthetic()
     assert snap.opponent.hand == ()
     assert "hand" not in to_battle_info(snap)["opponentBoard"]["player"]
+    assert all(m.card_id for m in snap.friendly.hand)
 
 
 def test_hand_is_omitted_when_the_player_holds_nothing():
     snap = snapshot_from_synthetic()
     snap = replace(snap, friendly=replace(snap.friendly, hand=()))
     assert "hand" not in to_battle_info(snap)["playerBoard"]["player"]
+
+
+def test_only_equipped_trinkets_are_sent():
+    """Offers and rejected discoveries pile up in SETASIDE; only PLAY counts.
+
+    Sending the offer pool would hand the simulator a dozen effects the player
+    never took.
+    """
+    snap = snapshot_from_synthetic()
+    [equipped] = snap.friendly.trinkets
+    assert equipped.card_id == "BG30_MagicItem_988"
+    assert equipped.num1 == 3
+
+    [sent] = to_battle_info(snap)["playerBoard"]["player"]["trinkets"]
+    assert sent["cardId"] == "BG30_MagicItem_988"
+    assert sent["scriptDataNum1"] == 3
+    assert sent["entityId"] == equipped.entity_id
+
+
+def test_trinkets_omitted_when_none_equipped():
+    snap = snapshot_from_synthetic()
+    assert snap.opponent.trinkets == ()
+    assert "trinkets" not in to_battle_info(snap)["opponentBoard"]["player"]
+
+
+def test_trinkets_are_not_mistaken_for_minions():
+    # A trinket sitting in PLAY must not end up on the board.
+    snap = snapshot_from_synthetic()
+    assert all(m.card_id != "BG30_MagicItem_988" for m in snap.friendly.minions)
+
+
+def test_trinket_shop_placeholders_are_not_equipment():
+    """"The Greater Trinket Shop opens in 8 turns!" is an announcement.
+
+    It sits in play carrying the trinket card type, so only the id keeps it out
+    of the payload.
+    """
+    from bgtracker.state.game import _is_trinket
+
+    class FakeCard:
+        def __init__(self, card_id):
+            self.card_id = card_id
+            self.type = CardType.BATTLEGROUND_TRINKET
+
+    assert not _is_trinket(FakeCard("BG30_Trinket_1st"))
+    assert not _is_trinket(FakeCard("BG30_Trinket_2nd"))
+    assert _is_trinket(FakeCard("BG32_MagicItem_893"))     # Bluegill Flippers
