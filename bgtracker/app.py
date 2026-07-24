@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 
 from bgtracker.data import cards
+from bgtracker.diagnostics import status
 from bgtracker.headless import print_event, render_board_line
 from bgtracker.history.db import HistoryDB
 from bgtracker.parse import events as ev
@@ -50,6 +51,7 @@ class Pipeline:
     async def handle(self, events: list[ev.Event]) -> None:
         for event in events:
             print_event(event)
+            status.note_event(type(event).__name__)
             prediction = None
             # Events the pipeline derives rather than parses, fanned out after
             # the one that produced them.
@@ -97,6 +99,15 @@ class Pipeline:
                 print_event(derived)
                 for listener in self.listeners:
                     listener(derived, None)
+
+    def reset_history(self, backup: bool = True):
+        """Empty the match history without invalidating the live connection."""
+        if self.db is None:
+            return None
+        saved = self.db.reset(backup)
+        # The game currently being recorded no longer has a row to attach to.
+        self._game_id = None
+        return saved
 
     # -- shop-phase forecast -------------------------------------------
     def _cancel_shop_forecast(self) -> None:
@@ -156,6 +167,7 @@ class Pipeline:
         try:
             result = await self.sim.simulate(info, on_partial=show_partial)
             _apply_damage_cap(result, snapshot)
+            status.note_sim(result)
             cap_note = f", cap {snapshot.damage_cap}" if snapshot.damage_cap else ""
             margin = result.margin
             sample = f"{result.sims_run} sims in {result.sim_ms:.0f}ms"

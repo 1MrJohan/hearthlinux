@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,9 +116,50 @@ def board_from_json(raw: str | None) -> PlayerBoard | None:
 class HistoryDB:
     def __init__(self, path: Path = DB_FILE):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path)
+        self.path = path
+        self._open()
+
+    def _open(self) -> None:
+        """Connect, ensure the schema, and migrate. Used at open and after a reset."""
+        self.conn = sqlite3.connect(self.path)
         self.conn.executescript(_SCHEMA)
         self._migrate()
+
+    def reset(self, backup: bool = True) -> Path | None:
+        """Empty the history, returning the backup's path if one was taken.
+
+        Closes and *reopens* rather than deleting the file underneath a live
+        connection: SQLite holds the descriptor, so an unlinked database keeps
+        accepting writes into an inode nobody can ever read again — the tracker
+        would look like it was recording and silently not be.
+
+        What this destroys is not just a match list. It is the sim-calibration
+        corpus and the stored board snapshots that let a mispredicted fight be
+        re-simulated offline, so `backup` defaults to True.
+        """
+        # Asked before closing, and used to decide whether a backup is worth
+        # writing: an empty database has nothing to preserve, and a directory
+        # of empty .bak- files makes the one that matters harder to find.
+        worth_keeping = self.counts() != (0, 0)
+        self.conn.close()
+        saved: Path | None = None
+        if self.path.is_file():
+            if backup and worth_keeping:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                saved = self.path.with_name(f"{self.path.name}.bak-{stamp}")
+                shutil.copy2(self.path, saved)
+            self.path.unlink()
+        # Journal files left behind would be applied to the new database.
+        for suffix in ("-wal", "-shm", "-journal"):
+            self.path.with_name(self.path.name + suffix).unlink(missing_ok=True)
+        self._open()
+        return saved
+
+    def counts(self) -> tuple[int, int]:
+        """(games, combats) — what a reset would be throwing away."""
+        games = self.conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+        combats = self.conn.execute("SELECT COUNT(*) FROM combats").fetchone()[0]
+        return games, combats
 
     def _migrate(self) -> None:
         """Bring an older database up to the current shape."""

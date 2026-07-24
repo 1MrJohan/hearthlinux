@@ -195,10 +195,46 @@ class SimClient:
         except Exception:
             return False
 
-    async def close(self) -> None:
+    # -- live reconfiguration -------------------------------------------
+    def apply_config(self, cfg) -> None:
+        """Adopt trial count and timeout. Both are read fresh per `simulate()`,
+        so assignment is the entire mechanism — no restart, nothing in flight
+        disturbed."""
+        self.sims = cfg.sim_count
+        self.timeout = cfg.sim_timeout
+
+    async def reconfigure_workers(self, workers: int) -> bool:
+        """Restart the sidecar on a new worker count. Returns whether it moved.
+
+        The worker count reaches the sidecar only as an environment variable at
+        spawn (`BGTRACKER_SIM_WORKERS`), so it genuinely cannot change without a
+        restart.
+
+        **The lock is the point.** `_request` holds `self._lock` across its
+        `readline()` await, so taking it here means a worker change queues
+        behind any combat forecast already in flight instead of killing the
+        process under it — which would raise "sidecar died mid-request" and
+        leave that fight with no odds at all. Respawning eagerly inside the
+        lock also pays the multi-second card-DB rebuild now, while the user is
+        looking at the settings window, rather than charging it to the next
+        combat's timeout.
+        """
+        if workers == self.workers:
+            return False
+        async with self._lock:
+            self.workers = workers
+            await self._stop()
+            await self._ensure_proc()
+        return True
+
+    async def _stop(self) -> None:
         if self._proc and self._proc.returncode is None:
             self._proc.terminate()
             try:
                 await asyncio.wait_for(self._proc.wait(), timeout=3)
             except TimeoutError:
                 self._proc.kill()
+        self._proc = None
+
+    async def close(self) -> None:
+        await self._stop()

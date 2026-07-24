@@ -50,7 +50,9 @@ def _app() -> tuple[OverlayApp, RecordingWindow]:
     window = RecordingWindow()
     app.window = window
     app.pipeline = None
-    app.standings = ()
+    # What the real constructor does: an empty display, and a record of what
+    # the window has been told so far so `render` can emit only differences.
+    app.reset_state()
     return app, window
 
 
@@ -168,10 +170,32 @@ def test_a_result_from_a_fight_with_no_forecast_is_still_shown():
 
 def test_a_new_game_clears_the_previous_result():
     app, win = _app()
+    # The full sequence, so the result genuinely reaches the screen: ShopReady
+    # only reveals it when a combat was actually being watched.
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
     app.on_event(ev.CombatResult(turn=7, outcome="win", damage=14), None)
     app.on_event(ev.ShopReady(), None)
+    assert win.last("set_result") == ("win", 14)
+
     app.on_event(ev.GameStart(), None)
     assert win.last("set_result") == (None, 0)
+
+
+def test_a_result_that_never_reached_the_screen_needs_no_clearing():
+    """A CombatResult with no combat behind it is banked and dropped.
+
+    ShopReady is gated on having been in combat, so this one never becomes
+    visible — and a new game therefore has nothing to clear. Asserted because
+    the overlay only pushes values that changed, which makes "no call" a
+    meaningful outcome rather than an accident.
+    """
+    app, win = _app()
+    app.on_event(ev.CombatResult(turn=7, outcome="win", damage=14), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_result") is None, "revealed a result outside combat"
+    app.on_event(ev.GameStart(), None)
+    assert win.last("set_result") is None
 
 
 def test_the_shop_forecast_says_how_stale_its_board_is():

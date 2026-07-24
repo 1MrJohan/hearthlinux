@@ -42,6 +42,35 @@ def test_no_unsubstituted_placeholders(scale):
     assert "$" not in theme.stylesheet(scale)
 
 
+def test_settings_stylesheet_parses_clean():
+    assert parse_errors(theme.settings_stylesheet()) == []
+
+
+def test_settings_stylesheet_has_no_unsubstituted_placeholders():
+    assert "$" not in theme.settings_stylesheet()
+
+
+@pytest.mark.parametrize("scale", SCALES)
+def test_transparency_is_scoped_to_the_overlays_own_windows(scale):
+    """A bare `window {}` rule here would make the settings window unusable.
+
+    These providers attach to the whole display, not to one window, so an
+    unscoped background rule reaches every window the process opens — which is
+    how the settings window would come up transparent over a light system
+    theme. Both stylesheets must qualify the selector.
+    """
+    for css in (theme.stylesheet(scale), theme.settings_stylesheet()):
+        for line in css.splitlines():
+            selector = line.split("{")[0].strip()
+            assert selector != "window", f"unscoped window rule: {line.strip()!r}"
+
+
+def test_the_two_stylesheets_do_not_style_each_others_windows():
+    assert "window.bg-overlay" in theme.stylesheet(1.0)
+    assert "bg-overlay" not in theme.settings_stylesheet()
+    assert "bg-settings" not in theme.stylesheet(1.0)
+
+
 def test_bundled_font_files_exist():
     missing = [n for n in theme.FONT_FILES if not (theme.FONT_DIR / n).is_file()]
     assert missing == [], f"bundled fonts missing: {missing}"

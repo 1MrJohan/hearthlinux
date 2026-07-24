@@ -1,23 +1,97 @@
 # Copy to ~/.config/hs-bg-tracker/config.toml and edit as needed.
-# All keys are optional.
+# All keys are optional, and every one below is shown at its default.
+#
+# GENERATED from bgtracker/settings.py — edit the schema there, not this file.
+# `bgtracker settings` edits the real config with the same options in a window.
 
-# Explicit Hearthstone install dir (the folder containing Logs/).
-# Default: auto-discover across Steam compatdata and ~/Games (Lutris) prefixes.
+# ---- Overlay ---------------------------------------------------------------
+
+# Size of every panel, font and gem. Auto matches the design mock's share of
+# the screen for your monitor height (1080p ~1.53, 1440p ~2.04, 4K capped at
+# 3.0).
+# overlay_scale = 2.0
+
+# Pin the overlay to one display by connector name. Auto uses the
+# compositor's default monitor.
+# overlay_monitor = "DP-2"
+
+# Panels grow a drag handle and a dashed border, and save their new position
+# when you drop them. The overlay stops being click-through over the panels
+# while this is on.
+# overlay_edit = false
+
+# Hovering a hero portrait in the game's leaderboard pops out that player's
+# last-seen board. Does not capture the pointer, so the game's own preview
+# keeps working alongside it.
+# hover_strips = true
+
+# ---- Simulator -------------------------------------------------------------
+
+# More trials narrow the confidence interval, but at 8000 the 95% margin is
+# already about a point — past here you are buying latency, not accuracy.
+# sim_count = 8000
+
+# Seconds before giving up on a combat's odds. The sidecar is given 80% of
+# this as its own budget so it returns a partial result rather than nothing.
+# sim_timeout = 6.0
+
+# Threads the trials are split across; 0 leaves the choice to the sidecar
+# (4). Each worker holds its own ~350MB card DB and throughput flattens past
+# 4, so raising this costs a lot of memory for very little speed. Changing
+# it restarts the sidecar, which takes a few seconds and waits for any
+# combat in flight.
+# sim_workers = 0
+
+# ---- Game & Logs -----------------------------------------------------------
+
+# The folder containing Logs/. Auto-discovers across Steam compatdata and
+# ~/Games (Lutris) prefixes.
 # hearthstone_dir = "/home/you/Games/battlenet/drive_c/Program Files (x86)/Hearthstone"
 
-# Log poll intervals (seconds)
+# How often the log is checked for new lines while a game is running.
 # poll_active = 0.25
+
+# How often the log is checked when nothing is happening.
 # poll_idle = 2.0
 
-# Combat simulator
-# sim_count = 8000     # simulations per combat; more = slower + more accurate
-# sim_timeout = 6.0    # seconds before giving up on a combat's odds
-# sim_workers = 4      # threads the trials are split across. Each holds its own
-#                      # ~350MB card DB and throughput flattens past 4, so
-#                      # raising this costs a lot of memory for very little.
+# Hearthstone writes a new Logs/Hearthstone_* dir per session and never
+# cleans up. 0 disables pruning entirely.
+# log_keep_days = 14
 
-# Overlay
-# Size of every panel, font and gem. Unset = derived from the monitor height
-# so the HUD covers the same share of screen as the design mock
-# (1080p ~1.53, 1440p ~2.04, 4K capped at 3.0). Set it to override.
-# overlay_scale = 2.0
+# Newest session dirs kept regardless of age, so pruning can never leave you
+# with nothing to replay.
+# log_keep_min = 10
+
+# ---- Hover Calibration -----------------------------------------------------
+
+# Where the first portrait box starts, as a fraction of monitor height.
+# leaderboard_top_frac = 0.16
+
+# Where the last portrait box ends, as a fraction of monitor height.
+# leaderboard_bottom_frac = 0.85
+
+# Width of each portrait box in pixels.
+# leaderboard_width_px = 96
+
+# X position of the topmost box in pixels from the left screen edge.
+# leaderboard_left_px = 0
+
+# The leaderboard leans, so each box's x is interpolated from the top box to
+# the bottom one. This is that offset, and may be negative.
+# leaderboard_skew_px = 0
+
+# ---- Debug -----------------------------------------------------------------
+
+# Debug is very loud — it includes every input-region update — but it is
+# what you want when a panel is not appearing.
+# log_level = "info"
+
+# Keeps a rotating log so a game that went wrong is still inspectable
+# afterwards, which it is not when the tracker was launched from the game
+# rather than a terminal.
+# log_to_file = true
+
+# Outlines the leaderboard hover boxes faintly and logs which slot the
+# pointer resolves to. Use this to check calibration without entering layout
+# mode.
+# hover_debug = false

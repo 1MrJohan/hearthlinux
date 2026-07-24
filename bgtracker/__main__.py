@@ -15,14 +15,16 @@ import sys
 import time
 from pathlib import Path
 
-from bgtracker import discovery
+from bgtracker import discovery, logging_setup
 from bgtracker.app import Pipeline
 from bgtracker.config import load_config
+from bgtracker.diagnostics import status
 from bgtracker.data import cards
 from bgtracker.history.db import HistoryDB
 from bgtracker.logwatch.session import newest_session_dir, power_log_path, prune_old_sessions
 from bgtracker.logwatch.tailer import Tailer
 from bgtracker.parse.exporter import LiveGameProcessor
+from bgtracker.settings import SIM, SIM_RESPAWN, TAILER, SettingsService
 from bgtracker.sim.client import SimClient
 
 log = logging.getLogger("bgtracker")
@@ -31,14 +33,17 @@ log = logging.getLogger("bgtracker")
 async def start_sim(cfg) -> SimClient | None:
     sim = SimClient(timeout=cfg.sim_timeout, sims=cfg.sim_count, workers=cfg.sim_workers)
     if await sim.ping():
+        status.sidecar_up = True
+        status.sidecar_workers = cfg.sim_workers or None
         return sim
+    status.sidecar_up = False
     log.warning("combat simulator unavailable (node/sidecar missing?) — odds disabled")
     await sim.close()
     return None
 
 
-async def replay(path: Path, with_odds: bool, record: bool) -> None:
-    cfg = load_config()
+async def replay(settings: SettingsService, path: Path, with_odds: bool, record: bool) -> None:
+    cfg = settings.cfg
     sim = await start_sim(cfg) if with_odds else None
     pipeline = Pipeline(sim=sim, db=HistoryDB() if record else None)
     processor = LiveGameProcessor()
@@ -56,23 +61,52 @@ async def replay(path: Path, with_odds: bool, record: bool) -> None:
             await sim.close()
 
 
-async def live(overlay=None) -> None:
-    cfg = load_config()
-    hs_dir = discovery.find_hearthstone_dir(cfg.hearthstone_dir)
+def _target_logs_dir(cfg, strict: bool = False) -> Path | None:
+    """Resolve the install dir, switch logging on in it, and prune old sessions.
+
+    Shared by startup and the runtime re-target. `strict` lets the startup path
+    fail hard on a missing install (there is nothing to fall back to), while the
+    re-target path catches it and keeps tailing wherever it already was.
+    """
+    try:
+        hs_dir = discovery.find_hearthstone_dir(cfg.hearthstone_dir)
+    except FileNotFoundError as exc:
+        if strict:
+            raise
+        log.error("cannot track: %s", exc)
+        return None
     print(f"tracking: {hs_dir}")
     _, changed = discovery.ensure_log_config(hs_dir)
     if changed:
         print("log.config written — restart Hearthstone for logging to take effect")
+    logs_dir = hs_dir / "Logs"
+    removed = prune_old_sessions(logs_dir, cfg.log_keep_days, cfg.log_keep_min)
+    if removed:
+        print(f"pruned {len(removed)} old log session dir(s)")
+    return logs_dir
+
+
+async def live(settings: SettingsService, overlay=None) -> None:
+    cfg = settings.cfg
+    logs_dir = _target_logs_dir(cfg, strict=True)
     sim = await start_sim(cfg)
     pipeline = Pipeline(sim=sim, db=HistoryDB())
     if overlay is not None:
         overlay.pipeline = pipeline
         pipeline.listeners.append(overlay.on_event)
 
-    logs_dir = hs_dir / "Logs"
-    removed = prune_old_sessions(logs_dir, cfg.log_keep_days, cfg.log_keep_min)
-    if removed:
-        print(f"pruned {len(removed)} old log session dir(s)")
+    if sim is not None:
+        settings.subscribe(SIM, lambda _keys: sim.apply_config(cfg))
+        settings.subscribe(
+            SIM_RESPAWN,
+            lambda _keys: settings.spawn(sim.reconfigure_workers(cfg.sim_workers)),
+        )
+    # Re-targeting tears down the tailer, which must happen on the loop rather
+    # than inside a GTK signal handler — so the applier only raises a flag and
+    # the loop below does the work on its next pass.
+    retarget = asyncio.Event()
+    settings.subscribe(TAILER, lambda _keys: retarget.set())
+
     session = None
     tailer = None
     processor = None
@@ -80,6 +114,15 @@ async def live(overlay=None) -> None:
     warned_no_log = False
     try:
         while True:
+            if retarget.is_set():
+                retarget.clear()
+                relocated = _target_logs_dir(cfg)
+                if relocated is not None and relocated != logs_dir:
+                    logs_dir = relocated
+                    # Drop the old session so the block below rebuilds against
+                    # the new install, exactly as it does when the game starts
+                    # a fresh session.
+                    session = tailer = processor = None
             latest = newest_session_dir(logs_dir)
             if latest != session:
                 session = latest
@@ -89,8 +132,11 @@ async def live(overlay=None) -> None:
                     processor = LiveGameProcessor()
                     session_started = asyncio.get_running_loop().time()
                     warned_no_log = False
+                    status.session = session.name
             if tailer and processor:
-                await pipeline.handle(processor.feed(tailer.read_new_lines()))
+                lines = tailer.read_new_lines()
+                status.note_lines(len(lines))
+                await pipeline.handle(processor.feed(lines))
                 if (
                     not warned_no_log
                     and not tailer.path.exists()
@@ -173,6 +219,34 @@ def _handle_existing_instances(replace: bool) -> None:
         print(f"replaced {len(others)} running instance(s)")
 
 
+def run_settings_window(settings: SettingsService) -> None:
+    """`bgtracker settings` — the same window, standalone.
+
+    No layer-shell surface is involved, so this path skips the LD_PRELOAD
+    re-exec entirely. Changes are written to config.toml; with no tracker
+    running there is simply nothing live to push them at.
+    """
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gio, Gtk
+
+    from bgtracker.overlay import theme
+    from bgtracker.overlay.settings_window import SettingsWindow
+
+    app = Gtk.Application(
+        application_id="dev.bgtracker.settings",
+        flags=Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def activate(_app):
+        theme.register_fonts()
+        SettingsWindow.open(app, settings)
+
+    app.connect("activate", activate)
+    app.run(None)
+
+
 def _reexec_with_layer_shell_preload() -> None:
     """gtk4-layer-shell must link before libwayland; from Python that means
     LD_PRELOAD. Re-exec ourselves once with it set."""
@@ -194,7 +268,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
     parser.add_argument(
         "command", nargs="?",
-        choices=["run", "stats", "doctor", "mmr", "resim"], default="run",
+        choices=["run", "stats", "doctor", "mmr", "resim", "settings"], default="run",
     )
     parser.add_argument("value", nargs="?", type=int,
                         help="rating for `mmr`; number of recent combats for `resim`")
@@ -210,19 +284,13 @@ def main() -> None:
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(levelname)s %(name)s: %(message)s",
-    )
-    if not args.verbose:
-        # hslog warns (on the root logger) about quirks it already works
-        # around; keep them out of normal output.
-        class _DropHslogNoise(logging.Filter):
-            def filter(self, record):
-                return "Broken option nesting" not in record.getMessage()
+    # One Config for the whole process, wrapped in the service that mutates it
+    # in place. Everything downstream holds this same object, which is what
+    # makes a settings change visible without being handed round.
+    settings = SettingsService(load_config())
+    logging_setup.configure(settings.cfg, verbose=args.verbose)
+    logging_setup.attach(settings)
 
-        for handler in logging.getLogger().handlers:
-            handler.addFilter(_DropHslogNoise())
     if not args.no_names:
         cards.load()
     try:
@@ -237,6 +305,8 @@ def main() -> None:
             from bgtracker.doctor import run as doctor_run
 
             doctor_run()
+        elif args.command == "settings":
+            run_settings_window(settings)
         elif args.command == "stats":
             from bgtracker.history.stats import report
 
@@ -246,23 +316,23 @@ def main() -> None:
 
             print(asyncio.run(resim(limit=args.value)))
         elif args.replay:
-            asyncio.run(replay(args.replay, args.odds, args.record))
+            asyncio.run(replay(settings, args.replay, args.odds, args.record))
         elif args.overlay:
             # After the re-exec, so it is not printed twice.
             _reexec_with_layer_shell_preload()
             _handle_existing_instances(args.replace)
             from bgtracker.overlay.app import OverlayApp
 
-            overlay = OverlayApp()
+            overlay = OverlayApp(settings)
             if args.demo:
                 from bgtracker.overlay import demo
 
                 overlay.run_with(demo.run(overlay))
             else:
-                overlay.run_with(live(overlay))
+                overlay.run_with(live(settings, overlay))
         else:
             _handle_existing_instances(args.replace)
-            asyncio.run(live())
+            asyncio.run(live(settings))
     except KeyboardInterrupt:
         sys.exit(0)
 

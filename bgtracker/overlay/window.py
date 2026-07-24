@@ -38,15 +38,26 @@ GRAB_MIN_W, GRAB_MIN_H = 160, 60
 
 
 class OverlayWindow(Gtk.Window):
-    def __init__(self, application: Gtk.Application, cfg: Config | None = None):
+    def __init__(
+        self,
+        application: Gtk.Application,
+        cfg: Config | None = None,
+        on_settings=None,
+        on_edit=None,
+    ):
         super().__init__(application=application)
-        cfg = cfg or Config()
-        self.edit = bool(cfg.extra.get("overlay_edit", False))
+        self.cfg = cfg = cfg or Config()
+        self.edit = bool(cfg.overlay_edit)
+        self._on_settings = on_settings
+        self._on_edit = on_edit
+        # The transparent-window rule is scoped to this class so it cannot leak
+        # onto the settings window, which shares the display-wide provider.
+        self.add_css_class("bg-overlay")
 
         LayerShell.init_for_window(self)
         LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
         monitor = None
-        wanted = cfg.extra.get("overlay_monitor")
+        wanted = cfg.overlay_monitor
         for m in Gdk.Display.get_default().get_monitors():
             if wanted and m.get_connector() == wanted:
                 monitor = m
@@ -143,33 +154,75 @@ class OverlayWindow(Gtk.Window):
         for name in ("board", "next", "hover", "buffs", "rail"):
             self._set_content(name, False)
 
-        if self.edit:
-            self.lock_btn = Gtk.Button(label="✔ Lock layout")
-            self.lock_btn.add_css_class("lockbtn")
-            self.lock_btn.connect("clicked", self._on_lock)
-            # Bottom-centre, as in the mock. Emphatically not the top: that sits
-            # over Hearthstone's own UI, where a stray click silently drops you
-            # out of layout mode with no way back but editing the config.
-            self._lock_pos = (self._mon_w // 2 - int(90 * scale),
-                              self._mon_h - int(100 * scale))
-            self.canvas.put(self.lock_btn, *self._lock_pos)
+        # -- gear: the only pixels on a locked overlay that take a click ----
+        self.gear_btn: Gtk.Button | None = None
+        self._gear_pos = (0, 0)
+        if on_settings is not None:
+            self.gear_btn = Gtk.Button(label="⚙")
+            self.gear_btn.add_css_class("gearbtn")
+            self.gear_btn.set_tooltip_text("Tracker settings")
+            self.gear_btn.connect("clicked", lambda _b: self._on_settings())
+            self.canvas.put(self.gear_btn, 0, 0)
 
-        theme.install(self.get_display(), scale)
+        if self.edit:
+            self._add_lock_button()
+
+        self.css_provider = theme.install(self.get_display(), scale)
         self.connect("realize", self._apply_input_region)
         self.connect("map", lambda *_: GLib.idle_add(self._on_mapped))
+
+    def _add_lock_button(self) -> None:
+        self.lock_btn = Gtk.Button(label="✔ Lock layout")
+        self.lock_btn.add_css_class("lockbtn")
+        self.lock_btn.connect("clicked", self._on_lock)
+        # Bottom-centre, as in the mock. Emphatically not the top: that sits
+        # over Hearthstone's own UI, where a stray click silently drops you
+        # out of layout mode with no way back but editing the config.
+        self._lock_pos = (self._mon_w // 2 - int(90 * self.scale),
+                          self._mon_h - int(100 * self.scale))
+        self.canvas.put(self.lock_btn, *self._lock_pos)
 
     def _on_mapped(self) -> bool:
         for name in self._panels:
             self._clamp_panel(name)
-        if self.lock_btn is not None:
-            # Centre it exactly now that its size is known.
-            _, nat = self.lock_btn.get_preferred_size()
-            self._lock_pos = (
-                max(0, self._mon_w // 2 - nat.width // 2),
-                max(0, self._mon_h - nat.height - int(14 * self.scale)),
-            )
-            self.canvas.move(self.lock_btn, *self._lock_pos)
+        self._centre_lock_button()
+        self._place_gear()
         return self._apply_input_region()
+
+    def _centre_lock_button(self) -> bool:
+        if self.lock_btn is None:
+            return False
+        # Centre it exactly now that its size is known.
+        _, nat = self.lock_btn.get_preferred_size()
+        self._lock_pos = (
+            max(0, self._mon_w // 2 - nat.width // 2),
+            max(0, self._mon_h - nat.height - int(14 * self.scale)),
+        )
+        self.canvas.move(self.lock_btn, *self._lock_pos)
+        return False
+
+    def _place_gear(self) -> None:
+        """Park the gear just above the HUD's top-right corner.
+
+        Above rather than on it: this is the one part of a locked overlay that
+        swallows a click instead of passing it to Hearthstone, so it sits in
+        empty space beside the panel the user already positioned, and never
+        over the HUD's own content.
+        """
+        if self.gear_btn is None:
+            return
+        _, gear = self.gear_btn.get_preferred_size()
+        _, hud = self._panels["hud"].get_preferred_size()
+        hx, hy = self._pos["hud"]
+        x = max(0, min(self._mon_w - gear.width, hx + hud.width - gear.width))
+        y = max(0, hy - gear.height - int(4 * self.scale))
+        if (x, y) != self._gear_pos:
+            self._gear_pos = (x, y)
+            self.canvas.move(self.gear_btn, x, y)
+            # The gear is the whole input region while locked, so a move that
+            # did not re-upload it would leave the clickable patch behind at
+            # the old spot — invisible, and swallowing clicks meant for the game.
+            self._apply_input_region()
 
     # -- panel construction / dragging ----------------------------------
     def _make_panel(
@@ -234,30 +287,62 @@ class OverlayWindow(Gtk.Window):
     def _drag_end(self, _gesture, _ox, _oy, name):
         self._dragging = None
         x, y = self._pos[name]
+        # Kept on the live Config too, not just on disk: "reset panel layout"
+        # works out what to forget from `cfg.extra`, and would miss anything
+        # dragged since the process started.
+        self.cfg.extra[f"pos_{name}_x"] = x
+        self.cfg.extra[f"pos_{name}_y"] = y
         update_config_values({f"pos_{name}_x": x, f"pos_{name}_y": y})
+        self._place_gear()
 
-    def _on_lock(self, _btn):
-        self.edit = False
-        update_config_values({"overlay_edit": False})
+    def set_edit(self, edit: bool) -> None:
+        """Enter or leave layout mode without a restart."""
+        if edit == self.edit:
+            return
+        self.edit = edit
         for name, panel in self._panels.items():
-            self._grips[name].set_visible(False)
-            self._frames[name].remove_css_class("editing")
-            panel.set_visible(self._has_content.get(name, False))
-        if self.lock_btn is not None:
+            self._grips[name].set_visible(edit)
+            if edit:
+                self._frames[name].add_css_class("editing")
+            else:
+                self._frames[name].remove_css_class("editing")
+            panel.set_visible(edit or self._has_content.get(name, False))
+        if edit and self.lock_btn is None:
+            self._add_lock_button()
+            GLib.idle_add(self._centre_lock_button)
+        elif not edit and self.lock_btn is not None:
             self.canvas.remove(self.lock_btn)
             self.lock_btn = None
         self._apply_input_region()
 
-    # -- input region: click-through when locked, panel-bounded in edit --
-    def _apply_input_region(self, *_):
-        surface = self.get_surface()
-        if surface is None:
-            return False
-        import cairo
+    def _on_lock(self, _btn):
+        self.set_edit(False)
+        if self._on_edit is not None:
+            # Through the settings service, so the hover column is rebuilt out
+            # of layout mode too — it decides drag-vs-click-through once, at
+            # construction.
+            self._on_edit(False)
+        else:
+            update_config_values({"overlay_edit": False})
 
+    # -- input region: the gear only when locked, panels in edit ---------
+    def _gear_rect(self) -> tuple[int, int, int, int] | None:
+        if self.gear_btn is None or not self.gear_btn.get_visible():
+            return None
+        _, nat = self.gear_btn.get_preferred_size()
+        x, y = self._gear_pos
+        return (x, y, max(nat.width, 1), max(nat.height, 1))
+
+    def _input_rects(self) -> list[tuple[int, int, int, int]]:
+        """Every rect that accepts a click instead of passing it to the game.
+
+        Locked, that is the gear and nothing else. Each rect here is a hole in
+        the click-through guarantee that keeps Hearthstone's own
+        board-preview-on-hover working, so the list stays as short as it can be.
+        """
+        gear = self._gear_rect()
         if not self.edit:
-            surface.set_input_region(cairo.Region())  # fully click-through
-            return False
+            return [gear] if gear else []
         items = [(self._pos[n][0], self._pos[n][1], w)
                  for n, w in self._panels.items() if w.get_visible()]
         if self.lock_btn is not None:
@@ -272,6 +357,17 @@ class OverlayWindow(Gtk.Window):
             height = max(nat.height, GRAB_MIN_H)
             rects.append((int(x - pad), int(y - pad),
                           int(width + 2 * pad), int(height + 2 * pad)))
+        if gear:
+            rects.append(gear)
+        return rects
+
+    def _apply_input_region(self, *_):
+        surface = self.get_surface()
+        if surface is None:
+            return False
+        import cairo
+
+        rects = self._input_rects()
         # Panel sizes change with every board update; re-uploading an identical
         # region hundreds of times a second is pure churn.
         if rects == self._region_rects:
@@ -288,6 +384,8 @@ class OverlayWindow(Gtk.Window):
         self._has_content[name] = has_content
         self._panels[name].set_visible(self.edit or has_content)
         self._clamp_panel(name)
+        if name == "hud":
+            self._place_gear()
         if self.edit:
             self._apply_input_region()
 

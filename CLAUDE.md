@@ -40,6 +40,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m bgtracker stats                 # match history + sim calibration table
 .venv/bin/python -m bgtracker resim 40              # re-simulate stored combats (regression harness)
 .venv/bin/python -m bgtracker doctor                # diagnose the pipeline end to end
+.venv/bin/python -m bgtracker settings              # settings window, standalone
 .venv/bin/python -m bgtracker mmr 8421              # record a rating reading by hand
 .venv/bin/python -m bgtracker --replay FILE --odds  # replay a saved Power.log
 .venv/bin/python -m bgtracker --no-names            # skip the card-name DB download
@@ -124,6 +125,11 @@ and the event, not reaching back into the parser.
 | Snapshot → simulator JSON | `sim/mapper.py` |
 | Widget layout & plumbing | `overlay/window.py`, `hud.py`, `rail.py`, `widgets.py` |
 | Colours, sizes, fonts, stylesheet | `overlay/theme.py` (design tokens only) |
+| What the overlay is showing, as data | `overlay/model.py` |
+| Option metadata, validation, live apply | `settings.py` |
+| Settings UI | `overlay/settings_window.py` |
+| Log handlers and level | `logging_setup.py` |
+| Live status and the diagnostics bundle | `diagnostics.py` |
 
 ## Domain: Hearthstone Battlegrounds
 
@@ -313,9 +319,26 @@ Non-obvious constraints:
   so a single lookup beforehand permanently pins the overlay to the fallback font.
 - **The stylesheet uses `string.Template` `$name` substitution, not `str.format`** — GTK
   CSS is full of literal braces.
-- **Hovering never captures the pointer.** The window's input region is empty
-  (click-through) and the X11 cursor is polled instead, so Blizzard's own board-preview-
-  on-hover keeps working and both show together. `overlay/hover.py` owns this.
+- **Hovering never captures the pointer.** The window's input region is *almost* empty
+  and the X11 cursor is polled instead, so Blizzard's own board-preview-on-hover keeps
+  working and both show together. `overlay/hover.py` owns this. The one exception is
+  the **settings gear** above the HUD's top-right corner: a single ~22px rect that
+  swallows clicks instead of passing them to Hearthstone. `_input_rects()` is the whole
+  list, and it should stay this short — every entry is a hole in the click-through
+  guarantee.
+- **Never write an unscoped `window { … }` rule.** These CSS providers attach to the
+  *display*, not to a window, so a bare selector reaches every window the process
+  opens. `theme.py` and `hover.py` each used to load their own
+  `window { background: transparent }`, which is why the settings window would have
+  come up transparent over a light system theme. Transparency is now
+  `window.bg-overlay`, and `tests/test_overlay_theme.py` fails on any bare `window`
+  selector.
+- **Colours only on GTK's own widget parts.** Switch sliders, scrollbar sliders, spin
+  steppers and the titlebar's window controls take their minimum sizes, padding and
+  baselines from the system theme; overriding any of those makes GTK compute negative
+  minimums and warn on every layout pass. Geometry belongs only to classes we create
+  (`.settings-btn`, `.settings-row`). `theme.prefer_dark()` is what makes the parts we
+  leave alone look right on a light system theme.
 - **`gtk4-layer-shell` must link before libwayland**, which from Python means
   `LD_PRELOAD`; `__main__.py` re-execs itself once with it set.
 - Panel sizes derive from monitor height by default so the HUD covers the same share of
@@ -326,23 +349,78 @@ Non-obvious constraints:
 - `--overlay --demo` renders every state (hero select, combat, shop, golden minion,
   eliminated player) through the real `on_event` wiring. Use it whenever changing the skin.
 
-### Config keys
+## Settings
 
-`config.example.toml` documents the main ones (`hearthstone_dir`, poll intervals,
-`sim_count`, `sim_timeout`, `overlay_scale`, log pruning). These extras are read from
-`cfg.extra` and are not in the example file:
+`bgtracker/settings.py` is the source of truth for every option: one `Setting` per
+key, carrying its type, bounds, label, help text and **channel**. That one table
+drives the settings window's widgets, validation, reset-to-default, and the
+generated `config.example.toml`. Adding an option means adding a `Config` field and
+a `Setting` — nothing else, and `tests/test_settings_schema.py` fails if you do only
+one of the two, or if the example file drifts.
 
-| Key | Meaning |
-|---|---|
-| `overlay_edit` | Layout mode: panels get drag handles; positions save on drop |
-| `overlay_monitor` | Pin the overlay to a connector name |
-| `pos_<panel>_x/y` | Saved panel positions (written by drag, not by hand) |
-| `hover_strips` | Enable the leaderboard hover column (default true) |
-| `hover_debug` | Draw the hover boxes faintly and log slot hits |
-| `leaderboard_top_frac`, `leaderboard_bottom_frac`, `leaderboard_width_px`, `leaderboard_left_px`, `leaderboard_skew_px` | Hover-box calibration over the game's leaderboard |
+`Config`'s *fields* are the recognised key list (`load_config` walks
+`dataclasses.fields`). `cfg.extra` now holds only the machine-written
+`pos_<panel>_x/y` positions, which are per-panel and so cannot be fields.
+
+**Every setting applies live**, which is what the channel names: who has to be told.
+
+| Channel | Applied by | Cost |
+|---|---|---|
+| `NONE` | nobody — read fresh from the shared `Config` (`poll_active`) | free |
+| `SIM` | attribute assignment on the live `SimClient` | free |
+| `SIM_RESPAWN` | `SimClient.reconfigure_workers`, **under the request lock** | seconds |
+| `TAILER` | the tail loop re-resolves and rebuilds on its next pass | one poll |
+| `OVERLAY` | `OverlayWindow.set_edit` in place | free |
+| `OVERLAY_REBUILD` | window destroyed and rebuilt, then repainted from state | a frame |
+| `HOVER` | the hover-strip window is rebuilt | a frame |
+| `LOGGING` | handlers/level swapped on the root logger | free |
+
+Three things make that safe, and all three are load-bearing:
+
+- **One `Config`, mutated in place.** `SettingsService` owns it and everything
+  downstream holds the same object. Handing out copies would make half the settings
+  silently inert.
+- **The sim lock.** `SimClient._request` holds `_lock` across its `readline()`
+  await, so `reconfigure_workers` takes that lock before killing the sidecar.
+  Without it a worker change during a combat raises `sidecar died mid-request` and
+  that fight gets no odds.
+- **The overlay state model** (`overlay/model.py`). See below.
 
 `update_config_values()` is deliberately line-based rather than a TOML round-trip
-(stdlib has no writer) so hand-written comments survive.
+(stdlib has no writer) so hand-written comments survive. `remove_config_keys()` is
+its counterpart: resetting a setting means the key is *gone*, so the default
+applies again — which update-or-append cannot express.
+
+### The overlay state model
+
+`OverlayApp` keeps an `OverlayState` and `render(window, state, previous)` is the
+only thing that touches widgets. This exists because `overlay_scale` bakes into both
+a display-wide CSS provider and every widget constructor, so changing it means
+rebuilding the window — and before the state model a rebuilt window came up blank
+until the next event, which mid-recruit-phase is half a minute.
+
+**`render` diffs on purpose**, emitting only what changed. Partly for churn
+(`_set_content` re-clamps the panel and re-uploads the input region), but mainly
+because *not* calling a setter is behaviour: the enemy board must survive
+`CombatEnd`, and the combat result must stay banked until `ShopReady`. A renderer
+that pushed everything every time would quietly undo both.
+
+A rebuild is `render(new_window, state)` with no `previous`. It must also re-bind
+`HoverStrips` — that window holds `rail_rect`/`hud_rect` bound methods on a
+*specific* `OverlayWindow`, and skipping the re-bind leaves the hover column
+resolving slots against destroyed geometry.
+
+### Debugging
+
+- `log_to_file` (default on) keeps a rotating log at
+  `~/.cache/hs-bg-tracker/bgtracker.log`. The tracker is normally launched *by the
+  game*, so console output goes nowhere anybody reads. `-v` is a floor on the level,
+  not a separate mechanism.
+- `doctor.py` checks *yield* `(kind, text)` records; `run()` is the printing shell.
+  Its CLI output is byte-for-byte what it always was — diff it after touching this.
+- `diagnostics.status` is a mutable record the pipeline and tail loop poke as they
+  work. Display-only: nothing reads it back to make a decision.
+- `diagnostics.bundle()` writes config + doctor + versions + log tail to one file.
 
 ## Launching with the game
 

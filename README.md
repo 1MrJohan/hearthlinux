@@ -118,7 +118,28 @@ The overlay uses the "Dark Oak" skin (see `design_handoff_overlay_redesign/`):
 a HUD with turn medallion and win/tie/loss bar, an enemy-board panel of
 card-art minion tiles, tavern buffs, and a leaderboard rail of hero portraits
 whose rows open a scout popout on hover. Panels are individually draggable —
-set `overlay_edit = true` in config, arrange them, then hit **Lock layout**.
+turn on **Layout mode** in settings (or hit the ⚙ above the HUD), arrange them,
+then hit **Lock layout**.
+
+### Settings
+
+A ⚙ sits just above the HUD's top-right corner — the only part of the overlay
+that takes a click rather than passing it through to Hearthstone. It opens a
+settings window, which also runs on its own:
+
+```bash
+bgtracker settings
+```
+
+Everything applies immediately, including overlay scale, monitor, and simulator
+worker count; nothing needs a restart. The window also carries the **Debug**
+page — log level, a rotating log file, live tracker status, the same checks
+`bgtracker doctor` runs, and a one-click diagnostics bundle — and a **Reset**
+page for panel layout, hover calibration, all settings, and (with a typed
+confirmation and an offered backup) the match history.
+
+`config.example.toml` documents every option and is generated from the schema in
+`bgtracker/settings.py`, so it cannot drift from what the tracker accepts.
 
 Panel sizes derive from the monitor by default, so the HUD covers the same
 share of screen as the design mock (1080p ~1.53, 1440p ~2.04, 4K capped at

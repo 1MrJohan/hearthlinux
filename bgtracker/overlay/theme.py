@@ -116,7 +116,11 @@ HOVER_ORB_D = 38
 
 
 _CSS = Template("""
-window { background: transparent; }
+/* Scoped to the overlay's own windows on purpose. This provider is attached to
+   the whole *display*, so a bare `window` selector would make every other
+   window this process opens — the settings window above all — transparent over
+   whatever the system GTK theme happens to be. */
+window.bg-overlay { background: transparent; }
 
 /* ---- panel frame ------------------------------------------------- */
 .hud {
@@ -393,6 +397,25 @@ $buff_rules
     text-transform: uppercase;
 }
 .editing { border: ${b2}px dashed rgba(244,212,122,.9); }
+/* The gear is the one clickable pixel-patch on a locked overlay, so it stays
+   quiet until the pointer finds it. */
+.gearbtn {
+    background-image: radial-gradient(circle at 50% 38%, rgba(58,42,26,.92), rgba(18,12,6,.94));
+    border: ${b1}px solid rgba(212,175,55,.45);
+    border-radius: ${gear}px;
+    min-width: ${gear}px;
+    min-height: ${gear}px;
+    padding: 0;
+    color: rgba(244,212,122,.55);
+    font-size: ${f14}px;
+    opacity: 0.45;
+}
+.gearbtn:hover {
+    opacity: 1;
+    color: $gold;
+    border: ${b1}px solid $gold;
+    box-shadow: 0 0 ${p10}px rgba(244,212,122,.55);
+}
 .lockbtn {
     background-image: linear-gradient(180deg,#f6e07f,#d4af37 55%,#a97e1f);
     color: #3a2708;
@@ -407,6 +430,130 @@ $buff_rules
                 inset 0 ${b1}px 0 rgba(255,255,255,.5);
 }
 """)
+
+
+# The settings window is chrome, not overlay: it is deliberately NOT scaled by
+# `overlay_scale`, which exists to match the game HUD's share of the screen and
+# would render a perfectly ordinary preferences window at 3x on a 4K display.
+#
+# **Colours only on anything GTK owns.** Widget internals — switch sliders,
+# scrollbar sliders, spin steppers, the titlebar's window controls — get their
+# minimum sizes, padding and baselines from the theme's own metrics, and
+# overriding any of those from here makes GTK compute negative minimums and
+# warn on every single layout pass. So: background and foreground on GTK parts,
+# and geometry only on the classes we create ourselves. `prefer_dark()` is what
+# makes the untouched parts look right.
+_SETTINGS_CSS = Template("""
+window.bg-settings {
+    background-image: linear-gradient(158deg, #2a1e12, #140d07);
+    color: $ink;
+    font-family: $body;
+    font-size: 14px;
+}
+window.bg-settings headerbar {
+    background-image: linear-gradient(180deg, rgba(58,42,26,.98), rgba(30,20,11,.98));
+    border-bottom: 1px solid $panel_border;
+    box-shadow: none;
+    color: $gold;
+}
+window.bg-settings headerbar label {
+    font-family: $display;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: $gold;
+}
+window.bg-settings stacksidebar {
+    background-color: rgba(12,8,4,.55);
+    border-right: 1px solid $rule;
+}
+window.bg-settings stacksidebar list,
+window.bg-settings scrolledwindow,
+window.bg-settings viewport,
+window.bg-settings box,
+window.bg-settings list {
+    background-color: transparent;
+}
+window.bg-settings stacksidebar row {
+    padding: 9px 14px;
+    border-radius: 8px;
+    color: $dim;
+    font-weight: 600;
+}
+window.bg-settings stacksidebar row:selected {
+    background-color: rgba(244,212,122,.16);
+    color: $gold;
+}
+
+.settings-section {
+    font-family: $display;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 1.6px;
+    text-transform: uppercase;
+    color: $gold;
+}
+.settings-label { color: $ink; font-weight: 600; font-size: 14px; }
+.settings-help  { color: $dim; font-size: 12px; }
+.settings-row   { border-bottom: 1px solid rgba(212,175,55,.16); padding: 9px 2px; }
+.settings-note  { color: $dim; font-size: 12px; }
+.settings-mono {
+    font-family: monospace;
+    font-size: 12px;
+    color: $ink;
+}
+.settings-ok   { color: $win; font-weight: 700; }
+.settings-bad  { color: $loss; font-weight: 700; }
+
+/* Our own buttons carry a class, so nothing here can reach the titlebar's
+   window controls — whose padding and baselines belong to the theme. */
+.settings-btn {
+    background-image: linear-gradient(180deg, rgba(70,52,32,.95), rgba(38,26,14,.95));
+    border: 1px solid rgba(212,175,55,.45);
+    color: $ink;
+    font-weight: 600;
+}
+.settings-btn:hover {
+    background-image: linear-gradient(180deg, rgba(92,69,42,.95), rgba(52,36,20,.95));
+    border: 1px solid $gold;
+}
+.settings-btn:disabled { color: $dim; }
+.settings-btn.gold {
+    background-image: linear-gradient(180deg,#f6e07f,#d4af37 55%,#a97e1f);
+    border: 1px solid #7a5a1e;
+    color: #3a2708;
+    font-weight: 800;
+}
+.settings-btn.danger {
+    background-image: linear-gradient(180deg, rgba(96,40,28,.95), rgba(58,22,15,.95));
+    border: 1px solid rgba(227,122,92,.6);
+    color: #ffd9cd;
+}
+
+/* Colour only from here down: sizing on these parts belongs to the theme. */
+window.bg-settings entry,
+window.bg-settings spinbutton,
+window.bg-settings spinbutton text {
+    background-image: none;
+    background-color: rgba(10,7,3,.75);
+    color: $ink;
+}
+window.bg-settings switch:checked {
+    background-image: linear-gradient(180deg,#f6e07f,#c9992f);
+}
+window.bg-settings popover > contents {
+    background-color: #1d140b;
+    color: $ink;
+}
+window.bg-settings separator { background-color: $rule; }
+""")
+
+
+def settings_stylesheet() -> str:
+    """Dark Oak for the settings window, at a fixed size (see `_SETTINGS_CSS`)."""
+    return _SETTINGS_CSS.substitute(
+        ink=INK, dim=DIM, gold=GOLD, rule=RULE, panel_border=PANEL_BORDER,
+        win=WIN, loss=LOSS, display=DISPLAY, body=BODY,
+    )
 
 
 def px(value: float, scale: float) -> int:
@@ -433,6 +580,8 @@ def _dims(scale: float) -> dict[str, int]:
         "pad_x": 13, "pad_y": 11, "sh_y": 12, "sh_b": 34,
         "med": 58, "bar": 9, "tile": TILE_W, "portrait": PORTRAIT_D,
         "gem": 25, "pip": 13, "orb": ORB_D, "rank": 17, "dot": 8,
+        # Deliberately small: it is a hole in the overlay's click-through.
+        "gear": 22,
     }
     return {k: px(v, scale) for k, v in sizes.items()}
 
@@ -490,11 +639,52 @@ def register_fonts() -> bool:
     return ok
 
 
-def install(display, scale: float = 1.0) -> None:
-    """Register fonts, then apply the stylesheet to `display`."""
-    register_fonts()
+def prefer_dark() -> None:
+    """Ask GTK for the dark variant of whatever theme is installed.
+
+    Our own CSS covers our own widgets, but not GTK's: dropdown popovers,
+    scrollbars, tooltips, text-selection and focus colours all come from the
+    system theme, and on a light one they render as bright rectangles in the
+    middle of a Dark Oak window. This is the non-libadwaita way to say "dark".
+    """
+    gtk_settings = Gtk.Settings.get_default()
+    if gtk_settings is not None:  # None before Gtk.init, e.g. in tests
+        gtk_settings.set_property("gtk-application-prefer-dark-theme", True)
+
+
+def _add(display, css: str) -> Gtk.CssProvider:
     provider = Gtk.CssProvider()
-    provider.load_from_string(stylesheet(scale))
+    provider.load_from_string(css)
     Gtk.StyleContext.add_provider_for_display(
         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
+    return provider
+
+
+def install(display, scale: float = 1.0) -> Gtk.CssProvider:
+    """Register fonts, then apply the overlay stylesheet to `display`.
+
+    Returns the provider so a scale change can take it back off again — these
+    attach to the display, not the window, so a rebuild that only added a new
+    one would leave both live and let whichever loaded first keep winning.
+    """
+    register_fonts()
+    prefer_dark()
+    return _add(display, stylesheet(scale))
+
+
+def install_settings(display) -> Gtk.CssProvider:
+    """Apply the (unscaled) settings-window stylesheet to `display`."""
+    register_fonts()
+    prefer_dark()
+    return _add(display, settings_stylesheet())
+
+
+def uninstall(provider: Gtk.CssProvider | None, display=None) -> None:
+    if provider is None:
+        return
+    from gi.repository import Gdk
+
+    display = display or Gdk.Display.get_default()
+    if display is not None:
+        Gtk.StyleContext.remove_provider_for_display(display, provider)
