@@ -465,7 +465,13 @@ class OverlayWindow(Gtk.Window):
     def set_result(self, outcome: str | None, damage: int = 0) -> None:
         self.hud.set_result(outcome, damage)
 
-    def set_buffs(self, entries, spells=()) -> None:
+    def set_buffs(self, entries, spells=(), shop=()) -> None:
+        """Played buffs and held spells, then tavern-wide buffs under a heading.
+
+        `shop` is a different quantity from `entries`: those are already on the
+        board, these are what a minion in Bob's tavern is carrying before you
+        buy it. In one flat list the two read as a single stacking number.
+        """
         for row in self._buff_rows:
             self.buffs.remove(row)
         self._buff_rows.clear()
@@ -473,9 +479,18 @@ class OverlayWindow(Gtk.Window):
             self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
         for card_id in spells:
             self._buff_rows.append(self._spell_chip(cards.name(card_id)))
+        if shop:
+            self._buff_rows.append(self._buff_group("In Bob's Tavern"))
+            for label, atk, hp in shop:
+                self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
         for row in self._buff_rows:
             self.buffs.append(row)
         self._set_content("buffs", bool(self._buff_rows))
+
+    def _buff_group(self, title: str) -> Gtk.Widget:
+        label = Gtk.Label(label=title, xalign=0)
+        label.add_css_class("buff-group")
+        return label
 
     def _buff_chip(self, label: str, value: str) -> Gtk.Widget:
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=theme.px(7, self.scale))

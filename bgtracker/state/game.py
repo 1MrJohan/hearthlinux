@@ -154,6 +154,63 @@ def read_buffs(game: Game, player_id: int) -> PlayerBuffs:
     return PlayerBuffs(tuple(entries))
 
 
+# Buffs that apply to minions *while they sit in Bob's tavern* — Nomi and the
+# like. Unlike the counters above these are not player tags: the game keeps one
+# enchantment per tribe attached to the player entity, and every source feeding
+# that tribe stacks into the same one (Dune Dweller + Nomi + a Nomi Sticker
+# magic item all read as a single +27/+27). So this is a read of a running
+# total, never a count of triggers.
+#
+# Two things here are silent when wrong:
+#   * Match the id exactly. The sibling `BG_ShopBuff*_Ench` ids are the
+#     per-minion "Tavern Buffed" marks on the shop minions themselves; a prefix
+#     match would sum every buffed minion in the tavern into the player total.
+#   * The value is in TAG_SCRIPT_DATA_NUM_1/2. These entities carry no ATK or
+#     HEALTH, so reading those yields a silent 0/0 rather than an error.
+#
+# `MultiRace` covers several tribes at once but the log never says which, so it
+# is labelled for what it is rather than guessed at.
+_SHOP_BUFFS = {
+    "BG_ShopBuff": "All minions",
+    "BG_ShopBuff_MultiRace": "Multi-tribe",
+    "BG_ShopBuff_Beast": "Beast",
+    "BG_ShopBuff_Demon": "Demon",
+    "BG_ShopBuff_Dragon": "Dragon",
+    "BG_ShopBuff_Elemental": "Elemental",
+    "BG_ShopBuff_Mech": "Mech",
+    "BG_ShopBuff_Murloc": "Murloc",
+    "BG_ShopBuff_Naga": "Naga",
+    "BG_ShopBuff_Pirate": "Pirate",
+    "BG_ShopBuff_Quilboar": "Quilboar",
+    "BG_ShopBuff_Undead": "Undead",
+}
+
+
+def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
+    """Friendly tavern-wide buffs, as (label, attack, health).
+
+    Declared order, not discovery order, so a row keeps its place in the panel
+    as its value climbs.
+    """
+    found: dict[str, tuple[int, int]] = {}
+    for e in game.entities:
+        if (
+            isinstance(e, Card)
+            and e.card_id in _SHOP_BUFFS
+            and tag(e, GameTag.CONTROLLER) == player_id
+            and tag(e, GameTag.ZONE) == Zone.PLAY
+        ):
+            atk = tag(e, GameTag.TAG_SCRIPT_DATA_NUM_1)
+            hp = tag(e, GameTag.TAG_SCRIPT_DATA_NUM_2)
+            if atk or hp:
+                found[e.card_id] = (atk, hp)
+    return tuple(
+        (label, *found[card_id])
+        for card_id, label in _SHOP_BUFFS.items()
+        if card_id in found
+    )
+
+
 # Persistent tavern SPELLS the player holds (Easterly Winds and other pool
 # spells). They aren't counters — they buff shop minions / the board on
 # triggers — but are worth surfacing as active effects. Classified by the

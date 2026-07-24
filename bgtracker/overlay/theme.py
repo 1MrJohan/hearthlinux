@@ -72,12 +72,26 @@ PIP_COLOURS = {
     "S": "#c2cad6",   # Stealth
 }
 
-# Tavern-buff dot colours, keyed by the labels in state.game._BUFF_TAGS.
+# Tavern-buff dot colours, keyed by the labels in state.game._BUFF_TAGS and
+# _SHOP_BUFFS. The design handoff defines no tribe palette — its only
+# tribe-adjacent colours are the keyword pips — so the shop-buff tribes below
+# extend these four in the same muted jewel-tone register rather than opening a
+# second palette. Elemental and Pirate are shared by both tables.
 BUFF_COLOURS = {
     "Blood Gem": "#d0555f",
     "Elemental": "#3fb0c9",
     "Pirate": "#c9a13f",
     "Spell": "#a97fd0",
+    "Beast": "#8fae54",
+    "Demon": "#b45fa8",
+    "Dragon": "#d1743f",
+    "Mech": "#7f96b0",
+    "Murloc": "#4fbf9a",
+    "Naga": "#6f7fd0",
+    "Quilboar": "#c96f86",
+    "Undead": "#b9b3a0",
+    "All minions": "#e0cfa4",
+    "Multi-tribe": "#a9b4c0",
 }
 
 # The prototype stage every design token was drawn against. It is a full
@@ -375,6 +389,16 @@ $pip_rules
     border-radius: ${dot}px;
 }
 $buff_rules
+/* Heading over the tavern-wide group. Quieter than the panel's own .title so
+   it reads as a division inside the panel rather than a second panel. */
+.buff-group {
+    font-size: ${f11}px;
+    font-weight: 700;
+    letter-spacing: ${ls1_5}px;
+    text-transform: uppercase;
+    color: $dim;
+    margin-top: ${b2}px;
+}
 .buff-label { color: $ink; font-weight: 600; font-size: ${f12_5}px; }
 .buff-val {
     font-family: $display;

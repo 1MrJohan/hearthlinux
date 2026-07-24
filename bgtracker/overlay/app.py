@@ -234,8 +234,8 @@ class OverlayApp:
                     self._set_forecast(st, prediction)
                 else:
                     self._clear_forecast(st)
-            case ev.Buffs(entries=e, spells=sp):
-                st.buffs = (e, sp)
+            case ev.Buffs(entries=e, spells=sp, shop=shop):
+                st.buffs = (e, sp, shop)
             case ev.Standings(places=places):
                 st.standings = places
             case ev.CombatEnd(snapshot=s):
@@ -311,7 +311,7 @@ class OverlayApp:
         st.board = None
         st.next_board = None
         st.standings = ()
-        st.buffs = ((), ())
+        st.buffs = ((), (), ())
 
     @staticmethod
     def _enter_combat(st, snapshot) -> None:

@@ -113,3 +113,20 @@ def test_every_pip_and_buff_colour_reaches_the_stylesheet():
         assert f".pip-{letter.lower()}" in css
     for label in theme.BUFF_COLOURS:
         assert f".buff-{label.lower().replace(' ', '')}" in css
+
+
+def test_the_buff_group_heading_is_styled():
+    """Unstyled it still renders — as an unreadable body-text line."""
+    assert ".buff-group" in theme.stylesheet(1.0)
+
+
+def test_every_buff_label_the_reader_can_emit_has_a_colour():
+    """The other direction: a label with no dot colour ships an invisible dot.
+
+    Tribes rotate, so the shop-buff table gains entries over time; without this
+    a new one looks fine in code review and blank on screen.
+    """
+    from bgtracker.state.game import _BUFF_TAGS, _SHOP_BUFFS
+
+    labels = {label for label, *_ in _BUFF_TAGS} | set(_SHOP_BUFFS.values())
+    assert labels <= set(theme.BUFF_COLOURS)

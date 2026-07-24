@@ -28,6 +28,7 @@ from bgtracker.state.game import (
     project_player_board,
     read_active_spells,
     read_buffs,
+    read_shop_buffs,
     tag,
 )
 
@@ -85,9 +86,10 @@ class BGExporter(EntityTreeExporter):
         self._dead_player_ids: set[int] = set()
         self._shop_dirty = False
         self._shop_board = None
-        # (entries, spells) — seeded empty so the first read of an unbuffed
-        # player doesn't look like a change and emit a no-op Buffs event.
-        self._buffs: tuple = ((), ())
+        # (entries, spells, shop) — seeded empty so the first read of an
+        # unbuffed player doesn't look like a change and emit a no-op Buffs
+        # event.
+        self._buffs: tuple = ((), (), ())
 
     # -- friendly player detection -------------------------------------
     # Only the local player's cards are revealed in their HAND zone (hero
@@ -170,9 +172,10 @@ class BGExporter(EntityTreeExporter):
             return
         entries = read_buffs(self.game, fid).entries
         spells = read_active_spells(self.game, fid)
-        if (entries, spells) != self._buffs:
-            self._buffs = (entries, spells)
-            self._emit(ev.Buffs(entries=entries, spells=spells))
+        shop = read_shop_buffs(self.game, fid)
+        if (entries, spells, shop) != self._buffs:
+            self._buffs = (entries, spells, shop)
+            self._emit(ev.Buffs(entries=entries, spells=spells, shop=shop))
 
     def maybe_emit_hero(self):
         hero = self.friendly_hero()

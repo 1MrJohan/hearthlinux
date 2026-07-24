@@ -140,6 +140,17 @@ def test_state_tracks_a_combat():
     assert st.board is None
 
 
+def test_shop_buffs_reach_the_panel_alongside_the_played_buffs():
+    """Two different quantities: what a minion gains when played, and what one
+    in Bob's tavern already carries. The panel shows both, separately."""
+    app, win = _app()
+    app.on_event(
+        ev.Buffs(entries=(("Blood Gem", 2, 2),), shop=(("Elemental", 27, 27),)),
+        None,
+    )
+    assert win.last("set_buffs") == ((("Blood Gem", 2, 2),), (), (("Elemental", 27, 27),))
+
+
 def test_the_banked_result_is_not_in_state_until_shop_ready():
     app, _ = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)

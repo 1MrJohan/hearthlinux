@@ -59,7 +59,7 @@ class OverlayState:
     next_forecast: str | None = None
     hover_board: BoardView | None = None
     standings: tuple = ()
-    buffs: tuple[tuple, tuple] = ((), ())
+    buffs: tuple[tuple, tuple, tuple] = ((), (), ())
     hot_place: int | None = None
 
     def snapshot(self) -> OverlayState:

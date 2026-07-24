@@ -137,12 +137,16 @@ class GameEnd:
 class Buffs:
     """Friendly player's tavern buffs and held tavern spells/trinkets.
 
-    entries: (label, atk, health) accumulating counters.
+    entries: (label, atk, health) accumulating counters, applied when a minion
+             is played and so already baked into the board.
     spells:  card ids of persistent tavern spells/trinkets held.
+    shop:    (label, atk, health) buffs a minion already carries while it sits
+             in Bob's tavern — a buying decision, invisible to combat.
     """
 
     entries: tuple[tuple[str, int, int], ...]
     spells: tuple[str, ...] = ()
+    shop: tuple[tuple[str, int, int], ...] = ()
 
 
 Event = (
