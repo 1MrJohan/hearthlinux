@@ -42,16 +42,6 @@ def _combat_meta(snapshot) -> str:
     return " · ".join(part for part in (hp, versus) if part)
 
 
-def _board_meta(board) -> str:
-    """`Tickatus · 27 HP · Tavern 5` — the enemy board's subtitle."""
-    if board is None:
-        return ""
-    return (
-        f"{cards.name(board.hero_card_id)} · "
-        f"{board.health + board.armor} HP · Tavern {board.tier}"
-    )
-
-
 class OverlayApp:
     """Owns the Gtk.Application + window; listener plugs into the Pipeline."""
 
@@ -269,7 +259,8 @@ class OverlayApp:
                 # checkable once it is over.
                 st.result = self._shop_result
                 self._shop_result = (None, 0)
-                # The design shows the enemy board only during combat.
+                # Defensive: _enter_combat no longer populates the enemy
+                # board, so this only matters if something else ever does.
                 st.board = None
             case ev.NextOpponent(player_id=pid):
                 # A new opponent invalidates the previous one's odds well before
@@ -334,9 +325,9 @@ class OverlayApp:
         st.status = ""
         st.turn = snapshot.turn
         st.combat = True
-        st.board = BoardView(
-            "Enemy Board", _board_meta(snapshot.opponent), snapshot.opponent
-        )
+        # Deliberately no st.board: the game is showing this fight itself, so
+        # the panel would only cover it. Reviewing a player's last-seen board
+        # is the scout popout's job (hover_board).
 
     @staticmethod
     def _set_forecast(st, prediction: SimResult) -> None:

@@ -324,8 +324,10 @@ handoff is `design_handoff_overlay_redesign/README.md` and **its colours, radii,
 and typography are final**; treat them as the source of truth and put every token in
 `overlay/theme.py`. `window.py` is layout and plumbing only.
 
-Panels: HUD (phase title, turn medallion, win/tie/loss bar, damage pills), enemy board,
-tavern buffs, next opponent, scout popout, and the leaderboard rail of hero portraits.
+Panels: HUD (phase title, turn medallion, win/tie/loss bar, damage pills), tavern
+buffs, next opponent, scout popout, and the leaderboard rail of hero portraits. An
+enemy-board panel exists but is dormant: it duplicated the fight the game itself was
+showing, so nothing populates it — the scout popout is how a board gets reviewed.
 
 The HUD forecast **stays open through the recruit phase** with the actual result under it
 (`✔ WON · dealt 14`), rather than collapsing to a hover-only hint: a forecast only becomes
@@ -428,9 +430,9 @@ until the next event, which mid-recruit-phase is half a minute.
 
 **`render` diffs on purpose**, emitting only what changed. Partly for churn
 (`_set_content` re-clamps the panel and re-uploads the input region), but mainly
-because *not* calling a setter is behaviour: the enemy board must survive
-`CombatEnd`, and the combat result must stay banked until `ShopReady`. A renderer
-that pushed everything every time would quietly undo both.
+because *not* calling a setter is behaviour: the combat result must stay banked
+until `ShopReady`, not revealed the moment it lands mid-fight. A renderer that
+pushed everything every time would quietly undo that.
 
 A rebuild is `render(new_window, state)` with no `previous`. It must also re-bind
 `HoverStrips` — that window holds `rail_rect`/`hud_rect` bound methods on a

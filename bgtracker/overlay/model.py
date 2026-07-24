@@ -13,10 +13,9 @@ widgets. A rebuild is then just `render(new_window, state)` with no `previous`.
 changed, for two reasons. Cheap one: `OverlayWindow._set_content` re-clamps the
 panel and re-uploads the input region, so re-pushing an unchanged board on every
 event would be real churn several times a second. Load-bearing one: *not*
-calling a setter is itself behaviour — the enemy board must not be cleared while
-the player is still watching the fight animate, and the combat result must stay
-banked until `ShopReady`. A renderer that pushed everything every time would
-quietly undo both.
+calling a setter is itself behaviour — the combat result must stay banked until
+`ShopReady`, not revealed the moment it lands mid-fight. A renderer that pushed
+everything every time would quietly undo that.
 """
 
 from __future__ import annotations

@@ -7,8 +7,8 @@ Two properties matter here and nothing else really does:
   state model that left a blank HUD until the next event happened to arrive —
   which mid-game can be half a minute.
 * `render` emits only what changed. Not calling a setter is behaviour, not an
-  optimisation: it is what keeps the enemy board on screen while the fight is
-  still animating.
+  optimisation: it is what keeps the combat result banked until `ShopReady`
+  instead of revealed mid-fight.
 """
 
 from __future__ import annotations
@@ -135,7 +135,9 @@ def test_state_tracks_a_combat():
     assert st.odds == (63, 9, 28)
     assert st.damage == ("14", "9")
     assert st.lethal == 12.0
-    assert st.board is not None and st.board.title == "Enemy Board"
+    # The game is showing this fight itself; the panel would only cover it.
+    # Reviewing a player is the scout popout's job (hover_board).
+    assert st.board is None
 
 
 def test_the_banked_result_is_not_in_state_until_shop_ready():
@@ -176,7 +178,7 @@ def test_a_rebuilt_window_is_repainted_from_state():
     assert replacement.last("set_damage") == ("14", "9")
     assert replacement.last("set_combat") == (True,)
     assert replacement.last("set_turn") == (7,)
-    assert replacement.last("set_board")[0] == "Enemy Board"
+    assert "set_board" not in replacement.names()
 
 
 def test_a_rebuild_mid_recruit_phase_keeps_the_result_on_screen():
