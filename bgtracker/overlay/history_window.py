@@ -198,7 +198,8 @@ class HistoryWindow(Gtk.ApplicationWindow):
         head.append(dropdown)
         box.append(head)
 
-        self._period_grid = Gtk.Grid(row_spacing=4, column_spacing=22)
+        self._period_grid = Gtk.Grid(row_spacing=8, column_spacing=28)
+        self._period_grid.add_css_class("history-periods")
         box.append(self._period_grid)
         return box
 

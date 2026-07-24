@@ -582,6 +582,8 @@ _HISTORY_CSS = Template("""
     letter-spacing: 1.5px;
     text-transform: uppercase;
 }
+.history-periods .history-cell { font-size: 16px; }
+.history-periods .history-head { font-size: 12px; }
 .history-combat-win   { color: $win; }
 .history-combat-loss  { color: $loss; }
 .history-combat-tie   { color: $tie; }
