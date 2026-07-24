@@ -324,6 +324,12 @@ class OverlayApp:
 
     @staticmethod
     def _enter_combat(st, snapshot) -> None:
+        # A new fight drops the previous fight's result. The renderer only
+        # pushes what changed, and HudPanel.set_odds hides the result widget as
+        # a side effect, so without clearing it here two combats with the same
+        # (outcome, damage) — back-to-back ties — would leave the second's
+        # result caption hidden and never re-shown.
+        st.result = (None, 0)
         st.phase = ("Combat Forecast", _combat_meta(snapshot))
         st.status = ""
         st.turn = snapshot.turn

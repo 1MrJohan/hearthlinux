@@ -160,6 +160,34 @@ def test_the_forecast_stays_open_through_the_recruit_phase():
     assert win.last("set_result") == ("loss", 9)
 
 
+def test_a_repeated_result_is_shown_again_for_the_next_fight():
+    """Two combats in a row with the same (outcome, damage) — back-to-back ties
+    are common — must each show their result caption.
+
+    The renderer skips a setter whose value has not changed, and set_odds hides
+    the result widget when the next fight's forecast arrives, so the second
+    identical result has to be pushed afresh or it silently never reappears.
+    """
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatResult(turn=7, outcome="tie", damage=0), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_result") == ("tie", 0)
+
+    # A second fight: a different forecast (so set_odds fires and clears the
+    # result widget), but the identical outcome.
+    other = SimResult(won_percent=20, tied_percent=60, lost_percent=20,
+                      avg_damage_won=0, avg_damage_lost=0)
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), other)
+    mark = len(win.calls)   # everything past here belongs to the 2nd fight's end
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatResult(turn=7, outcome="tie", damage=0), None)
+    app.on_event(ev.ShopReady(), None)
+    assert ("set_result", ("tie", 0)) in win.calls[mark:], \
+        "the second identical result was never re-shown"
+
+
 def test_a_result_from_a_fight_with_no_forecast_is_still_shown():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)

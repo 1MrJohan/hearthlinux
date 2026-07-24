@@ -3,7 +3,7 @@ from hearthstone.enums import GameTag
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 
-from .synthetic import minimal_bg_game
+from .synthetic import LogBuilder, minimal_bg_game
 
 
 # Emitted whenever their underlying state moves, so how many arrive is a
@@ -74,6 +74,29 @@ def test_hero_and_placement():
     assert hero.card_id == "TB_BaconShop_HERO_11"
     end = next(e for e in events if isinstance(e, ev.GameEnd))
     assert end.placement == 3
+
+
+def test_bob_skins_are_never_counted_as_player_heroes():
+    """Bob is the tavern keeper, not a player, and sits in PLAY as a HERO in
+    every real game wearing one of 50+ cosmetic skins. The scan filters him by
+    prefix, so a skin the code has never seen is still excluded — this guards
+    that prefix match against being weakened to an exact-id compare."""
+    b = LogBuilder()
+    b.add("CREATE_GAME")
+    b.add("GameEntity EntityID=1", indent=1)
+    b.add("tag=TURN value=1", indent=2)
+    b.add("Player EntityID=2 PlayerID=1 GameAccountId=[hi=1 lo=1]", indent=1)
+    b.add("Player EntityID=3 PlayerID=2 GameAccountId=[hi=1 lo=2]", indent=1)
+    b.entity(4, "TB_BaconShop_HERO_11", CARDTYPE="HERO", ZONE="PLAY", CONTROLLER=1,
+             HEALTH=40, PLAYER_TECH_LEVEL=2)
+    b.entity(5, "TB_BaconShop_HERO_22", CARDTYPE="HERO", ZONE="PLAY", CONTROLLER=2,
+             HEALTH=30, PLAYER_TECH_LEVEL=1)
+    b.entity(99, "TB_BaconShopBob_SKIN_Z", CARDTYPE="HERO", ZONE="PLAY", CONTROLLER=14)
+
+    proc = LiveGameProcessor()
+    proc.feed(b.lines)
+    ids = {h.card_id for h in proc.current_exporter._heroes_in_play()}
+    assert ids == {"TB_BaconShop_HERO_11", "TB_BaconShop_HERO_22"}
 
 
 def test_incremental_feed_matches_bulk():

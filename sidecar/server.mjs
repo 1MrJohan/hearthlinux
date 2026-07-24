@@ -98,9 +98,9 @@ function spawnWorker(index) {
         }
         onShardMessage(msg);
     });
-    worker.on('error', (e) => failAllFor(entry, String(e?.stack ?? e)));
+    worker.on('error', (e) => { if (!entry.retired) failAllFor(entry, String(e?.stack ?? e)); });
     worker.on('exit', (code) => {
-        if (code !== 0) failAllFor(entry, `worker exited with code ${code}`);
+        if (!entry.retired && code !== 0) failAllFor(entry, `worker exited with code ${code}`);
     });
     pool.push(entry);
     return entry;
@@ -184,6 +184,7 @@ function onShardMessage(msg) {
     const job = inflight.get(msg.jobId);
     if (!job) return;
     if (msg.error) {
+        clearTimeout(job.timer);
         inflight.delete(msg.jobId);
         out({ id: job.id, error: msg.error });
         return;
@@ -201,6 +202,7 @@ function onShardMessage(msg) {
     job.shards[msg.shard] = msg.result;
     job.done.add(msg.shard);
     if (job.done.size === job.expected) {
+        clearTimeout(job.timer);
         inflight.delete(msg.jobId);
         out({ id: job.id, result: present(combine(Object.values(job.shards))) });
     }
@@ -218,16 +220,54 @@ function maybeEmitPartial(job) {
 
 function failAllFor(entry, message) {
     for (const [jobId, job] of [...inflight]) {
+        clearTimeout(job.timer);
         inflight.delete(jobId);
         out({ id: job.id, error: message });
     }
-    // Replace the dead worker so the next request is not permanently degraded.
+    retireWorker(entry);
+}
+
+// Pull a worker out of the pool and stand up a replacement. Idempotent via the
+// `retired` flag, which also tells the worker's own exit/error handler that the
+// death was deliberate — so terminating a hung worker does not cascade into
+// failing the request about to run on its replacement.
+function retireWorker(entry) {
+    if (entry.retired) return;
+    entry.retired = true;
     const i = pool.indexOf(entry);
     if (i >= 0) pool.splice(i, 1);
+    entry.worker.terminate();
     if (pool.length < workerCount) spawnWorker(pool.length);
 }
 
-async function simulate(id, input, sims, workers) {
+// A worker stuck in a non-terminating trial never messages, errors or exits, so
+// the crash path above cannot see it. The watchdog is the backstop: answer the
+// caller with whatever odds the finished shards gathered (a partial from 6000
+// trials beats none), then retire the shards that never came back — terminate()
+// is the only thing that stops a CPU-bound thread — so the next request lands on
+// a healthy, respawned pool instead of hanging on the same stuck worker.
+//
+// Assumes one job in flight at a time — which SimClient guarantees by holding
+// its request lock across each call. If concurrent jobs ever shared workers,
+// retiring a stuck worker here would silently kill another job's shards (the
+// `retired` flag suppresses the exit handler), leaving that job to its own
+// deadline. Revisit before allowing concurrent simulate requests.
+function onJobTimeout(jobId) {
+    const job = inflight.get(jobId);
+    if (!job) return;
+    inflight.delete(jobId);
+    const merged = combine(Object.values(job.shards));
+    if (merged.won + merged.tied + merged.lost > 0) {
+        out({ id: job.id, result: present(merged) });
+    } else {
+        out({ id: job.id, error: 'simulation timed out' });
+    }
+    for (let i = 0; i < job.expected; i++) {
+        if (!job.done.has(i) && job.workers[i]) retireWorker(job.workers[i]);
+    }
+}
+
+async function simulate(id, input, sims, workers, deadline) {
     await poolReady();
     const total = sims ?? 8000;
     const usable = Math.max(1, Math.min(pool.length, workers || pool.length));
@@ -237,9 +277,14 @@ async function simulate(id, input, sims, workers) {
         shards.push(Math.floor(total / usable) + (i < total % usable ? 1 : 0));
     }
     const jobId = ++nextJobId;
-    inflight.set(jobId, {
+    const job = {
         id, expected: usable, shards: {}, done: new Set(), lastPartial: 0,
-    });
+        // The worker entry each shard went to, so the watchdog can kill exactly
+        // the ones that never report back.
+        workers: pool.slice(0, usable), timer: null,
+    };
+    inflight.set(jobId, job);
+    if (deadline) job.timer = setTimeout(() => onJobTimeout(jobId), deadline);
     shards.forEach((count, i) => {
         pool[i].worker.postMessage({ jobId, shard: i, input, sims: count });
     });
@@ -266,7 +311,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
     try {
         if (msg.op === 'ping') out({ id: msg.id, result: 'pong' });
-        else if (msg.op === 'simulate') simulate(msg.id, msg.input, msg.sims, msg.workers);
+        else if (msg.op === 'simulate') simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline);
         else out({ id: msg.id, error: `unknown op: ${msg.op}` });
     } catch (e) {
         out({ id: msg.id, error: String(e?.stack ?? e) });

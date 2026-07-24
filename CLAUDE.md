@@ -278,6 +278,29 @@ the current mapper and simulator and prints predicted-then vs predicted-now vs a
 worst disagreement first. Run it after any change that could move the numbers; a mean
 drift under ~0.2 points is Monte Carlo noise, anything larger is the change itself.
 
+Two operational gotchas for `resim`, both learned the hard way:
+
+- **A specific board can hang a sidecar worker indefinitely**, and `server.mjs` guards
+  against it. The Firestone library enters a non-terminating trial and the worker goes
+  CPU-bound — no message, error or exit — so the pool's crash recovery can't see it. The
+  fix is a **per-job watchdog**: the client sends a `deadline` (just under its readline
+  timeout), and if a job overruns it the sidecar returns whatever odds the finished shards
+  gathered (or an error), then `terminate()`s the stuck worker(s) and respawns them
+  (`retireWorker`; `entry.retired` keeps the deliberate kill from cascading through the
+  exit handler). So a poison board costs only its *own* fight — the pool heals and the
+  next request is fine. It is board-triggered, **not** a sequential-count ceiling (the
+  same board hangs when simulated alone), so a long `resim` will still show the occasional
+  single-combat error where a board genuinely hangs; that is the honest outcome, not a
+  cascade.
+- **The simulator's card *behavior* is frozen at the pinned
+  `@firestone-hs/simulate-bgs-battle` version.** Card *data* (stats, tribes, keywords)
+  auto-updates from the Firestone CDN (`sidecar/server.mjs`), but how a new minion resolves
+  in combat is compiled into the package — so bump the pin when a new HS patch ships new
+  mechanics, then `resim` and judge by whether predictions moved *toward* actual outcomes.
+  Mean drift alone is not the test; direction is. (The 1.1.721→1.1.724 bump moved a mean
+  ~2.5 points but *lowered* Brier 0.152→0.138 over 124 decided combats — an accuracy gain,
+  so it stuck. A bump that raises Brier is a regression to reject, however small the drift.)
+
 Read the calibration table with two things in mind:
 
 - **Sampling error is not the problem.** Over 272 recorded combats the sim is

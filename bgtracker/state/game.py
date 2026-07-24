@@ -6,6 +6,7 @@ the combat-sim mapper, and match history all consume them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from hearthstone.entities import Card, Game
@@ -205,7 +206,11 @@ def is_ghost(board: "PlayerBoard | None") -> bool:
 
 # Not equipment: these sit in play announcing "the Trinket Shop opens in N
 # turns". They carry the trinket card type, so only the id tells them apart.
-_TRINKET_SLOT_PLACEHOLDERS = frozenset({"BG30_Trinket_1st", "BG30_Trinket_2nd"})
+# The number is per-set (BG30_Trinket_1st, BG34_Trinket_1st, …), so match on the
+# shape rather than a frozen set of ids that silently rots when the set rotates.
+# Anchored: it must not swallow the BG##_Trinket_1st_Spell "Buy a … Trinket" pool
+# spells, which are already excluded by the pool-spell check above.
+_TRINKET_PLACEHOLDER_RE = re.compile(r"^BG\d+_Trinket_(?:1st|2nd)$")
 
 
 def _is_trinket(entity: Card) -> bool:
@@ -219,7 +224,7 @@ def _is_trinket(entity: Card) -> bool:
     """
     if entity.card_id in cards.pool_spell_ids():
         return False
-    if entity.card_id in _TRINKET_SLOT_PLACEHOLDERS:
+    if entity.card_id and _TRINKET_PLACEHOLDER_RE.match(entity.card_id):
         return False
     return (
         entity.type == CardType.BATTLEGROUND_TRINKET

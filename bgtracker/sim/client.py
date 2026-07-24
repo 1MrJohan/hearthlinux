@@ -183,7 +183,17 @@ class SimClient:
         }
         started = time.perf_counter()
         result = await self._request(
-            {"op": "simulate", "input": battle_info, "sims": sims or self.sims},
+            {
+                "op": "simulate",
+                "input": battle_info,
+                "sims": sims or self.sims,
+                # A board can send the simulator into a non-terminating trial,
+                # hanging the worker with no message, error or exit. Give the
+                # sidecar a deadline just under our own readline timeout so it
+                # kills the stuck worker and answers us, instead of us abandoning
+                # the request and leaving the worker to poison the next one.
+                "deadline": int(self.timeout * 1000 * 0.9),
+            },
             timeout=self.timeout,
             on_partial=on_partial,
         )

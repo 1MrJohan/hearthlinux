@@ -106,15 +106,27 @@ def test_trinket_shop_placeholders_are_not_equipment():
     """"The Greater Trinket Shop opens in 8 turns!" is an announcement.
 
     It sits in play carrying the trinket card type, so only the id keeps it out
-    of the payload.
+    of the payload. The number is per-set, so the match generalizes across set
+    numbering rather than naming one set and rotting when the next one ships.
     """
-    from bgtracker.state.game import _is_trinket
+    from bgtracker.state.game import _TRINKET_PLACEHOLDER_RE, _is_trinket
 
     class FakeCard:
-        def __init__(self, card_id):
+        def __init__(self, card_id, type_=CardType.BATTLEGROUND_TRINKET):
             self.card_id = card_id
-            self.type = CardType.BATTLEGROUND_TRINKET
+            self.type = type_
 
     assert not _is_trinket(FakeCard("BG30_Trinket_1st"))
     assert not _is_trinket(FakeCard("BG30_Trinket_2nd"))
+    assert not _is_trinket(FakeCard("BG34_Trinket_1st"))   # the next set's placeholders
+    assert not _is_trinket(FakeCard("BG99_Trinket_2nd"))   # and any future numbering
     assert _is_trinket(FakeCard("BG32_MagicItem_893"))     # Bluegill Flippers
+
+    # Anchored: the "Buy a … Trinket" pool spells (…_Spell) are not placeholders;
+    # they are excluded as pool spells elsewhere and must not be caught here.
+    assert _TRINKET_PLACEHOLDER_RE.match("BG34_Trinket_1st")
+    assert not _TRINKET_PLACEHOLDER_RE.match("BG34_Trinket_1st_Spell")
+
+    # Hidden opponent cards sit in PLAY carrying no id; the placeholder match
+    # must not crash on None the way a bare regex .match(None) would.
+    assert not _is_trinket(FakeCard(None, CardType.MINION))
