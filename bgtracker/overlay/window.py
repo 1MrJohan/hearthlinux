@@ -8,9 +8,13 @@ a dashed border, the window accepts pointer input over the panels only (empty
 space still passes clicks to the game), and dragging a panel saves its new
 position to config. An on-screen "Lock layout" button flips edit mode back off
 live — no restart needed.
+
+Styling lives in `theme.py`; this module is layout and plumbing only.
 """
 
 from __future__ import annotations
+
+import logging
 
 import gi
 
@@ -21,41 +25,39 @@ from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: 
 from bgtracker.config import Config, update_config_values  # noqa: E402
 from bgtracker.data import cards  # noqa: E402
 
+from . import theme  # noqa: E402
+from .hud import HudPanel  # noqa: E402
+from .rail import LeaderboardRail  # noqa: E402
 from .widgets import BoardPanel  # noqa: E402
 
-CSS_TEMPLATE = """
-window {{ background: transparent; }}
-.hud {{
-    background-color: rgba(15, 18, 24, 0.82);
-    color: #e8e8e8;
-    border-radius: 10px;
-    padding: {pad}px {pad2}px;
-}}
-.hud .odds {{ font-size: {odds_px}px; font-weight: bold; }}
-.hud .dim  {{ color: #9a9a9a; font-size: {dim_px}px; }}
-.hud .line {{ font-size: {line_px}px; }}
-.hud .stats {{ font-size: {line_px}px; font-weight: bold; }}
-.grip {{ color: #7fd0ff; font-size: {dim_px}px; font-weight: bold; }}
-.editing {{ border: 2px dashed rgba(127, 208, 255, 0.9); }}
-.lockbtn {{
-    background-color: rgba(30, 120, 200, 0.96);
-    color: #ffffff; border-radius: 8px;
-    padding: 8px 16px; font-weight: bold;
-}}
-"""
+log = logging.getLogger(__name__)
+
+# Minimum grabbable body for a panel in layout mode, so an empty one is still
+# big enough to aim at.
+GRAB_MIN_W, GRAB_MIN_H = 160, 60
 
 
 class OverlayWindow(Gtk.Window):
-    def __init__(self, application: Gtk.Application, cfg: Config | None = None):
+    def __init__(
+        self,
+        application: Gtk.Application,
+        cfg: Config | None = None,
+        on_settings=None,
+        on_edit=None,
+    ):
         super().__init__(application=application)
-        cfg = cfg or Config()
-        self.scale = scale = max(0.5, min(3.0, cfg.overlay_scale))
-        self.edit = bool(cfg.extra.get("overlay_edit", False))
+        self.cfg = cfg = cfg or Config()
+        self.edit = bool(cfg.overlay_edit)
+        self._on_settings = on_settings
+        self._on_edit = on_edit
+        # The transparent-window rule is scoped to this class so it cannot leak
+        # onto the settings window, which shares the display-wide provider.
+        self.add_css_class("bg-overlay")
 
         LayerShell.init_for_window(self)
         LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
         monitor = None
-        wanted = cfg.extra.get("overlay_monitor")
+        wanted = cfg.overlay_monitor
         for m in Gdk.Display.get_default().get_monitors():
             if wanted and m.get_connector() == wanted:
                 monitor = m
@@ -73,44 +75,73 @@ class OverlayWindow(Gtk.Window):
         self._mon_w = geo.width if geo else 2560
         self._mon_h = geo.height if geo else 1440
 
+        # Scale needs the monitor, so it is resolved here rather than up front:
+        # an unset overlay_scale means "match the mock's proportions on this
+        # display" instead of silently rendering 1180px-stage sizes 1:1.
+        self.scale = scale = (
+            theme.auto_scale(self._mon_h)
+            if cfg.overlay_scale is None
+            else theme.clamp_scale(cfg.overlay_scale)
+        )
+        log.info(
+            "overlay scale %.2f on %s (%dx%d)%s", scale,
+            monitor.get_connector() if monitor else "default monitor",
+            self._mon_w, self._mon_h,
+            "" if cfg.overlay_scale is None else " — from overlay_scale",
+        )
+
         self.canvas = Gtk.Fixed()
         self.set_child(self.canvas)
 
         self._panels: dict[str, Gtk.Widget] = {}
+        self._frames: dict[str, Gtk.Widget] = {}
         self._grips: dict[str, Gtk.Label] = {}
         self._pos: dict[str, list[int]] = {}
         self._has_content: dict[str, bool] = {}
         self._drag_base = (0, 0)
+        self._dragging: str | None = None
+        self._region_rects: list[tuple[int, int, int, int]] = []
         self.lock_btn: Gtk.Button | None = None
 
-        # -- HUD panel: status, odds, damage, and the live/combat board -----
-        self.status = Gtk.Label(label="waiting for game…", xalign=0)
-        self.status.add_css_class("dim")
-        self.odds = Gtk.Label(label="", xalign=0)
-        self.odds.add_css_class("odds")
-        self.damage = Gtk.Label(label="", xalign=0)
-        self.damage.add_css_class("dim")
-        self.board = BoardPanel()
-        self._make_panel("hud", "HUD", [self.status, self.odds, self.damage, self.board])
+        # -- HUD panel: phase, turn medallion, odds, damage -----------------
+        self.hud = HudPanel(scale)
+        self._make_panel("hud", "HUD", [self.hud], width=theme.HUD_W)
+
+        # -- enemy board: the opponent you are about to fight ---------------
+        self.board = BoardPanel(scale=scale)
+        self._make_panel("board", "Enemy board", [self.board])
 
         # -- buffs panel: accumulating tavern buffs, its own movable view ---
-        self.buffs = Gtk.Label(label="", xalign=0, wrap=True)
-        self.buffs.add_css_class("stats")
-        self._make_panel("buffs", "Buffs", [self.buffs])
+        self.buffs = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=theme.px(5, scale))
+        buffs_title = Gtk.Label(label="Tavern Buffs", xalign=0)
+        buffs_title.add_css_class("title")
+        self._make_panel("buffs", "Buffs", [buffs_title, self.buffs], width=theme.BUFFS_W)
+        self._buff_rows: list[Gtk.Widget] = []
 
-        # -- next-opponent panel: last-seen board as card tiles -------------
-        self.next_board = BoardPanel()
+        # -- next-opponent panel: last-seen board as minion tiles -----------
+        self.next_board = BoardPanel(scale=scale)
         self._make_panel("next", "Next opponent", [self.next_board])
 
-        # -- hover panel: last-seen board of a leaderboard portrait ---------
-        self.hover_board = BoardPanel()
-        self._make_panel("hover", "Hover board", [self.hover_board])
+        # -- scout popout: last-seen board of a leaderboard portrait --------
+        self.hover_board = BoardPanel(show_orb=True, scale=scale)
+        notch = Gtk.Label(label="◀")
+        notch.add_css_class("notch")
+        notch.set_valign(Gtk.Align.START)
+        notch.set_margin_top(theme.px(22, scale))
+        self._make_panel("hover", "Scout", [self.hover_board], leading=notch)
+
+        # -- leaderboard rail: standings with hero orbs ---------------------
+        self.rail = LeaderboardRail(scale)
+        self._make_panel("rail", "Leaderboard", [self.rail], width=theme.RAIL_W,
+                         frame_class="rail")
 
         defaults = {
             "hud": (self._mon_w - int(400 * scale), int(40)),
+            "board": (self._mon_w // 2 - int(320 * scale), int(12 * scale)),
             "next": (self._mon_w - int(400 * scale), int(360 * scale)),
             "hover": (int(self._mon_w * 0.13), int(self._mon_h * 0.30)),
             "buffs": (int(self._mon_w * 0.34), int(40)),
+            "rail": (int(12 * scale), int(self._mon_h * 0.08)),
         }
         for name, (dx, dy) in defaults.items():
             x = int(cfg.extra.get(f"pos_{name}_x", dx))
@@ -118,47 +149,124 @@ class OverlayWindow(Gtk.Window):
             self._pos[name] = [x, y]
             self.canvas.put(self._panels[name], x, y)
 
+        # -- gear: the only pixels on a locked overlay that take a click ----
+        # Built before the first _set_content: that path re-places the gear,
+        # so the attribute must exist by then.
+        self.gear_btn: Gtk.Button | None = None
+        self._gear_pos = (0, 0)
+        if on_settings is not None:
+            self.gear_btn = Gtk.Button(label="⚙")
+            self.gear_btn.add_css_class("gearbtn")
+            self.gear_btn.set_tooltip_text("Tracker settings")
+            self.gear_btn.connect("clicked", lambda _b: self._on_settings())
+            self.canvas.put(self.gear_btn, 0, 0)
+
         # hud always shows; the rest only when they have something (or edit)
         self._set_content("hud", True)
-        self._set_content("next", False)
-        self._set_content("hover", False)
-        self._set_content("buffs", False)
+        for name in ("board", "next", "hover", "buffs", "rail"):
+            self._set_content(name, False)
 
         if self.edit:
-            self.lock_btn = Gtk.Button(label="✔ Lock layout")
-            self.lock_btn.add_css_class("lockbtn")
-            self.lock_btn.connect("clicked", self._on_lock)
-            self._lock_pos = (self._mon_w // 2 - int(90 * scale), 24)
-            self.canvas.put(self.lock_btn, *self._lock_pos)
+            self._add_lock_button()
 
-        provider = Gtk.CssProvider()
-        provider.load_from_data(
-            CSS_TEMPLATE.format(
-                pad=int(12 * scale), pad2=int(16 * scale),
-                odds_px=int(22 * scale), dim_px=int(12 * scale),
-                line_px=int(13 * scale),
-            ).encode()
-        )
-        Gtk.StyleContext.add_provider_for_display(
-            self.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+        self.css_provider = theme.install(self.get_display(), scale)
         self.connect("realize", self._apply_input_region)
-        self.connect("map", lambda *_: GLib.idle_add(self._apply_input_region))
+        self.connect("map", lambda *_: GLib.idle_add(self._on_mapped))
+
+    def _add_lock_button(self) -> None:
+        self.lock_btn = Gtk.Button(label="✔ Lock layout")
+        self.lock_btn.add_css_class("lockbtn")
+        self.lock_btn.connect("clicked", self._on_lock)
+        # Bottom-centre, as in the mock. Emphatically not the top: that sits
+        # over Hearthstone's own UI, where a stray click silently drops you
+        # out of layout mode with no way back but editing the config.
+        self._lock_pos = (self._mon_w // 2 - int(90 * self.scale),
+                          self._mon_h - int(100 * self.scale))
+        self.canvas.put(self.lock_btn, *self._lock_pos)
+
+    def _on_mapped(self) -> bool:
+        for name in self._panels:
+            self._clamp_panel(name)
+        self._centre_lock_button()
+        self._place_gear()
+        return self._apply_input_region()
+
+    def _centre_lock_button(self) -> bool:
+        if self.lock_btn is None:
+            return False
+        # Centre it exactly now that its size is known.
+        _, nat = self.lock_btn.get_preferred_size()
+        self._lock_pos = (
+            max(0, self._mon_w // 2 - nat.width // 2),
+            max(0, self._mon_h - nat.height - int(14 * self.scale)),
+        )
+        self.canvas.move(self.lock_btn, *self._lock_pos)
+        return False
+
+    def _place_gear(self) -> None:
+        """Park the gear just above the HUD's top-right corner.
+
+        Above rather than on it: this is the one part of a locked overlay that
+        swallows a click instead of passing it to Hearthstone, so it sits in
+        empty space beside the panel the user already positioned, and never
+        over the HUD's own content.
+        """
+        if self.gear_btn is None:
+            return
+        _, gear = self.gear_btn.get_preferred_size()
+        _, hud = self._panels["hud"].get_preferred_size()
+        hx, hy = self._pos["hud"]
+        x = max(0, min(self._mon_w - gear.width, hx + hud.width - gear.width))
+        y = max(0, hy - gear.height - int(4 * self.scale))
+        if (x, y) != self._gear_pos:
+            self._gear_pos = (x, y)
+            self.canvas.move(self.gear_btn, x, y)
+            # The gear is the whole input region while locked, so a move that
+            # did not re-upload it would leave the clickable patch behind at
+            # the old spot — invisible, and swallowing clicks meant for the game.
+            self._apply_input_region()
 
     # -- panel construction / dragging ----------------------------------
-    def _make_panel(self, name: str, title: str, content: list[Gtk.Widget]) -> None:
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.add_css_class("hud")
-        box.set_size_request(int(220 * self.scale), -1)
+    def _make_panel(
+        self,
+        name: str,
+        title: str,
+        content: list[Gtk.Widget],
+        width: int | None = None,
+        leading: Gtk.Widget | None = None,
+        frame_class: str | None = None,
+    ) -> None:
+        """Build a draggable panel.
+
+        `width` fixes the frame width in design px (scaled). `leading` is a
+        decoration placed *outside* the oak frame — the scout popout's notch.
+        `frame_class` adds a variant class to the frame (the rail's sub-frame).
+        """
+        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=theme.px(4, self.scale))
+        frame.add_css_class("hud")
+        if frame_class:
+            frame.add_css_class(frame_class)
+        frame.set_size_request(
+            theme.px(width, self.scale) if width else int(220 * self.scale), -1
+        )
         grip = Gtk.Label(label=f"⠿ {title}", xalign=0)
         grip.add_css_class("grip")
         grip.set_visible(self.edit)
-        box.append(grip)
+        frame.append(grip)
         for w in content:
-            box.append(w)
+            frame.append(w)
         if self.edit:
-            box.add_css_class("editing")
+            frame.add_css_class("editing")
+
+        if leading is not None:
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            box.append(leading)
+            box.append(frame)
+        else:
+            box = frame
+
         self._panels[name] = box
+        self._frames[name] = frame
         self._grips[name] = grip
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._drag_begin, name)
@@ -168,6 +276,7 @@ class OverlayWindow(Gtk.Window):
 
     def _drag_begin(self, _gesture, _sx, _sy, name):
         self._drag_base = tuple(self._pos[name])
+        self._dragging = name
 
     def _drag_update(self, _gesture, ox, oy, name):
         bx, by = self._drag_base
@@ -178,106 +287,249 @@ class OverlayWindow(Gtk.Window):
         self._apply_input_region()
 
     def _drag_end(self, _gesture, _ox, _oy, name):
+        self._dragging = None
         x, y = self._pos[name]
+        # Kept on the live Config too, not just on disk: "reset panel layout"
+        # works out what to forget from `cfg.extra`, and would miss anything
+        # dragged since the process started.
+        self.cfg.extra[f"pos_{name}_x"] = x
+        self.cfg.extra[f"pos_{name}_y"] = y
         update_config_values({f"pos_{name}_x": x, f"pos_{name}_y": y})
+        self._place_gear()
 
-    def _on_lock(self, _btn):
-        self.edit = False
-        update_config_values({"overlay_edit": False})
+    def set_edit(self, edit: bool) -> None:
+        """Enter or leave layout mode without a restart."""
+        if edit == self.edit:
+            return
+        self.edit = edit
         for name, panel in self._panels.items():
-            self._grips[name].set_visible(False)
-            panel.remove_css_class("editing")
-            panel.set_visible(self._has_content.get(name, False))
-        if self.lock_btn is not None:
+            self._grips[name].set_visible(edit)
+            if edit:
+                self._frames[name].add_css_class("editing")
+            else:
+                self._frames[name].remove_css_class("editing")
+            panel.set_visible(edit or self._has_content.get(name, False))
+        if edit and self.lock_btn is None:
+            self._add_lock_button()
+            GLib.idle_add(self._centre_lock_button)
+        elif not edit and self.lock_btn is not None:
             self.canvas.remove(self.lock_btn)
             self.lock_btn = None
         self._apply_input_region()
 
-    # -- input region: click-through when locked, panel-bounded in edit --
+    def _on_lock(self, _btn):
+        self.set_edit(False)
+        if self._on_edit is not None:
+            # Through the settings service, so the hover column is rebuilt out
+            # of layout mode too — it decides drag-vs-click-through once, at
+            # construction.
+            self._on_edit(False)
+        else:
+            update_config_values({"overlay_edit": False})
+
+    # -- input region: the gear only when locked, panels in edit ---------
+    def _gear_rect(self) -> tuple[int, int, int, int] | None:
+        if self.gear_btn is None or not self.gear_btn.get_visible():
+            return None
+        _, nat = self.gear_btn.get_preferred_size()
+        x, y = self._gear_pos
+        return (x, y, max(nat.width, 1), max(nat.height, 1))
+
+    def _input_rects(self) -> list[tuple[int, int, int, int]]:
+        """Every rect that accepts a click instead of passing it to the game.
+
+        Locked, that is the gear and nothing else. Each rect here is a hole in
+        the click-through guarantee that keeps Hearthstone's own
+        board-preview-on-hover working, so the list stays as short as it can be.
+        """
+        gear = self._gear_rect()
+        if not self.edit:
+            return [gear] if gear else []
+        items = [(self._pos[n][0], self._pos[n][1], w)
+                 for n, w in self._panels.items() if w.get_visible()]
+        if self.lock_btn is not None:
+            items.append((self._lock_pos[0], self._lock_pos[1], self.lock_btn))
+        pad = 8
+        rects = []
+        for x, y, w in items:
+            _, nat = w.get_preferred_size()
+            # An empty panel in layout mode is barely a grip's worth of pixels;
+            # give it a grabbable body so it can still be dragged into place.
+            width = max(nat.width, GRAB_MIN_W)
+            height = max(nat.height, GRAB_MIN_H)
+            rects.append((int(x - pad), int(y - pad),
+                          int(width + 2 * pad), int(height + 2 * pad)))
+        if gear:
+            rects.append(gear)
+        return rects
+
     def _apply_input_region(self, *_):
         surface = self.get_surface()
         if surface is None:
             return False
         import cairo
 
-        if not self.edit:
-            surface.set_input_region(cairo.Region())  # fully click-through
+        rects = self._input_rects()
+        # Panel sizes change with every board update; re-uploading an identical
+        # region hundreds of times a second is pure churn.
+        if rects == self._region_rects:
             return False
+        self._region_rects = rects
+        log.debug("input region: %d rect(s) %s", len(rects), rects)
         region = cairo.Region()
-        items = [(self._pos[n][0], self._pos[n][1], w)
-                 for n, w in self._panels.items() if w.get_visible()]
-        if self.lock_btn is not None:
-            items.append((self._lock_pos[0], self._lock_pos[1], self.lock_btn))
-        pad = 8
-        for x, y, w in items:
-            _, nat = w.get_preferred_size()
-            region.union(cairo.RectangleInt(
-                int(x - pad), int(y - pad),
-                int(nat.width + 2 * pad), int(nat.height + 2 * pad),
-            ))
+        for rect in rects:
+            region.union(cairo.RectangleInt(*rect))
         surface.set_input_region(region)
         return False
 
     def _set_content(self, name: str, has_content: bool) -> None:
         self._has_content[name] = has_content
         self._panels[name].set_visible(self.edit or has_content)
+        self._clamp_panel(name)
+        if name == "hud":
+            self._place_gear()
         if self.edit:
             self._apply_input_region()
 
+    def _clamp_panel(self, name: str) -> None:
+        """Nudge a panel back on-screen if its content has outgrown its position.
+
+        A board's width depends on how many minions it holds, and every size
+        scales with the monitor, so a position saved at one scale can put a
+        full seven-minion board off the right edge. Display-only — the config
+        keeps whatever the user dragged, so this never silently rewrites their
+        layout.
+        """
+        panel = self._panels[name]
+        if not panel.get_visible() or self._dragging == name:
+            return  # never yank a panel out from under the pointer mid-drag
+        _, nat = panel.get_preferred_size()
+        if nat.width <= 0 or nat.height <= 0:
+            return
+        x, y = self._pos[name]
+        nx = max(0, min(x, self._mon_w - nat.width))
+        ny = max(0, min(y, self._mon_h - nat.height))
+        if (nx, ny) != (x, y):
+            self._pos[name] = [nx, ny]
+            self.canvas.move(panel, nx, ny)
+
+    def _panel_rect(self, name: str) -> tuple[int, int, int, int] | None:
+        panel = self._panels[name]
+        if not panel.get_visible():
+            return None
+        _, nat = panel.get_preferred_size()
+        if nat.width <= 0 or nat.height <= 0:
+            return None
+        x, y = self._pos[name]
+        return (x, y, nat.width, nat.height)
+
+    def rail_rect(self) -> tuple[int, int, int, int] | None:
+        """Monitor-space rect of the leaderboard rail, for the hover poll."""
+        return self._panel_rect("rail")
+
+    def hud_rect(self) -> tuple[int, int, int, int] | None:
+        """Monitor-space rect of the HUD, for the hover poll."""
+        return self._panel_rect("hud")
+
+    def set_hud_hovered(self, hovered: bool) -> None:
+        self.hud.set_hovered(hovered)
+
+    def set_forecast_live(self, live: bool) -> None:
+        self.hud.set_forecast_live(live)
+
     # -- update API (call from the GLib/asyncio loop) -------------------
+    def set_phase(self, title: str, meta: str = "") -> None:
+        self.hud.set_phase(title, meta)
+
     def set_status(self, text: str) -> None:
-        self.status.set_label(text)
+        self.hud.set_status(text)
+
+    def set_turn(self, turn: int | None) -> None:
+        self.hud.set_turn(turn)
+
+    def set_combat(self, combat: bool) -> None:
+        self.hud.set_combat(combat)
 
     def set_odds(self, win: float | None, tie: float | None, loss: float | None) -> None:
+        self.hud.set_odds(win, tie, loss)
         if win is None:
-            self.odds.set_label("")
-            self.damage.set_label("")
-            return
-        self.odds.set_markup(
-            f'<span foreground="#6fd66f">{win:.0f}%</span> / '
-            f'<span foreground="#d6c96f">{tie:.0f}%</span> / '
-            f'<span foreground="#d66f6f">{loss:.0f}%</span>'
-        )
+            self.hud.set_damage(None, None)
+            self.hud.set_lethal(None)
 
-    def set_damage(self, dealt: float | None, taken: float | None) -> None:
-        if dealt is None:
-            self.damage.set_label("")
-        else:
-            self.damage.set_label(f"dmg dealt ~{dealt:.0f} / taken ~{taken:.0f}")
+    def set_damage(self, dealt: str | None, taken: str | None) -> None:
+        self.hud.set_damage(dealt, taken)
+
+    def set_lethal(self, risk: float | None) -> None:
+        self.hud.set_lethal(risk)
+
+    def set_result(self, outcome: str | None, damage: int = 0) -> None:
+        self.hud.set_result(outcome, damage)
 
     def set_buffs(self, entries, spells=()) -> None:
-        lines = [
-            f'<span foreground="#e0b0ff">{label}</span> +{atk}/+{hp}'
-            for label, atk, hp in entries
-        ]
-        for cid in spells:
-            name = GLib.markup_escape_text(cards.name(cid))
-            lines.append(f'<span foreground="#7fd0ff">⚡ {name}</span>')
-        if not lines:
-            self.buffs.set_label("")
-            self._set_content("buffs", False)
-            return
-        self.buffs.set_markup("\n".join(lines))
-        self._set_content("buffs", True)
+        for row in self._buff_rows:
+            self.buffs.remove(row)
+        self._buff_rows.clear()
+        for label, atk, hp in entries:
+            self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
+        for card_id in spells:
+            self._buff_rows.append(self._spell_chip(cards.name(card_id)))
+        for row in self._buff_rows:
+            self.buffs.append(row)
+        self._set_content("buffs", bool(self._buff_rows))
 
-    def set_board(self, title: str, board) -> None:
-        self.board.show_board(title, board)
+    def _buff_chip(self, label: str, value: str) -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=theme.px(7, self.scale))
+        dot = Gtk.Box()
+        dot.add_css_class("buff-dot")
+        dot.add_css_class(f"buff-{label.lower().replace(' ', '')}")
+        dot.set_valign(Gtk.Align.CENTER)
+        name = Gtk.Label(label=label, xalign=0)
+        name.add_css_class("buff-label")
+        name.set_hexpand(True)
+        amount = Gtk.Label(label=value, xalign=1)
+        amount.add_css_class("buff-val")
+        row.append(dot)
+        row.append(name)
+        row.append(amount)
+        return row
+
+    def _spell_chip(self, name: str) -> Gtk.Widget:
+        label = Gtk.Label(label=f"✦ {name}", xalign=0)
+        label.add_css_class("spell")
+        label.set_wrap(True)
+        return label
+
+    def set_board(self, title: str, subtitle: str = "", board=None) -> None:
+        self.board.show_board(title, subtitle, board)
+        self._set_content("board", True)
 
     def clear_board(self) -> None:
         self.board.clear()
+        self._set_content("board", False)
 
-    def set_next_board(self, title: str, board) -> None:
-        self.next_board.show_board(title, board)
+    def set_next_board(self, title: str, subtitle: str = "", board=None) -> None:
+        self.next_board.show_board(title, subtitle, board)
         self._set_content("next", True)
 
     def clear_next_board(self) -> None:
         self.next_board.clear()
         self._set_content("next", False)
 
-    def set_hover_board(self, title: str, board) -> None:
-        self.hover_board.show_board(title, board)
+    def set_next_forecast(self, text: str | None) -> None:
+        self.next_board.set_odds(text)
+
+    def set_hover_board(self, title: str, subtitle: str = "", board=None,
+                        hero_card_id: str | None = None, dead: bool = False) -> None:
+        self.hover_board.show_board(title, subtitle, board, hero_card_id, dead)
         self._set_content("hover", True)
 
     def clear_hover_board(self) -> None:
         self.hover_board.clear()
         self._set_content("hover", False)
+
+    def set_standings(self, standings) -> None:
+        self.rail.set_standings(standings)
+        self._set_content("rail", bool(standings))
+
+    def set_hot_place(self, place: int | None) -> None:
+        self.rail.set_hot(place)

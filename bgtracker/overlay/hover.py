@@ -36,6 +36,13 @@ from bgtracker.config import Config, update_config_values  # noqa: E402
 log = logging.getLogger(__name__)
 
 
+def _inside(rect: tuple[int, int, int, int] | None, x: float, y: float) -> bool:
+    if rect is None:
+        return False
+    rx, ry, rw, rh = rect
+    return rx <= x < rx + rw and ry <= y < ry + rh
+
+
 class HoverStrips(Gtk.Window):
     """on_slot(index | None) fires as the pointer enters/leaves portrait boxes."""
 
@@ -45,28 +52,38 @@ class HoverStrips(Gtk.Window):
         cfg: Config,
         on_slot: Callable[[int | None], None],
         slots: int = 8,
+        rail_rect: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        hud_rect: Callable[[], tuple[int, int, int, int] | None] | None = None,
+        on_hud: Callable[[bool], None] | None = None,
     ):
         super().__init__(application=application)
         self.on_slot = on_slot
         self.slots = slots
+        # Our own leaderboard rail and the HUD are hovered through this same
+        # pointer poll, so neither needs an input region and the overlay stays
+        # click-through — the game keeps its own hover behaviour.
+        self.rail_rect = rail_rect
+        self.hud_rect = hud_rect
+        self.on_hud = on_hud
         self._current: int | None = None
+        self._hud_hot = False
 
-        extra = cfg.extra
-        self.top_frac = float(extra.get("leaderboard_top_frac", 0.16))
-        self.bottom_frac = float(extra.get("leaderboard_bottom_frac", 0.85))
-        self.strip_width = int(extra.get("leaderboard_width_px", 96))
-        self._left_px = int(extra.get("leaderboard_left_px", 0))
-        self.skew = int(extra.get("leaderboard_skew_px", 0))
+        self.cfg = cfg
+        self.top_frac = float(cfg.leaderboard_top_frac)
+        self.bottom_frac = float(cfg.leaderboard_bottom_frac)
+        self.strip_width = int(cfg.leaderboard_width_px)
+        self._left_px = int(cfg.leaderboard_left_px)
+        self.skew = int(cfg.leaderboard_skew_px)
         self._drag_base: tuple = (0, 0, 0, 0, 0)
         self._drag_mode = "move"
 
-        self.edit = bool(extra.get("overlay_edit", False))
-        self.draw = self.edit or bool(extra.get("hover_debug", False))
+        self.edit = bool(cfg.overlay_edit)
+        self.draw = self.edit or bool(cfg.hover_debug)
 
         LayerShell.init_for_window(self)
         LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
         monitor = None
-        wanted = extra.get("overlay_monitor")
+        wanted = cfg.overlay_monitor
         if wanted:
             for m in Gdk.Display.get_default().get_monitors():
                 if m.get_connector() == wanted:
@@ -90,11 +107,11 @@ class HoverStrips(Gtk.Window):
         if self.draw:
             area.set_draw_func(self._draw_debug)
         self.set_child(area)
-        css = Gtk.CssProvider()
-        css.load_from_data(b"window { background: transparent; }")
-        Gtk.StyleContext.add_provider_for_display(
-            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+        # Transparency comes from the shared `.bg-overlay` rule in theme.py.
+        # This window used to load a second, display-wide `window { background:
+        # transparent }` provider of its own, which made every other window in
+        # the process transparent too — including the settings window.
+        self.add_css_class("bg-overlay")
 
         self.connect("realize", self._set_input_region)
 
@@ -130,6 +147,18 @@ class HoverStrips(Gtk.Window):
         s = min(int((ly - top) / (bottom - top) * self.slots), self.slots - 1)
         x = self._box_x(s)
         return s if x <= lx < x + self.strip_width else None
+
+    def _rail_slot_at_xy(self, lx: float, ly: float) -> int | None:
+        """Which row of our own leaderboard rail the pointer is over."""
+        if self.rail_rect is None:
+            return None
+        rect = self.rail_rect()
+        if rect is None:
+            return None
+        if not _inside(rect, lx, ly):
+            return None
+        _, y, _, h = rect
+        return min(int((ly - y) / h * self.slots), self.slots - 1)
 
     def _set_input_region(self, *_):
         import cairo
@@ -214,7 +243,15 @@ class HoverStrips(Gtk.Window):
             p = self._xroot.query_pointer()
         except Exception:
             return True  # transient; keep polling
-        slot = self._slot_at_xy(p.root_x - self._mon_x, p.root_y - self._mon_y)
+        lx, ly = p.root_x - self._mon_x, p.root_y - self._mon_y
+        if self.on_hud is not None:
+            hot = _inside(self.hud_rect() if self.hud_rect else None, lx, ly)
+            if hot != self._hud_hot:
+                self._hud_hot = hot
+                self.on_hud(hot)
+        slot = self._slot_at_xy(lx, ly)
+        if slot is None:
+            slot = self._rail_slot_at_xy(lx, ly)
         if slot != self._current:
             self._current = slot
             self.on_slot(slot)
@@ -263,15 +300,19 @@ class HoverStrips(Gtk.Window):
         self._save_geometry()
 
     def _save_geometry(self):
-        update_config_values(
-            {
-                "leaderboard_top_frac": round(self.top_frac, 4),
-                "leaderboard_bottom_frac": round(self.bottom_frac, 4),
-                "leaderboard_left_px": int(self._left_px),
-                "leaderboard_width_px": self.strip_width,
-                "leaderboard_skew_px": int(self.skew),
-            }
-        )
+        values = {
+            "leaderboard_top_frac": round(self.top_frac, 4),
+            "leaderboard_bottom_frac": round(self.bottom_frac, 4),
+            "leaderboard_left_px": int(self._left_px),
+            "leaderboard_width_px": self.strip_width,
+            "leaderboard_skew_px": int(self.skew),
+        }
+        # The live Config has to agree with the file, or the settings window
+        # would show the pre-drag numbers and "reset calibration" would decide
+        # there was nothing to reset.
+        for key, value in values.items():
+            setattr(self.cfg, key, value)
+        update_config_values(values)
         print(
             f"hover boxes saved: top={self.top_frac:.4f} bottom={self.bottom_frac:.4f} "
             f"left={self._left_px} width={self.strip_width} skew={self.skew}",

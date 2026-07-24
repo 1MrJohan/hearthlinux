@@ -14,6 +14,11 @@ overlay = ["PyGObject>=3.50"]
 [tool.setuptools.packages.find]
 include = ["bgtracker*"]
 
+# Cinzel / Alegreya Sans (SIL OFL) ship with the package: the overlay
+# registers them at runtime rather than requiring a system font install.
+[tool.setuptools.package-data]
+bgtracker = ["assets/fonts/*.ttf", "assets/fonts/*.txt"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

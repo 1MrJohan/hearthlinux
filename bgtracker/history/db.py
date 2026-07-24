@@ -9,13 +9,22 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 from bgtracker.config import DATA_DIR
 from bgtracker.sim.client import SimResult
-from bgtracker.state.game import BoardSnapshot
+from bgtracker.state.game import (
+    GHOST_HERO_PREFIX,
+    BoardSnapshot,
+    Enchantment,
+    Minion,
+    PlayerBoard,
+    Trinket,
+    is_ghost,
+)
 
 DB_FILE = DATA_DIR / "history.db"
 
@@ -42,12 +51,30 @@ CREATE TABLE IF NOT EXISTS combats (
     predicted_win REAL,
     predicted_tie REAL,
     predicted_loss REAL,
-    outcome TEXT,            -- 'win' | 'tie' | 'loss' | NULL (unknown)
+    outcome TEXT,            -- 'win'|'tie'|'loss'|'ghost' (damage-free)|NULL
     my_board TEXT,           -- JSON snapshot
     opp_board TEXT,
+    sims_run INTEGER,        -- trials the sim actually reached, not the target
+    sim_ms REAL,
+    predicted_lost_lethal REAL,
     UNIQUE (game_id, turn)
 );
 """
+
+# Bumped whenever a one-shot data fixup is added below.
+_USER_VERSION = 2
+
+# Columns added to `combats` after the first release. CREATE TABLE IF NOT EXISTS
+# silently leaves an existing table alone, so new columns need ALTER.
+_ADDED_COMBAT_COLUMNS = (
+    ("sims_run", "INTEGER"),
+    ("sim_ms", "REAL"),
+    ("predicted_lost_lethal", "REAL"),
+    # A property of the opponent, deliberately NOT of the outcome: a ghost
+    # fight that cost HP is a genuine loss and records one, but it still has to
+    # leave calibration, and a flag is the only way to express both at once.
+    ("opponent_is_ghost", "INTEGER"),
+)
 
 
 def _now() -> str:
@@ -58,11 +85,110 @@ def _board_json(board) -> str | None:
     return json.dumps(dataclasses.asdict(board)) if board is not None else None
 
 
+def _minions_from(raw: list[dict]) -> tuple[Minion, ...]:
+    return tuple(
+        Minion(**{**m, "enchantments": tuple(Enchantment(**e) for e in m.get("enchantments", ()))})
+        for m in raw
+    )
+
+
+def board_from_json(raw: str | None) -> PlayerBoard | None:
+    """Rebuild a stored board so a recorded combat can be re-simulated offline.
+
+    Tolerant of rows written before `hand`, `trinkets` and `global_info` existed
+    — those predate the columns but are most of the calibration corpus, and a
+    strict reader would throw the history away.
+    """
+    if raw is None:
+        return None
+    d = json.loads(raw)
+    return PlayerBoard(
+        **{
+            **d,
+            "minions": _minions_from(d.get("minions", ())),
+            "hand": _minions_from(d.get("hand", ())),
+            "trinkets": tuple(Trinket(**t) for t in d.get("trinkets", ())),
+            "global_info": d.get("global_info", {}),
+        }
+    )
+
+
 class HistoryDB:
     def __init__(self, path: Path = DB_FILE):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path)
+        self.path = path
+        self._open()
+
+    def _open(self) -> None:
+        """Connect, ensure the schema, and migrate. Used at open and after a reset."""
+        self.conn = sqlite3.connect(self.path)
         self.conn.executescript(_SCHEMA)
+        self._migrate()
+
+    def reset(self, backup: bool = True) -> Path | None:
+        """Empty the history, returning the backup's path if one was taken.
+
+        Closes and *reopens* rather than deleting the file underneath a live
+        connection: SQLite holds the descriptor, so an unlinked database keeps
+        accepting writes into an inode nobody can ever read again — the tracker
+        would look like it was recording and silently not be.
+
+        What this destroys is not just a match list. It is the sim-calibration
+        corpus and the stored board snapshots that let a mispredicted fight be
+        re-simulated offline, so `backup` defaults to True.
+        """
+        # Asked before closing, and used to decide whether a backup is worth
+        # writing: an empty database has nothing to preserve, and a directory
+        # of empty .bak- files makes the one that matters harder to find.
+        worth_keeping = self.counts() != (0, 0)
+        self.conn.close()
+        saved: Path | None = None
+        if self.path.is_file():
+            if backup and worth_keeping:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                saved = self.path.with_name(f"{self.path.name}.bak-{stamp}")
+                shutil.copy2(self.path, saved)
+            self.path.unlink()
+        # Journal files left behind would be applied to the new database.
+        for suffix in ("-wal", "-shm", "-journal"):
+            self.path.with_name(self.path.name + suffix).unlink(missing_ok=True)
+        self._open()
+        return saved
+
+    def counts(self) -> tuple[int, int]:
+        """(games, combats) — what a reset would be throwing away."""
+        games = self.conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
+        combats = self.conn.execute("SELECT COUNT(*) FROM combats").fetchone()[0]
+        return games, combats
+
+    def _migrate(self) -> None:
+        """Bring an older database up to the current shape."""
+        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(combats)")}
+        for name, decl in _ADDED_COMBAT_COLUMNS:
+            if name not in existing:
+                self.conn.execute(f"ALTER TABLE combats ADD COLUMN {name} {decl}")
+
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < 2:
+            # Retro-flag every ghost fight, including any already scored as a
+            # loss: the opponent was a ghost regardless of what the fight cost.
+            self.conn.execute(
+                "UPDATE combats SET opponent_is_ghost = 1 WHERE opponent_hero LIKE ?",
+                (GHOST_HERO_PREFIX + "%",),
+            )
+        if version < 1:
+            # Ghost fights are damage-free, so every one of them was recorded as
+            # a tie before they had their own outcome. Strictly one-shot: losing
+            # to a ghost IS a real loss, and re-running this over rows written
+            # after the fix would eat them. Hence the user_version gate, and the
+            # 'tie'-only predicate.
+            self.conn.execute(
+                "UPDATE combats SET outcome = 'ghost'"
+                " WHERE outcome = 'tie' AND opponent_hero LIKE ?",
+                (GHOST_HERO_PREFIX + "%",),
+            )
+        self.conn.execute(f"PRAGMA user_version = {_USER_VERSION}")
+        self.conn.commit()
 
     def start_game(self, log_id: str | None = None) -> int:
         if log_id:
@@ -90,8 +216,9 @@ class HistoryDB:
     ) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO combats (game_id, turn, opponent_hero, predicted_win,"
-            " predicted_tie, predicted_loss, outcome, my_board, opp_board)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+            " predicted_tie, predicted_loss, outcome, my_board, opp_board,"
+            " sims_run, sim_ms, predicted_lost_lethal, opponent_is_ghost)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 game_id,
                 snapshot.turn,
@@ -102,6 +229,12 @@ class HistoryDB:
                 outcome,
                 _board_json(snapshot.friendly),
                 _board_json(snapshot.opponent),
+                # How much sample the number is actually backed by — without it
+                # a truncated run is indistinguishable from a full one.
+                prediction.sims_run if prediction else None,
+                prediction.sim_ms if prediction else None,
+                prediction.lost_lethal_percent if prediction else None,
+                1 if is_ghost(snapshot.opponent) else 0,
             ),
         )
         self.conn.commit()

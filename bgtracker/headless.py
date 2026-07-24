@@ -47,6 +47,9 @@ def print_event(event: ev.Event) -> None:
             you = s.friendly
             hp = f"{you.health}+{you.armor}" if you else "?"
             print(f"combat over — your HP {hp}")
+        case ev.CombatResult(outcome=outcome, damage=dmg):
+            swing = f" ({dmg} HP)" if dmg else ""
+            print(f"  result: {outcome or 'unknown'}{swing}")
         case ev.NextOpponent(player_id=pid):
             print(f"next opponent: player {pid}")
         case ev.GameEnd(placement=p):

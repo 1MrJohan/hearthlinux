@@ -6,6 +6,7 @@ the combat-sim mapper, and match history all consume them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from hearthstone.entities import Card, Game
@@ -23,6 +24,21 @@ def tag(entity, gametag, default=0):
 @dataclass(frozen=True)
 class Enchantment:
     card_id: str | None
+    num1: int = 0
+    num2: int = 0
+
+
+@dataclass(frozen=True)
+class Trinket:
+    """An equipped Battlegrounds trinket.
+
+    Most trinkets are economy effects the simulator ignores, but some carry
+    start-of-combat behaviour. Both players' equipped trinkets are visible, so
+    unlike the hand this maps for the opponent too.
+    """
+
+    card_id: str
+    entity_id: int
     num1: int = 0
     num2: int = 0
 
@@ -73,6 +89,15 @@ class PlayerBoard:
     armor: int
     tier: int
     minions: tuple[Minion, ...] = ()
+    # Minions held in hand. Several Battlegrounds cards act from hand at the
+    # start of combat — Flighty Scout summons a copy of itself, Diremuck
+    # Forager pulls Murlocs out, Choral Mrrrglr eats the hand's stats — so a
+    # forecast that ignores the hand can be wildly wrong for those builds.
+    # Only the friendly hand is ever populated; the opponent's is hidden.
+    hand: tuple[Minion, ...] = ()
+    # Equipped trinkets only — offers and rejected discoveries sit in
+    # SETASIDE/REMOVEDFROMGAME, so the zone is what separates them.
+    trinkets: tuple[Trinket, ...] = ()
     hero_power_id: str | None = None      # active hero power (start-of-combat)
     hero_power_used: bool = False
     # tribe/aura bonuses applied to minions summoned during combat; keys match
@@ -158,6 +183,55 @@ def read_active_spells(game: Game, player_id: int) -> tuple[str, ...]:
     return tuple(out)
 
 
+# When an odd number of players remain, somebody is paired against a "ghost" —
+# a copy of an eliminated player's board, fronted by Kel'Thuzad.
+#
+# The ghost's hero is a dead player's entity, so its HP is not a readable
+# signal: every recorded ghost fight shows it at 0 or negative. A *win* against
+# one therefore cannot be told from a tie, and app.py gives that case its own
+# outcome. A ghost fight that costs you HP is still a genuine loss and records
+# one — do not assume these fights are damage-free. Either way the opponent was
+# a ghost, which is why history/db.py flags the row and stats.py drops the whole
+# category: scoring only the fights that happen to be legible would bias the
+# calibration table toward losses.
+#
+# Prefix match, because heroes carry `_SKIN_*` variants.
+GHOST_HERO_PREFIX = "TB_BaconShop_HERO_KelThuzad"
+
+
+def is_ghost(board: "PlayerBoard | None") -> bool:
+    """Whether this board is the odd-player-out ghost rather than a real player."""
+    return bool(board and board.hero_card_id and board.hero_card_id.startswith(GHOST_HERO_PREFIX))
+
+
+# Not equipment: these sit in play announcing "the Trinket Shop opens in N
+# turns". They carry the trinket card type, so only the id tells them apart.
+# The number is per-set (BG30_Trinket_1st, BG34_Trinket_1st, …), so match on the
+# shape rather than a frozen set of ids that silently rots when the set rotates.
+# Anchored: it must not swallow the BG##_Trinket_1st_Spell "Buy a … Trinket" pool
+# spells, which are already excluded by the pool-spell check above.
+_TRINKET_PLACEHOLDER_RE = re.compile(r"^BG\d+_Trinket_(?:1st|2nd)$")
+
+
+def _is_trinket(entity: Card) -> bool:
+    """Whether an in-play card is an equipped trinket.
+
+    Checked two ways so neither failure mode is silent: the runtime CARDTYPE
+    works even with the card DB unavailable (`--no-names`), and the DB catches
+    anything the game has morphed away from it. Pool spells are excluded
+    explicitly — the game morphs *those* into TRINKET at runtime, which is the
+    one case where the type alone would lie.
+    """
+    if entity.card_id in cards.pool_spell_ids():
+        return False
+    if entity.card_id and _TRINKET_PLACEHOLDER_RE.match(entity.card_id):
+        return False
+    return (
+        entity.type == CardType.BATTLEGROUND_TRINKET
+        or entity.card_id in cards.trinket_ids()
+    )
+
+
 def _minion_from(entity: Card, enchants: dict[int, list[Enchantment]]) -> Minion:
     return Minion(
         entity_id=entity.id,
@@ -205,11 +279,24 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     hero = None
     hero_power = None
     minions: list[Card] = []
+    hand: list[Card] = []
+    trinkets: list[Card] = []
     enchants: dict[int, list[Enchantment]] = {}
     for entity in game.entities:
-        if not isinstance(entity, Card) or tag(entity, GameTag.ZONE) != Zone.PLAY:
+        if not isinstance(entity, Card):
             continue
         if tag(entity, GameTag.CONTROLLER) != player_id:
+            continue
+        zone = tag(entity, GameTag.ZONE)
+        if zone == Zone.HAND:
+            # A card with no id is an opponent's hidden card; nothing to send.
+            if entity.type == CardType.MINION and entity.card_id:
+                hand.append(entity)
+            continue
+        if zone != Zone.PLAY:
+            continue
+        if _is_trinket(entity):
+            trinkets.append(entity)
             continue
         ctype = entity.type
         if ctype == CardType.MINION:
@@ -241,6 +328,16 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
         armor=tag(hero, GameTag.ARMOR) if hero else 0,
         tier=tag(hero, GameTag.PLAYER_TECH_LEVEL, 1) if hero else 1,
         minions=tuple(_minion_from(m, enchants) for m in minions),
+        hand=tuple(_minion_from(m, enchants) for m in hand),
+        trinkets=tuple(
+            Trinket(
+                card_id=t.card_id,
+                entity_id=t.id,
+                num1=tag(t, GameTag.TAG_SCRIPT_DATA_NUM_1),
+                num2=tag(t, GameTag.TAG_SCRIPT_DATA_NUM_2),
+            )
+            for t in trinkets
+        ),
         hero_power_id=hero_power.card_id if hero_power else None,
         hero_power_used=bool(tag(hero_power, GameTag.EXHAUSTED)) if hero_power else False,
         global_info=_global_info(player),

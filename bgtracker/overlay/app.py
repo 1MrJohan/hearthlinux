@@ -21,16 +21,40 @@ from bgtracker.data import cards  # noqa: E402
 from bgtracker.parse import events as ev  # noqa: E402
 from bgtracker.sim.client import SimResult  # noqa: E402
 
+from .model import BoardView, OverlayState, render  # noqa: E402
 from .window import OverlayWindow  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 
+def _hero_meta(board) -> str:
+    """`18 HP · Tavern 3` — the dim line beside the phase title."""
+    if board is None:
+        return ""
+    return f"{board.health + board.armor} HP · Tavern {board.tier}"
+
+
+def _combat_meta(snapshot) -> str:
+    """`18 HP · vs Tickatus` — your HP and who you are up against."""
+    you, opponent = snapshot.friendly, snapshot.opponent
+    hp = f"{you.health + you.armor} HP" if you else ""
+    versus = f"vs {cards.name(opponent.hero_card_id)}" if opponent else ""
+    return " · ".join(part for part in (hp, versus) if part)
+
+
 class OverlayApp:
     """Owns the Gtk.Application + window; listener plugs into the Pipeline."""
 
-    def __init__(self):
+    # Class-level defaults so a bare __new__ (tests) still has them.
+    _in_combat = False
+    _shop_meta = ""
+    _shop_result: tuple[str | None, int] = (None, 0)
+
+    def __init__(self, settings=None):
         from gi.repository import Gio
+
+        from bgtracker.config import load_config
+        from bgtracker.settings import SettingsService
 
         # NON_UNIQUE: a stale instance must never make a new launch silently
         # defer to it and exit.
@@ -38,105 +62,288 @@ class OverlayApp:
             application_id="dev.bgtracker.overlay",
             flags=Gio.ApplicationFlags.NON_UNIQUE,
         )
+        # The one Config for the process arrives with the service; --demo and
+        # the tests construct an OverlayApp on their own, so fall back to a
+        # private one rather than requiring a caller to build it.
+        self.settings = settings or SettingsService(load_config())
         self.window: OverlayWindow | None = None
         self.hover = None
         self.pipeline = None  # set by the caller for opponent-memory lookups
-        self.standings: tuple = ()
+        self.reset_state()
         self.app.connect("activate", self._on_activate)
 
+    def reset_state(self) -> None:
+        """Start with an empty display and nothing rendered yet.
+
+        `_rendered` is what the live window was last told; keeping it beside
+        `state` is what lets `render` emit only the difference.
+        """
+        self.state = OverlayState()
+        self._rendered: OverlayState | None = OverlayState()
+
     def _on_hover_slot(self, slot: int | None) -> None:
-        win = self.window
-        if win is None:
-            return
+        st = self.state
+        standings = st.standings
         # Slot i is leaderboard position i+1; match by place, not list index.
-        entry = next((e for e in self.standings if e[0] == (slot + 1)), None) if slot is not None else None
+        entry = next((e for e in standings if e.place == (slot + 1)), None) if slot is not None else None
+        st.hot_place = entry.place if entry else None
         if entry is None:
             if slot is not None:
-                log.info("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, self.standings)
-            win.clear_hover_board()
+                log.info("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, standings)
+            st.hover_board = None
+            self._flush()
             return
-        place, player_id, hero_card_id = entry
-        seen = self.pipeline.memory.last_seen(player_id) if self.pipeline else None
+        seen = self.pipeline.memory.last_seen(entry.player_id) if self.pipeline else None
         log.info(
             "hover-lookup: slot %s -> place %s %s pid=%s seen=%s",
-            slot, place, hero_card_id, player_id, f"turn {seen.turn}" if seen else None,
+            slot, entry.place, entry.hero_card_id, entry.player_id,
+            f"turn {seen.turn}" if seen else None,
         )
-        if seen:
-            win.set_hover_board(
-                f"#{place} {cards.name(hero_card_id)} — last seen turn {seen.turn}",
-                seen.board,
-            )
+        if entry.dead:
+            status = "eliminated"
+        elif seen:
+            status = f"last seen · turn {seen.turn}"
+        elif entry.you:
+            status = "this is you"
         else:
-            win.set_hover_board(f"#{place} {cards.name(hero_card_id)} — not fought yet", None)
+            status = "not scouted yet"
+        st.hover_board = BoardView(
+            f"#{entry.place} {cards.name(entry.hero_card_id)}",
+            status,
+            seen.board if seen else None,
+            hero_card_id=entry.hero_card_id,
+            dead=entry.dead,
+        )
+        self._flush()
 
     def _on_activate(self, app):
-        from bgtracker.config import load_config
+        from . import theme
 
-        cfg = load_config()
-        self.window = OverlayWindow(application=app, cfg=cfg)
+        # Must precede any widget construction: Pango caches the face it picks
+        # for a description, so one lookup before registration would pin the
+        # whole overlay to the fallback font for the process's lifetime.
+        theme.register_fonts()
+        self._build_window()
+        self._build_hover()
+        self._subscribe()
+
+    # -- construction, done in a way that can be repeated ----------------
+    def _build_window(self) -> None:
+        """(Re)build the overlay window and repaint it from state."""
+        from . import theme
+
+        cfg = self.settings.cfg
+        old = self.window
+        self.window = OverlayWindow(
+            application=self.app, cfg=cfg,
+            on_settings=self.open_settings,
+            on_edit=lambda value: self.settings.set("overlay_edit", value),
+        )
         self.window.present()
-        if cfg.extra.get("hover_strips", True):
-            from .hover import HoverStrips
+        if old is not None:
+            # The scale is baked into a display-wide CSS provider; leaving the
+            # old one attached would let whichever loaded first keep winning.
+            theme.uninstall(old.css_provider)
+            old.destroy()
+        # No `previous`: a fresh window shows nothing, so everything is emitted.
+        self._rendered = None
+        self._flush()
 
-            self.hover = HoverStrips(application=app, cfg=cfg, on_slot=self._on_hover_slot)
-            self.hover.present()
+    def _build_hover(self) -> None:
+        """(Re)build the leaderboard hover column, if it is enabled at all."""
+        cfg = self.settings.cfg
+        if self.hover is not None:
+            self.hover.destroy()
+            self.hover = None
+        if not cfg.hover_strips:
+            return
+        from .hover import HoverStrips
+
+        # Rebound to the *current* window every time. These are bound methods
+        # on a specific OverlayWindow, so a rebuild that skipped this would
+        # leave the hover column resolving slots against destroyed geometry.
+        self.hover = HoverStrips(
+            application=self.app, cfg=cfg, on_slot=self._on_hover_slot,
+            rail_rect=self.window.rail_rect,
+            hud_rect=self.window.hud_rect,
+            on_hud=self._on_hud_hover,
+        )
+
+    def _subscribe(self) -> None:
+        from bgtracker import settings as sett
+
+        self.settings.subscribe(sett.OVERLAY_REBUILD, self._apply_rebuild)
+        self.settings.subscribe(sett.OVERLAY, self._apply_overlay)
+        self.settings.subscribe(sett.HOVER, self._apply_hover)
+
+    def _apply_rebuild(self, _keys) -> None:
+        self._build_window()
+        self._build_hover()
+
+    def _apply_overlay(self, keys) -> None:
+        if "overlay_edit" in keys and self.window is not None:
+            self.window.set_edit(self.settings.cfg.overlay_edit)
+            # Layout mode changes the hover column from click-through boxes to
+            # draggable ones, which it decides once at construction.
+            self._build_hover()
+
+    def _apply_hover(self, _keys) -> None:
+        self._build_hover()
+
+    def _on_hud_hover(self, hovered: bool) -> None:
+        if self.window is not None:
+            self.window.set_hud_hovered(hovered)
+            if self.hover is not None:
+                self.hover.present()
+
+    def open_settings(self) -> None:
+        from .settings_window import SettingsWindow
+
+        # Resolved at click time: the pipeline is attached after construction,
+        # and deleting the history has to go through the one holding the open
+        # database connection.
+        reset_history = self.pipeline.reset_history if self.pipeline else None
+        SettingsWindow.open(self.app, self.settings, on_reset_history=reset_history)
 
     # Pipeline listener -------------------------------------------------
     def on_event(self, event: ev.Event, prediction: SimResult | None) -> None:
         # State updates must happen even before the window exists — events
         # streamed during startup replay would otherwise be lost.
-        if isinstance(event, ev.Standings):
-            self.standings = event.places
-        elif isinstance(event, ev.GameStart):
-            self.standings = ()
+        st = self.state
+        match event:
+            case ev.GameStart():
+                self._in_combat = False
+                self._shop_result = (None, 0)
+                self._clear_to_idle(st)
+                st.phase = ("Hero Select", "")
+                st.status = "Waiting — choose your hero"
+            case ev.HeroPicked(card_id=cid):
+                st.status = f"Playing {cards.name(cid)}"
+            case ev.TurnChange(turn=t):
+                st.turn = t
+            case ev.CombatForecast(snapshot=s) if prediction is not None:
+                # A run still tightening. Same widgets, same treatment — the
+                # numbers simply firm up in place instead of appearing late.
+                self._in_combat = True
+                self._enter_combat(st, s)
+                self._set_forecast(st, prediction)
+            case ev.CombatStart(snapshot=s):
+                self._in_combat = True
+                self._enter_combat(st, s)
+                if prediction is not None:
+                    self._set_forecast(st, prediction)
+                else:
+                    self._clear_forecast(st)
+            case ev.Buffs(entries=e, spells=sp):
+                st.buffs = (e, sp)
+            case ev.Standings(places=places):
+                st.standings = places
+            case ev.CombatEnd(snapshot=s):
+                # The engine has resolved the fight, but the client is still
+                # animating it for another 20-45s. Bank the post-combat state
+                # and leave the display alone until ShopReady.
+                self._shop_meta = _hero_meta(s.friendly)
+            case ev.CombatResult(outcome=outcome, damage=damage):
+                # Banked, never shown here: this lands with CombatEnd, while
+                # the player is still watching the battle play out. Revealing
+                # it now tells them who won before they have seen it.
+                self._shop_result = (outcome, damage)
+            case ev.ShopReady() if self._in_combat:
+                self._in_combat = False
+                st.phase = ("Recruit Phase", self._shop_meta)
+                st.status = ""
+                st.combat = False
+                st.forecast_live = False
+                # The forecast stays open through the recruit phase now, with
+                # what actually happened underneath it — a fight only becomes
+                # checkable once it is over.
+                st.result = self._shop_result
+                self._shop_result = (None, 0)
+                # Defensive: _enter_combat no longer populates the enemy
+                # board, so this only matters if something else ever does.
+                st.board = None
+            case ev.NextOpponent(player_id=pid):
+                # A new opponent invalidates the previous one's odds well before
+                # a fresh forecast arrives. Deliberately not gated on the
+                # pipeline: stale odds must go regardless of whether the
+                # opponent-memory lookup below can run.
+                st.next_forecast = None
+                seen = self.pipeline.memory.last_seen(pid) if self.pipeline else None
+                if seen and seen.board:
+                    st.next_board = BoardView(
+                        "Next Opponent", f"last seen · turn {seen.turn}", seen.board
+                    )
+                else:
+                    st.next_board = BoardView("Next Opponent", "not scouted yet", None)
+            case ev.ShopForecast(seen_turn=seen_turn, turn=turn) if prediction is not None:
+                age = turn - seen_turn
+                staleness = "current" if age <= 0 else f"{age} turn{'s' if age > 1 else ''} old"
+                st.next_forecast = (
+                    f"{prediction.won_percent:.0f} / {prediction.tied_percent:.0f}"
+                    f" / {prediction.lost_percent:.0f}  ·  {staleness}"
+                )
+            case ev.GameEnd(placement=p):
+                self._in_combat = False
+                self._shop_result = (None, 0)
+                self._clear_to_idle(st)
+                st.phase = ("Game Over", f"finished #{p}" if p else "")
+                st.status = f"Finished #{p}" if p else "Game over"
+                # A finished game also drops any open scout popout; a live one
+                # never does, so this is not part of the shared idle reset.
+                st.hover_board = None
+        self._flush()
+
+    @staticmethod
+    def _clear_forecast(st) -> None:
+        """Blank the odds block. The inverse of `_set_forecast`."""
+        st.odds = (None, None, None)
+        st.damage = (None, None)
+        st.lethal = None
+
+    @classmethod
+    def _clear_to_idle(cls, st) -> None:
+        """Reset every field a game boundary blanks, leaving phase/status to
+        the caller — the one thing GameStart and GameEnd disagree about."""
+        st.turn = None
+        st.combat = False
+        cls._clear_forecast(st)
+        st.result = (None, 0)
+        st.board = None
+        st.next_board = None
+        st.standings = ()
+        st.buffs = ((), ())
+
+    @staticmethod
+    def _enter_combat(st, snapshot) -> None:
+        # A new fight drops the previous fight's result. The renderer only
+        # pushes what changed, and HudPanel.set_odds hides the result widget as
+        # a side effect, so without clearing it here two combats with the same
+        # (outcome, damage) — back-to-back ties — would leave the second's
+        # result caption hidden and never re-shown.
+        st.result = (None, 0)
+        st.phase = ("Combat Forecast", _combat_meta(snapshot))
+        st.status = ""
+        st.turn = snapshot.turn
+        st.combat = True
+        # Deliberately no st.board: the game is showing this fight itself, so
+        # the panel would only cover it. Reviewing a player's last-seen board
+        # is the scout popout's job (hover_board).
+
+    @staticmethod
+    def _set_forecast(st, prediction: SimResult) -> None:
+        st.odds = (
+            prediction.won_percent, prediction.tied_percent, prediction.lost_percent
+        )
+        st.damage = (prediction.damage_dealt_text, prediction.damage_taken_text)
+        st.lethal = prediction.lost_lethal_percent
+
+    def _flush(self) -> None:
+        """Push whatever changed since the last flush into the live window."""
         win = self.window
         if win is None:
             return
-        match event:
-            case ev.GameStart():
-                win.set_status("game started — pick a hero")
-                win.set_odds(None, None, None)
-                win.clear_board()
-                win.clear_next_board()
-                win.set_buffs(())
-            case ev.HeroPicked(card_id=cid):
-                win.set_status(f"playing {cards.name(cid)}")
-            case ev.TurnChange(turn=t):
-                win.set_status(f"turn {t}")
-            case ev.CombatStart(snapshot=s):
-                win.set_status(f"combat — turn {s.turn}")
-                if prediction is not None:
-                    win.set_odds(
-                        prediction.won_percent,
-                        prediction.tied_percent,
-                        prediction.lost_percent,
-                    )
-                    win.set_damage(prediction.avg_damage_won, prediction.avg_damage_lost)
-                else:
-                    win.set_odds(None, None, None)
-                win.set_board("vs", s.opponent)
-            case ev.Buffs(entries=e, spells=sp):
-                win.set_buffs(e, sp)
-            case ev.CombatEnd(snapshot=s):
-                you = s.friendly
-                if you:
-                    win.set_status(f"shopping — HP {you.health + you.armor}, tier {you.tier}")
-            case ev.NextOpponent(player_id=pid) if self.pipeline is not None:
-                seen = self.pipeline.memory.last_seen(pid)
-                if seen and seen.board:
-                    win.set_next_board(
-                        f"next (last seen turn {seen.turn})", seen.board
-                    )
-                else:
-                    win.set_next_board("next opponent — not seen yet", None)
-            case ev.GameEnd(placement=p):
-                win.set_status(f"finished #{p}" if p else "game over")
-                win.set_odds(None, None, None)
-                win.clear_board()
-                win.clear_hover_board()
-                self.standings = ()
-                win.clear_next_board()
-                win.set_buffs(())
+        render(win, self.state, self._rendered)
+        self._rendered = self.state.snapshot()
 
     def run_with(self, coro: Coroutine) -> None:
         """Run the GTK app and the given coroutine on one shared loop."""

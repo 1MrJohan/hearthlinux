@@ -1,7 +1,11 @@
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 from bgtracker.sim.mapper import to_battle_info
-from bgtracker.state.game import BoardSnapshot
+from dataclasses import replace
+
+from hearthstone.enums import CardType
+
+from bgtracker.state.game import BoardSnapshot, Minion
 
 from .synthetic import minimal_bg_game
 
@@ -33,3 +37,96 @@ def test_maps_snapshot_to_battle_info():
 def test_incomplete_snapshot_maps_to_none():
     snap = BoardSnapshot(turn=1, friendly=None, opponent=None)
     assert to_battle_info(snap) is None
+
+
+def test_hand_is_sent_so_start_of_combat_cards_are_simulated():
+    """Flighty Scout, Diremuck Forager and friends act from hand.
+
+    Without the hand the simulator sees a smaller board than the one that
+    actually fights, which reads as a near-certain loss for a hand-based build.
+    """
+    snap = snapshot_from_synthetic()
+    held = Minion(entity_id=99, card_id="BG32_330", position=0, attack=7, health=7)
+    snap = replace(snap, friendly=replace(snap.friendly, hand=(held,)))
+
+    player = to_battle_info(snap)["playerBoard"]["player"]
+    [in_hand] = player["hand"]
+    assert (in_hand["cardId"], in_hand["attack"], in_hand["health"]) == ("BG32_330", 7, 7)
+    assert in_hand["friendly"] is True
+
+
+def test_only_revealed_hand_cards_are_projected():
+    """Hidden cards carry no id, so they can't be sent even in principle.
+
+    The opponent's hand is mostly hidden but the log does reveal some of it
+    during combat, so it is not always empty — what we can see, we send.
+    """
+    snap = snapshot_from_synthetic()
+    assert snap.opponent.hand == ()
+    assert "hand" not in to_battle_info(snap)["opponentBoard"]["player"]
+    assert all(m.card_id for m in snap.friendly.hand)
+
+
+def test_hand_is_omitted_when_the_player_holds_nothing():
+    snap = snapshot_from_synthetic()
+    snap = replace(snap, friendly=replace(snap.friendly, hand=()))
+    assert "hand" not in to_battle_info(snap)["playerBoard"]["player"]
+
+
+def test_only_equipped_trinkets_are_sent():
+    """Offers and rejected discoveries pile up in SETASIDE; only PLAY counts.
+
+    Sending the offer pool would hand the simulator a dozen effects the player
+    never took.
+    """
+    snap = snapshot_from_synthetic()
+    [equipped] = snap.friendly.trinkets
+    assert equipped.card_id == "BG30_MagicItem_988"
+    assert equipped.num1 == 3
+
+    [sent] = to_battle_info(snap)["playerBoard"]["player"]["trinkets"]
+    assert sent["cardId"] == "BG30_MagicItem_988"
+    assert sent["scriptDataNum1"] == 3
+    assert sent["entityId"] == equipped.entity_id
+
+
+def test_trinkets_omitted_when_none_equipped():
+    snap = snapshot_from_synthetic()
+    assert snap.opponent.trinkets == ()
+    assert "trinkets" not in to_battle_info(snap)["opponentBoard"]["player"]
+
+
+def test_trinkets_are_not_mistaken_for_minions():
+    # A trinket sitting in PLAY must not end up on the board.
+    snap = snapshot_from_synthetic()
+    assert all(m.card_id != "BG30_MagicItem_988" for m in snap.friendly.minions)
+
+
+def test_trinket_shop_placeholders_are_not_equipment():
+    """"The Greater Trinket Shop opens in 8 turns!" is an announcement.
+
+    It sits in play carrying the trinket card type, so only the id keeps it out
+    of the payload. The number is per-set, so the match generalizes across set
+    numbering rather than naming one set and rotting when the next one ships.
+    """
+    from bgtracker.state.game import _TRINKET_PLACEHOLDER_RE, _is_trinket
+
+    class FakeCard:
+        def __init__(self, card_id, type_=CardType.BATTLEGROUND_TRINKET):
+            self.card_id = card_id
+            self.type = type_
+
+    assert not _is_trinket(FakeCard("BG30_Trinket_1st"))
+    assert not _is_trinket(FakeCard("BG30_Trinket_2nd"))
+    assert not _is_trinket(FakeCard("BG34_Trinket_1st"))   # the next set's placeholders
+    assert not _is_trinket(FakeCard("BG99_Trinket_2nd"))   # and any future numbering
+    assert _is_trinket(FakeCard("BG32_MagicItem_893"))     # Bluegill Flippers
+
+    # Anchored: the "Buy a … Trinket" pool spells (…_Spell) are not placeholders;
+    # they are excluded as pool spells elsewhere and must not be caught here.
+    assert _TRINKET_PLACEHOLDER_RE.match("BG34_Trinket_1st")
+    assert not _TRINKET_PLACEHOLDER_RE.match("BG34_Trinket_1st_Spell")
+
+    # Hidden opponent cards sit in PLAY carrying no id; the placeholder match
+    # must not crash on None the way a bare regex .match(None) would.
+    assert not _is_trinket(FakeCard(None, CardType.MINION))

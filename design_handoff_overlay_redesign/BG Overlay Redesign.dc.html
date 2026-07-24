@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:#0d0a06;-webkit-font-smoothing:antialiased}
+  a{color:#d4af37;text-decoration:none}
+  a:hover{color:#f4d47a}
+  @keyframes turnpulse{0%,100%{box-shadow:0 0 10px rgba(244,212,122,.38),inset 0 0 9px rgba(0,0,0,.65)}50%{box-shadow:0 0 20px rgba(244,212,122,.7),inset 0 0 9px rgba(0,0,0,.65)}}
+  @keyframes popin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:18px;padding:26px 20px 40px;font-family:'Alegreya Sans','Segoe UI',sans-serif;overflow-x:auto">
+
+  <div style="width:1180px;display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid rgba(212,175,55,.28);padding-bottom:12px">
+    <div>
+      <div style="font-family:'Cinzel',serif;font-weight:800;font-size:22px;letter-spacing:2px;color:#f4d47a;line-height:1">BATTLEGROUNDS TRACKER</div>
+      <div style="font-size:14px;color:#b39a6e;letter-spacing:.5px;margin-top:4px">Overlay layout &amp; UI refresh · interactive preview</div>
+    </div>
+    <div style="font-size:12px;color:#7d6a48;letter-spacing:1px;text-transform:uppercase;text-align:right">Composited over live gameplay<br><span style="color:#5f5138">Toggle skin, phase &amp; panels below</span></div>
+  </div>
+
+  <div style="{{ stageStyle }}">
+    <!-- LEADERBOARD RAIL -->
+    <sc-if value="{{ showRail }}" hint-placeholder-val="{{ true }}">
+      <div style="{{ railStyle }}">
+        <sc-if value="{{ isRedesign }}" hint-placeholder-val="{{ true }}">
+          <sc-for list="{{ slots }}" as="s" hint-placeholder-count="8">
+            <div style="{{ s.wrap }}" onMouseEnter="{{ s.onEnter }}" onMouseLeave="{{ s.onLeave }}">
+              <div style="{{ s.orb }}">
+                <sc-if value="{{ s.hasArt }}" hint-placeholder-val="{{ true }}"><img src="{{ s.art }}" alt="{{ s.hero }}" style="{{ s.orbImg }}" /></sc-if>
+                <span style="{{ s.placeStyle }}">{{ s.place }}</span>
+              </div>
+              <div style="{{ s.hpStyle }}">{{ s.hpText }}</div>
+            </div>
+          </sc-for>
+        </sc-if>
+        <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+          <sc-for list="{{ slots }}" as="s" hint-placeholder-count="8">
+            <div style="{{ s.boxCur }}" onMouseEnter="{{ s.onEnter }}" onMouseLeave="{{ s.onLeave }}"><span style="{{ s.boxNum }}">{{ s.place }}</span></div>
+          </sc-for>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- HOVER SCOUT POPOUT -->
+    <sc-if value="{{ hoverActive }}" hint-placeholder-val="{{ true }}">
+      <div style="{{ hoverStyle }}">
+        <div style="{{ hoverNotch }}"></div>
+        <div style="{{ hoverHeadRow }}">
+          <sc-if value="{{ isRedesign }}" hint-placeholder-val="{{ true }}">
+            <div style="{{ hoverOrb }}"><sc-if value="{{ hoverHasArt }}" hint-placeholder-val="{{ true }}"><img src="{{ hoverArt }}" alt="{{ hoverTitle }}" style="{{ hoverOrbImg }}" /></sc-if></div>
+            <div>
+              <div style="{{ hoverTitleStyle }}">{{ hoverTitle }}</div>
+              <div style="{{ hoverSubStyle }}">{{ hoverSub }}</div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+            <div style="{{ curLineStyle }}">{{ hoverLineCur }}</div>
+          </sc-if>
+        </div>
+        <sc-if value="{{ hoverHasBoard }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ tileRowStyle }}">
+            <sc-for list="{{ hoverBoard }}" as="m" hint-placeholder-count="5">
+              <dc-import name="MinionTile" skin="{{ skin }}" label="{{ m.label }}" atk="{{ m.atk }}" hp="{{ m.hp }}" keywords="{{ m.kw }}" tint="{{ m.tint }}" golden="{{ m.golden }}" art="{{ m.art }}" hint-size="88px,140px"></dc-import>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- BUFFS -->
+    <sc-if value="{{ showBuffs }}" hint-placeholder-val="{{ true }}">
+      <div style="{{ buffsStyle }}">
+        <sc-if value="{{ editMode }}" hint-placeholder-val="{{ true }}"><div style="{{ gripStyle }}">⠿ Buffs</div></sc-if>
+        <sc-if value="{{ isRedesign }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ panelTitleStyle }}">Tavern Buffs</div>
+          <div style="display:flex;flex-direction:column;gap:5px;margin-top:7px">
+            <sc-for list="{{ buffs }}" as="b" hint-placeholder-count="2">
+              <div style="{{ buffChipStyle }}"><span style="{{ b.dotStyle }}"></span><span style="{{ buffLabelStyle }}">{{ b.label }}</span><span style="{{ buffValStyle }}">{{ b.val }}</span></div>
+            </sc-for>
+            <sc-for list="{{ spells }}" as="sp" hint-placeholder-count="1">
+              <div style="{{ spellChipStyle }}"><span style="{{ spellMarkStyle }}">✦</span>{{ sp }}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <sc-for list="{{ buffs }}" as="b" hint-placeholder-count="2">
+              <div style="font-size:13px;font-weight:700;color:#e8e8e8"><span style="color:#e0b0ff">{{ b.label }}</span> {{ b.val }}</div>
+            </sc-for>
+            <sc-for list="{{ spells }}" as="sp" hint-placeholder-count="1">
+              <div style="font-size:13px;font-weight:700;color:#7fd0ff">⚡ {{ sp }}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- ENEMY / COMBAT BOARD -->
+    <sc-if value="{{ showBoard }}" hint-placeholder-val="{{ true }}">
+      <div style="{{ boardStyle }}">
+        <sc-if value="{{ editMode }}" hint-placeholder-val="{{ true }}"><div style="{{ gripStyle }}">⠿ Enemy board</div></sc-if>
+        <sc-if value="{{ isRedesign }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ boardHeadRow }}">
+            <div style="{{ panelTitleStyle }}">Enemy Board</div>
+            <div style="{{ boardSubStyle }}">{{ boardSub }}</div>
+          </div>
+        </sc-if>
+        <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ curLineStyle }}">{{ boardLineCur }}</div>
+        </sc-if>
+        <div style="{{ tileRowStyle }}">
+          <sc-for list="{{ oppBoard }}" as="m" hint-placeholder-count="6">
+            <dc-import name="MinionTile" skin="{{ skin }}" label="{{ m.label }}" atk="{{ m.atk }}" hp="{{ m.hp }}" keywords="{{ m.kw }}" tint="{{ m.tint }}" golden="{{ m.golden }}" art="{{ m.art }}" hint-size="88px,140px"></dc-import>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- HUD / FORECAST -->
+    <sc-if value="{{ showHud }}" hint-placeholder-val="{{ true }}">
+      <div style="{{ hudStyle }}">
+        <sc-if value="{{ editMode }}" hint-placeholder-val="{{ true }}"><div style="{{ gripStyle }}">⠿ HUD</div></sc-if>
+        <sc-if value="{{ isRedesign }}" hint-placeholder-val="{{ true }}">
+          <div style="{{ hudHeadRow }}">
+            <div style="{{ panelTitleStyle }}">{{ phaseTitle }}</div>
+            <div style="{{ hudMetaStyle }}">{{ hudMeta }}</div>
+          </div>
+          <div style="{{ hudDivider }}"></div>
+          <sc-if value="{{ showRoundel }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;align-items:center;gap:14px;margin-top:11px">
+              <div style="{{ roundelStyle }}"><div style="{{ roundelNumStyle }}">{{ turn }}</div><div style="{{ roundelCapStyle }}">TURN</div></div>
+              <div style="flex:1">
+                <sc-if value="{{ showOdds }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+                    <div style="text-align:center"><div style="{{ oddsWinNum }}">{{ odds.w }}%</div><div style="{{ oddsCapStyle }}">WIN</div></div>
+                    <div style="text-align:center"><div style="{{ oddsTieNum }}">{{ odds.t }}%</div><div style="{{ oddsCapStyle }}">TIE</div></div>
+                    <div style="text-align:center"><div style="{{ oddsLossNum }}">{{ odds.l }}%</div><div style="{{ oddsCapStyle }}">LOSS</div></div>
+                  </div>
+                  <div style="{{ barTrackStyle }}">
+                    <div style="{{ barWinStyle }}"></div>
+                    <div style="{{ barTieStyle }}"></div>
+                    <div style="{{ barLossStyle }}"></div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ showStatusSub }}" hint-placeholder-val="{{ true }}">
+                  <div style="{{ statusSubStyle }}">{{ statusSub }}</div>
+                </sc-if>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ showStatusNoRoundel }}" hint-placeholder-val="{{ true }}">
+            <div style="{{ statusSubStyle }}">{{ statusSub }}</div>
+          </sc-if>
+          <sc-if value="{{ showOdds }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;gap:8px;margin-top:11px">
+              <div style="{{ dmgDealStyle }}"><span style="{{ dmgArrowUp }}">▲</span> {{ odds.dealt }} <span style="{{ dmgWordStyle }}">dealt</span></div>
+              <div style="{{ dmgTakeStyle }}"><span style="{{ dmgArrowDn }}">▼</span> {{ odds.taken }} <span style="{{ dmgWordStyle }}">taken</span></div>
+            </div>
+          </sc-if>
+        </sc-if>
+        <sc-if value="{{ isCurrent }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size:12px;color:#9a9a9a">{{ statusCur }}</div>
+          <sc-if value="{{ showOdds }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:22px;font-weight:700;margin-top:2px"><span style="color:#6fd66f">{{ odds.w }}%</span> <span style="color:#8a8a8a">/</span> <span style="color:#d6c96f">{{ odds.t }}%</span> <span style="color:#8a8a8a">/</span> <span style="color:#d66f6f">{{ odds.l }}%</span></div>
+            <div style="font-size:12px;color:#9a9a9a;margin-top:2px">dmg dealt ~{{ odds.dealt }} / taken ~{{ odds.taken }}</div>
+          </sc-if>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- LOCK LAYOUT (edit mode) -->
+    <sc-if value="{{ editMode }}" hint-placeholder-val="{{ true }}">
+      <button style="{{ lockStyle }}" onClick="{{ lock }}">✔ Lock layout</button>
+    </sc-if>
+  </div>
+
+  <!-- CONTROL DOCK -->
+  <div style="{{ dockStyle }}">
+    <div style="font-family:'Cinzel',serif;font-weight:700;font-size:12px;letter-spacing:2px;color:#8b744a;text-transform:uppercase;padding-right:4px">Controls</div>
+    <div style="{{ groupStyle }}">
+      <span style="{{ groupLabelStyle }}">Skin</span>
+      <div style="{{ segWrapStyle }}">
+        <sc-for list="{{ skinOpts }}" as="o" hint-placeholder-count="3"><button style="{{ o.style }}" onClick="{{ o.onClick }}">{{ o.label }}</button></sc-for>
+      </div>
+    </div>
+    <div style="{{ groupStyle }}">
+      <span style="{{ groupLabelStyle }}">Phase</span>
+      <div style="{{ segWrapStyle }}">
+        <sc-for list="{{ phaseOpts }}" as="o" hint-placeholder-count="3"><button style="{{ o.style }}" onClick="{{ o.onClick }}">{{ o.label }}</button></sc-for>
+      </div>
+    </div>
+    <div style="{{ groupStyle }}">
+      <span style="{{ groupLabelStyle }}">Panels</span>
+      <div style="display:flex;gap:6px">
+        <sc-for list="{{ panelOpts }}" as="o" hint-placeholder-count="4"><button style="{{ o.style }}" onClick="{{ o.onClick }}">{{ o.label }}</button></sc-for>
+      </div>
+    </div>
+    <div style="{{ groupStyle }}">
+      <span style="{{ groupLabelStyle }}">Layout</span>
+      <button style="{{ editBtnStyle }}" onClick="{{ toggleEdit }}">{{ editBtnLabel }}</button>
+    </div>
+    <div style="font-size:12px;color:#6f5d3c;letter-spacing:.5px;margin-left:auto">Hover a leaderboard portrait to scout →</div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;skin&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;current&quot;,&quot;parchment&quot;,&quot;oak&quot;],&quot;default&quot;:&quot;oak&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;initialPhase&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;hero&quot;,&quot;combat&quot;,&quot;shop&quot;],&quot;default&quot;:&quot;combat&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;edit&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  constructor(props){
+    super(props);
+    this.state = {
+      skin: props.skin || 'oak',
+      game: props.initialPhase || 'combat',
+      edit: !!props.edit,
+      hover: null,
+      panels: { hud:true, board:true, buffs:true, leaderboard:true },
+    };
+  }
+
+  setSkin(s){ this.setState({ skin:s }); }
+  setGame(g){ this.setState({ game:g }); }
+  toggleEdit(){ this.setState(st => ({ edit:!st.edit })); }
+  lock(){ this.setState({ edit:false }); }
+  togglePanel(k){ this.setState(st => ({ panels:{ ...st.panels, [k]:!st.panels[k] } })); }
+  setHover(i){ if(!this.state.edit) this.setState({ hover:i }); }
+  clearHover(){ this.setState({ hover:null }); }
+
+  renderVals(){
+    const { skin, game, edit, hover, panels } = this.state;
+    const isCurrent = skin === 'current';
+    const isParch = skin === 'parchment';
+    const isRedesign = !isCurrent;
+    const combat = game === 'combat', shop = game === 'shop', heroSel = game === 'hero';
+
+    // ---------- static game data (real HearthstoneJSON card + hero ids) ----------
+    const HERO = id => 'https://art.hearthstonejson.com/v1/256x/' + id + '.jpg';
+    const playerHp = 18, tier = 3, turn = 7;
+    const odds = { w:63, t:9, l:28, dealt:14, taken:9 };
+    const oppHero = 'Tickatus', oppHp = 27, oppTier = 5;
+
+    const bDemons = [
+      { label:'Vulgar Homunculus', atk:2, hp:4, kw:'T', tint:'#b23a2e', art:'LOOT_013' },
+      { label:'Imp Gang Boss', atk:2, hp:4, kw:'', tint:'#b23a2e', art:'BRM_006' },
+      { label:'Voidwalker', atk:1, hp:3, kw:'T', tint:'#b23a2e', art:'CS2_065' },
+      { label:'Voidcaller', atk:3, hp:4, kw:'', tint:'#b23a2e', art:'GVG_021' },
+      { label:'Voidlord', atk:3, hp:9, kw:'T', tint:'#b23a2e', art:'LOOT_368' },
+      { label:"Mal'Ganis", atk:9, hp:7, kw:'', tint:'#8a6bc4', golden:true, art:'OG_122' },
+    ];
+    const bMechs = [
+      { label:'Harvest Golem', atk:2, hp:3, kw:'', tint:'#9fb0c0', art:'EX1_556' },
+      { label:'Security Rover', atk:2, hp:6, kw:'T', tint:'#9fb0c0', art:'BOT_312' },
+      { label:'Junkbot', atk:1, hp:5, kw:'', tint:'#9fb0c0', art:'GVG_106' },
+      { label:'Foe Reaper 4000', atk:6, hp:9, kw:'', tint:'#9fb0c0', golden:true, art:'GVG_113' },
+    ];
+    const bDragons = [
+      { label:'Cobalt Scalebane', atk:5, hp:5, kw:'', tint:'#d8a53a', art:'AT_072' },
+      { label:'Twilight Emissary', atk:4, hp:6, kw:'T', tint:'#d8a53a', art:'LOOT_357' },
+      { label:'Kalecgos', atk:4, hp:12, kw:'', tint:'#5a8fd8', art:'DAL_735' },
+      { label:'Alexstrasza', atk:8, hp:8, kw:'', tint:'#c0402e', art:'EX1_561' },
+      { label:'Deathwing', atk:12, hp:12, kw:'', tint:'#8a2e22', golden:true, art:'NEW1_030' },
+    ];
+    const bBeasts = [
+      { label:'Alleycat', atk:1, hp:1, kw:'', tint:'#7a5a2b', art:'CFM_315' },
+      { label:'Scavenging Hyena', atk:2, hp:2, kw:'', tint:'#7a5a2b', art:'EX1_531' },
+      { label:'Cave Hydra', atk:2, hp:4, kw:'', tint:'#7a5a2b', art:'LOE_050' },
+    ];
+
+    const slotsRaw = [
+      { place:1, hero:'Patchwerk',        heroId:'TB_BaconShop_HERO_34', hp:56, tint:'#9fb0c0', seen:{ turn:6, board:bMechs } },
+      { place:2, hero:'Deathwing',        heroId:'TB_BaconShop_HERO_52', hp:41, tint:'#8a2e22', seen:{ turn:6, board:bDragons } },
+      { place:3, hero:'Dinotamer Brann',  heroId:'TB_BaconShop_HERO_43', hp:18, you:true, tint:'#6b4ea0', seen:null },
+      { place:4, hero:'Tickatus',         heroId:'TB_BaconShop_HERO_94', hp:27, tint:'#b23a2e', seen:{ turn:5, board:bDemons } },
+      { place:5, hero:'A. F. Kay',        heroId:'TB_BaconShop_HERO_16', hp:22, tint:'#4c9c6b', seen:{ turn:5, board:bMechs } },
+      { place:6, hero:'Alexstrasza',      heroId:'TB_BaconShop_HERO_56', hp:15, tint:'#c0402e', seen:{ turn:4, board:bDragons } },
+      { place:7, hero:'Shudderwock',      heroId:'TB_BaconShop_HERO_23', hp:9,  tint:'#5aa6c4', seen:null },
+      { place:8, hero:'Captain Hooktusk', heroId:'TB_BaconShop_HERO_67', hp:4,  tint:'#9a4747', dead:true, seen:null },
+    ];
+
+    // ---------- palette ----------
+    const PAL = {
+      oak: {
+        panelBg:'linear-gradient(158deg,rgba(42,30,18,.94),rgba(20,13,7,.96))',
+        panelBorder:'1px solid rgba(212,175,55,.5)',
+        panelShadow:'0 12px 34px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06)',
+        radius:'12px', pad:'11px 13px',
+        ink:'#f1e4c8', dim:'#b39a6e', gold:'#f4d47a', rule:'rgba(212,175,55,.28)',
+        title:'#f4d47a', body:"'Alegreya Sans','Segoe UI',sans-serif",
+        win:'#7fca57', tie:'#e6b846', loss:'#e37a5c',
+      },
+      parchment: {
+        panelBg:'linear-gradient(180deg,#f4e9cd,#e3d2a8)',
+        panelBorder:'2px solid #b8935a',
+        panelShadow:'0 12px 26px rgba(52,34,12,.4),inset 0 1px 0 rgba(255,255,255,.5)',
+        radius:'10px', pad:'11px 13px',
+        ink:'#41301a', dim:'#7c6541', gold:'#8a5f1c', rule:'rgba(150,110,50,.4)',
+        title:'#6e4a17', body:"'Alegreya Sans','Segoe UI',sans-serif",
+        win:'#3f7d2a', tie:'#946213', loss:'#a5301c',
+      },
+      current: {
+        panelBg:'rgba(15,18,24,.82)', panelBorder:'none', panelShadow:'none',
+        radius:'10px', pad:'12px 16px',
+        ink:'#e8e8e8', dim:'#9a9a9a', gold:'#7fd0ff', rule:'transparent',
+        title:'#7fd0ff', body:"'Cantarell','Ubuntu','Noto Sans',system-ui,sans-serif",
+        win:'#6fd66f', tie:'#d6c96f', loss:'#d66f6f',
+      },
+    };
+    const P = PAL[skin];
+    const editB = edit ? { border: isCurrent ? '2px dashed rgba(127,208,255,.9)' : '2px dashed rgba(244,212,122,.9)' } : {};
+    const panelBase = () => ({ background:P.panelBg, border:P.panelBorder, boxShadow:P.panelShadow,
+      borderRadius:P.radius, padding:P.pad, color:P.ink, fontFamily:P.body, boxSizing:'border-box' });
+
+    // ---------- visibility ----------
+    const showHud = panels.hud;
+    const showBoard = panels.board && (edit || combat);
+    const showBuffs = panels.buffs && (edit || combat || shop);
+    const showRail = panels.leaderboard;
+    const showRoundel = combat || shop;
+    const showOdds = combat;
+    const showStatusSub = (heroSel || shop) && showRoundel;
+    const showStatusNoRoundel = heroSel;
+    const hoverActive = hover != null && showRail;
+
+    // ---------- panel geometry ----------
+    const stageStyle = { position:'relative', width:'1180px', height:'707px', flex:'0 0 auto',
+      borderRadius:'14px', overflow:'hidden', backgroundImage:"url('ref/tavern-bg.png')",
+      backgroundSize:'cover', backgroundPosition:'center',
+      boxShadow:'0 24px 60px rgba(0,0,0,.6),0 0 0 1px rgba(212,175,55,.22)' };
+
+    const hudStyle = { ...panelBase(), ...editB, position:'absolute', top:'14px', right:'16px', width:'300px' };
+    const boardStyle = { ...panelBase(), ...editB, position:'absolute', top:'12px', left:'50%', transform:'translateX(-50%)', maxWidth:'640px' };
+    const buffsStyle = { ...panelBase(), ...editB, position:'absolute', top:'14px', left:'112px', width:'176px' };
+    const hoverStyle = { ...panelBase(), ...editB, position:'absolute', top:'236px', left:'118px', maxWidth:'560px', animation:'popin .16s ease-out' };
+
+    const railStyle = { position:'absolute', top:'58px', left:'12px', width:'98px',
+      display:'flex', flexDirection:'column', gap: isCurrent ? '10px' : '5px',
+      padding: isRedesign ? '8px 6px' : '0',
+      background: isRedesign ? 'linear-gradient(160deg,rgba(24,16,9,.72),rgba(14,9,5,.78))' : 'transparent',
+      border: isRedesign ? '1px solid rgba(212,175,55,.3)' : 'none',
+      borderRadius: isRedesign ? '11px' : '0',
+      boxShadow: isRedesign ? '0 10px 26px rgba(0,0,0,.5)' : 'none' };
+
+    // shared bits
+    const gripStyle = { fontSize: isCurrent ? '12px' : '11px', fontWeight:'700',
+      color: isCurrent ? '#7fd0ff' : '#f4d47a', letterSpacing: isCurrent ? '0' : '1.5px',
+      textTransform: isCurrent ? 'none' : 'uppercase', marginBottom:'6px',
+      fontFamily: isCurrent ? P.body : "'Alegreya Sans',sans-serif" };
+    const panelTitleStyle = { fontFamily:"'Cinzel',serif", fontWeight:'700', fontSize:'12.5px',
+      letterSpacing:'1.6px', textTransform:'uppercase', color:P.title,
+      textShadow: isRedesign && !isParch ? '0 1px 2px rgba(0,0,0,.6)' : 'none' };
+    const tileRowStyle = { display:'flex', gap:'6px', marginTop:'8px', justifyContent:'center' };
+    const curLineStyle = { fontSize:'13px', color:P.ink, fontFamily:P.body };
+
+    // HUD redesign
+    const hudHeadRow = { display:'flex', justifyContent:'space-between', alignItems:'baseline' };
+    const hudMetaStyle = { fontSize:'11.5px', color:P.dim, letterSpacing:'.4px', fontWeight:'500' };
+    const hudDivider = { height:'1px', background:P.rule, margin:'8px 0 0' };
+    const roundelStyle = { width:'58px', height:'58px', borderRadius:'50%', flex:'0 0 auto',
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+      background: isParch ? 'radial-gradient(circle at 50% 34%,#fbf3dc,#e6d3aa)' : 'radial-gradient(circle at 50% 34%,#2a1d10,#120c06)',
+      border: isParch ? '2px solid #b8935a' : '2px solid #d4af37',
+      animation: (!isParch && combat) ? 'turnpulse 2.4s ease-in-out infinite' : 'none',
+      boxShadow: isParch ? 'inset 0 1px 3px rgba(255,255,255,.6),0 2px 6px rgba(80,55,20,.35)' : 'inset 0 0 9px rgba(0,0,0,.65)' };
+    const roundelNumStyle = { fontFamily:"'Cinzel',serif", fontWeight:'800', fontSize:'23px', lineHeight:'.9',
+      color: isParch ? '#5a3f1c' : '#f4d47a' };
+    const roundelCapStyle = { fontSize:'7.5px', letterSpacing:'2px', color:P.dim, marginTop:'2px', fontWeight:'700' };
+    const oddsNum = (c) => ({ fontFamily:"'Cinzel',serif", fontWeight:'800', fontSize:'21px', lineHeight:'1', color:c });
+    const oddsWinNum = oddsNum(P.win), oddsTieNum = oddsNum(P.tie), oddsLossNum = oddsNum(P.loss);
+    const oddsCapStyle = { fontSize:'8px', letterSpacing:'1.5px', color:P.dim, fontWeight:'700', marginTop:'3px' };
+    const barTrackStyle = { display:'flex', height:'9px', marginTop:'8px', borderRadius:'5px', overflow:'hidden',
+      border:'1px solid '+(isParch?'rgba(150,110,50,.5)':'rgba(212,175,55,.45)'),
+      boxShadow:'inset 0 1px 2px rgba(0,0,0,.4)' };
+    const barWinStyle = { width:odds.w+'%', background:'linear-gradient(180deg,#8ed36a,#57a038)' };
+    const barTieStyle = { width:odds.t+'%', background:'linear-gradient(180deg,#f0c85a,#cf9a1f)' };
+    const barLossStyle = { width:odds.l+'%', background:'linear-gradient(180deg,#dd6f52,#a83220)' };
+    const statusSubStyle = { fontSize:'14px', color:P.ink, fontFamily:P.body, lineHeight:'1.3' };
+    const dmgPill = (bg,bd) => ({ display:'flex', alignItems:'center', gap:'4px', fontSize:'12px', fontWeight:'600',
+      padding:'3px 9px', borderRadius:'20px', background:bg, border:'1px solid '+bd, color:P.ink });
+    const dmgDealStyle = dmgPill(isParch?'rgba(63,125,42,.14)':'rgba(126,202,87,.14)', isParch?'rgba(63,125,42,.5)':'rgba(126,202,87,.4)');
+    const dmgTakeStyle = dmgPill(isParch?'rgba(165,48,28,.12)':'rgba(227,122,92,.14)', isParch?'rgba(165,48,28,.5)':'rgba(227,122,92,.4)');
+    const dmgArrowUp = { color:P.win, fontSize:'10px' };
+    const dmgArrowDn = { color:P.loss, fontSize:'10px' };
+    const dmgWordStyle = { color:P.dim, fontWeight:'500' };
+
+    const phaseTitle = heroSel ? 'Hero Select' : combat ? 'Combat Forecast' : 'Recruit Phase';
+    const hudMeta = combat ? (playerHp+' HP · vs '+oppHero) : (playerHp+' HP · Tavern '+tier);
+    const statusSub = heroSel ? 'Waiting — choose your hero' : ('Recruiting · '+playerHp+' HP · Tavern '+tier);
+    const statusCur = heroSel ? 'game started — pick a hero' : combat ? ('combat — turn '+turn) : ('shopping — HP '+playerHp+', tier '+tier);
+
+    // Board
+    const boardHeadRow = { display:'flex', alignItems:'baseline', gap:'10px', justifyContent:'center' };
+    const boardSubStyle = { fontSize:'12px', color:P.dim };
+    const boardSub = oppHero+' · '+oppHp+' HP · Tavern '+oppTier;
+    const boardLineCur = 'vs '+oppHero+' — HP '+oppHp+'+0, tier '+oppTier;
+    const oppBoard = bDemons;
+
+    // Buffs
+    const buffsRaw = [ { label:'Blood Gem', a:2, h:2, dot:'#d0555f' }, { label:'Elemental', a:4, h:3, dot:'#3fb0c9' } ];
+    const buffs = buffsRaw.map(b => ({ label:b.label, val:'+'+b.a+'/+'+b.h,
+      dotStyle:{ width:'8px', height:'8px', borderRadius:'50%', background:b.dot, flex:'0 0 auto',
+        boxShadow:'0 0 5px '+b.dot } }));
+    const spells = ['Recycle', 'Tavern Coin'];
+    const buffChipStyle = { display:'flex', alignItems:'center', gap:'7px', fontSize:'12.5px' };
+    const buffLabelStyle = { color:P.ink, fontWeight:'600', flex:'1' };
+    const buffValStyle = { fontFamily:"'Cinzel',serif", fontWeight:'700', fontSize:'12.5px', color:P.gold };
+    const spellChipStyle = { display:'flex', alignItems:'center', gap:'6px', fontSize:'12.5px', color: isParch?'#2f6a86':'#8fd0e6', fontWeight:'600' };
+    const spellMarkStyle = { color: isParch?'#2f6a86':'#8fd0e6' };
+
+    // Leaderboard slots
+    const slots = slotsRaw.map((e, i) => {
+      const hot = hover === i;
+      const you = !!e.you, dead = !!e.dead;
+      const orb = { width:'40px', height:'40px', borderRadius:'50%', flex:'0 0 auto', position:'relative',
+        background:`radial-gradient(circle at 38% 30%, rgba(255,255,255,.4), ${e.tint} 55%, rgba(0,0,0,.6))`,
+        border: you ? '2px solid #f4d47a' : '2px solid rgba(0,0,0,.5)',
+        boxShadow: you ? '0 0 10px rgba(244,212,122,.7)' : (hot ? '0 0 9px rgba(244,212,122,.6)' : 'inset 0 -3px 6px rgba(0,0,0,.45)'),
+        opacity: dead ? .5 : 1 };
+      const orbImg = { position:'absolute', top:0, left:0, width:'100%', height:'100%',
+        objectFit:'cover', objectPosition:'center 26%', borderRadius:'50%',
+        filter: dead ? 'grayscale(1)' : 'none' };
+      const placeStyle = { position:'absolute', bottom:'-5px', left:'-5px', zIndex:2,
+        minWidth:'17px', height:'17px', padding:'0 4px', borderRadius:'9px',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        fontFamily:"'Cinzel',serif", fontWeight:'800', fontSize:'10.5px',
+        background: you ? 'linear-gradient(180deg,#f6e07f,#c9992f)' : 'rgba(12,8,4,.92)',
+        color: you ? '#2a1c07' : '#f2e2b6', border:'1px solid rgba(0,0,0,.55)',
+        boxShadow:'0 1px 3px rgba(0,0,0,.6)' };
+      const wrap = { display:'flex', alignItems:'center', gap:'8px', padding:'4px 7px', borderRadius:'9px', cursor:'pointer',
+        background: hot ? 'rgba(244,212,122,.18)' : 'transparent',
+        borderLeft: hot ? '3px solid #f4d47a' : '3px solid transparent',
+        transition:'background .12s' };
+      const hpStyle = { flex:'1', textAlign:'right', fontSize:'12px', fontWeight:'700',
+        fontFamily:"'Alegreya Sans',sans-serif",
+        color: you ? '#f4d47a' : (dead ? '#c07a7a' : '#c9b892'),
+        textDecoration: dead ? 'line-through' : 'none', textShadow:'0 1px 2px rgba(0,0,0,.85)' };
+      const hpText = you ? 'YOU' : (''+e.hp);
+      // current-skin faint hover box (matches hover_debug draw)
+      const boxCur = { height:'44px', borderRadius:'2px', cursor:'pointer', position:'relative',
+        background: hot ? 'rgba(255,90,90,.30)' : 'rgba(255,64,64,.15)',
+        border:'1.5px solid rgba(255,90,90,.78)' };
+      const boxNum = { position:'absolute', top:'2px', left:'4px', fontSize:'10px', fontWeight:'700',
+        color:'rgba(255,210,210,.85)', fontFamily:P.body };
+      return { ...e, place:e.place, art:HERO(e.heroId), hasArt:!!e.heroId, orbImg, hpText, wrap, orb, placeStyle, hpStyle, boxCur, boxNum,
+        onEnter:()=>this.setHover(i), onLeave:()=>this.clearHover() };
+    });
+
+    // hover popout content
+    const he = hoverActive ? slotsRaw[hover] : null;
+    const hoverHasBoard = !!(he && he.seen && he.seen.board);
+    const hoverBoard = hoverHasBoard ? he.seen.board : [];
+    const hoverTitle = he ? he.hero : '';
+    const hoverSub = he ? (he.seen ? ('last seen · turn '+he.seen.turn) : (he.you ? 'this is you' : 'not scouted yet')) : '';
+    const hoverLineCur = he ? ('#'+he.place+' '+he.hero+' — '+(he.seen ? 'last seen turn '+he.seen.turn : (he.you?'(you)':'not fought yet'))) : '';
+    const hoverHeadRow = { display:'flex', alignItems:'center', gap:'10px' };
+    const hoverOrb = he ? { position:'relative', width:'38px', height:'38px', borderRadius:'50%', flex:'0 0 auto',
+      background:`radial-gradient(circle at 38% 32%, rgba(255,255,255,.4), ${he.tint} 55%, rgba(0,0,0,.6))`,
+      border:'2px solid rgba(0,0,0,.45)', boxShadow:'inset 0 -2px 5px rgba(0,0,0,.4)' } : {};
+    const hoverHasArt = !!(he && he.heroId);
+    const hoverArt = he && he.heroId ? HERO(he.heroId) : '';
+    const hoverOrbImg = { position:'absolute', top:0, left:0, width:'100%', height:'100%',
+      objectFit:'cover', objectPosition:'center 26%', borderRadius:'50%',
+      filter: (he && he.dead) ? 'grayscale(1)' : 'none' };
+    const hoverTitleStyle = { fontFamily:"'Cinzel',serif", fontWeight:'700', fontSize:'14px', color:P.title, lineHeight:'1' };
+    const hoverSubStyle = { fontSize:'11.5px', color:P.dim, marginTop:'3px' };
+    const hoverNotch = { position:'absolute', left:'-8px', top:'22px', width:'0', height:'0',
+      borderTop:'8px solid transparent', borderBottom:'8px solid transparent',
+      borderRight:'8px solid '+(isParch?'#e3d2a8':(isCurrent?'rgba(15,18,24,.82)':'rgba(30,20,11,.95)')) };
+
+    // Lock button
+    const lockStyle = isCurrent
+      ? { position:'absolute', bottom:'14px', left:'50%', transform:'translateX(-50%)', cursor:'pointer',
+          background:'rgba(30,120,200,.96)', color:'#fff', border:'none', borderRadius:'8px',
+          padding:'8px 16px', fontWeight:'700', fontSize:'14px', fontFamily:P.body }
+      : { position:'absolute', bottom:'14px', left:'50%', transform:'translateX(-50%)', cursor:'pointer',
+          background:'linear-gradient(180deg,#f6e07f,#d4af37 55%,#a97e1f)', color:'#3a2708',
+          border:'1px solid #7a5a1e', borderRadius:'9px', padding:'8px 18px', fontWeight:'800',
+          fontSize:'13px', letterSpacing:'.5px', fontFamily:"'Cinzel',serif",
+          boxShadow:'0 6px 16px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.5)' };
+
+    // ---------- control dock ----------
+    const dockStyle = { width:'1180px', display:'flex', flexWrap:'wrap', alignItems:'center', gap:'18px',
+      padding:'14px 20px', borderRadius:'14px',
+      background:'linear-gradient(180deg,#181209,#100b06)', border:'1px solid rgba(212,175,55,.24)',
+      boxShadow:'0 14px 30px rgba(0,0,0,.45)' };
+    const groupStyle = { display:'flex', alignItems:'center', gap:'9px' };
+    const groupLabelStyle = { fontSize:'10px', fontWeight:'700', letterSpacing:'1.5px', textTransform:'uppercase', color:'#8b744a' };
+    const segWrapStyle = { display:'flex', background:'rgba(0,0,0,.35)', borderRadius:'9px', padding:'3px',
+      border:'1px solid rgba(212,175,55,.2)' };
+    const segBtn = (active) => ({ cursor:'pointer', border:'none', borderRadius:'7px', padding:'6px 12px',
+      fontSize:'12.5px', fontWeight:'700', fontFamily:"'Alegreya Sans',sans-serif", letterSpacing:'.3px',
+      background: active ? 'linear-gradient(180deg,#f6e07f,#d4af37 60%,#b0842a)' : 'transparent',
+      color: active ? '#3a2708' : '#a8916a', transition:'all .12s',
+      boxShadow: active ? '0 2px 6px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.4)' : 'none' });
+    const pillBtn = (active) => ({ cursor:'pointer', borderRadius:'20px', padding:'6px 13px', fontSize:'12.5px',
+      fontWeight:'700', fontFamily:"'Alegreya Sans',sans-serif",
+      background: active ? 'rgba(244,212,122,.18)' : 'rgba(255,255,255,.03)',
+      color: active ? '#f4d47a' : '#8a7a5a',
+      border:'1px solid '+(active ? 'rgba(244,212,122,.6)' : 'rgba(255,255,255,.09)'), transition:'all .12s' });
+
+    const skinOpts = [
+      { k:'current', label:'Before (current)' }, { k:'parchment', label:'Parchment' }, { k:'oak', label:'Dark Oak' },
+    ].map(o => ({ label:o.label, style:segBtn(skin===o.k), onClick:()=>this.setSkin(o.k) }));
+    const phaseOpts = [
+      { k:'hero', label:'Hero Select' }, { k:'combat', label:'Combat' }, { k:'shop', label:'Shopping' },
+    ].map(o => ({ label:o.label, style:segBtn(game===o.k), onClick:()=>this.setGame(o.k) }));
+    const panelOpts = [
+      { k:'hud', label:'HUD' }, { k:'board', label:'Board' }, { k:'buffs', label:'Buffs' }, { k:'leaderboard', label:'Leaderboard' },
+    ].map(o => ({ label:o.label, style:pillBtn(panels[o.k]), onClick:()=>this.togglePanel(o.k) }));
+    const editBtnStyle = pillBtn(edit);
+    const editBtnLabel = edit ? '✔ Layout mode on' : 'Edit layout';
+
+    return {
+      skin, isCurrent, isParch, isRedesign, turn, odds,
+      showHud, showBoard, showBuffs, showRail, showRoundel, showOdds, showStatusSub, showStatusNoRoundel, hoverActive, editMode:edit,
+      stageStyle, hudStyle, boardStyle, buffsStyle, hoverStyle, railStyle,
+      gripStyle, panelTitleStyle, tileRowStyle, curLineStyle,
+      hudHeadRow, hudMetaStyle, hudDivider, roundelStyle, roundelNumStyle, roundelCapStyle,
+      oddsWinNum, oddsTieNum, oddsLossNum, oddsCapStyle, barTrackStyle, barWinStyle, barTieStyle, barLossStyle,
+      statusSubStyle, dmgDealStyle, dmgTakeStyle, dmgArrowUp, dmgArrowDn, dmgWordStyle,
+      phaseTitle, hudMeta, statusSub, statusCur,
+      boardHeadRow, boardSubStyle, boardSub, boardLineCur, oppBoard,
+      buffs, spells, buffChipStyle, buffLabelStyle, buffValStyle, spellChipStyle, spellMarkStyle,
+      slots, hoverBoard, hoverHasBoard, hoverTitle, hoverSub, hoverLineCur, hoverHeadRow, hoverOrb,
+      hoverHasArt, hoverArt, hoverOrbImg, hoverTitleStyle, hoverSubStyle, hoverNotch,
+      lockStyle, lock:()=>this.lock(),
+      dockStyle, groupStyle, groupLabelStyle, segWrapStyle, skinOpts, phaseOpts, panelOpts,
+      editBtnStyle, editBtnLabel, toggleEdit:()=>this.toggleEdit(),
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -54,6 +54,24 @@ def _board(board: PlayerBoard, friendly: bool) -> dict:
     }
     if board.global_info:
         player["globalInfo"] = board.global_info
+    # Start-of-combat cards act from hand (Flighty Scout summons itself,
+    # Diremuck Forager pulls Murlocs out), so a hand-based build reads as a
+    # near-certain loss without this. Only ever set for the friendly board —
+    # the opponent's hand is hidden, so it projects empty.
+    if board.hand:
+        player["hand"] = [_entity(m, friendly) for m in board.hand]
+    # Equipped trinkets. Most are economy effects the simulator ignores, but
+    # some act at the start of combat. Visible for both players.
+    if board.trinkets:
+        player["trinkets"] = [
+            {
+                "cardId": t.card_id,
+                "entityId": t.entity_id,
+                "scriptDataNum1": t.num1,
+                "scriptDataNum2": t.num2,
+            }
+            for t in board.trinkets
+        ]
     return {
         "player": player,
         "board": [_entity(m, friendly) for m in board.minions],

@@ -12,6 +12,7 @@ the entity tree at the 1->2 transition, which is when we snapshot.
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -37,6 +38,32 @@ BOB_HERO_ID = "TB_BaconShopBob"
 SHOP = 1
 COMBAT = 2
 
+# Hero tags that move a player's leaderboard HP.
+_HERO_HP_TAGS = frozenset({GameTag.HEALTH, GameTag.DAMAGE, GameTag.ARMOR})
+
+# Tags that can change what the friendly board looks like during the shop —
+# buying, selling, repositioning, and every buff that lands on a minion.
+# Projecting the board walks the whole entity tree, which is far too expensive
+# to do per packet, so this narrows it to packets that could plausibly matter
+# and the projection then confirms whether anything really changed.
+_SHOP_BOARD_TAGS = frozenset({
+    GameTag.ZONE, GameTag.ZONE_POSITION, GameTag.ATK, GameTag.HEALTH,
+    GameTag.DAMAGE, GameTag.ATTACHED, GameTag.TAUNT, GameTag.DIVINE_SHIELD,
+    GameTag.POISONOUS, GameTag.VENOMOUS, GameTag.WINDFURY, GameTag.MEGA_WINDFURY,
+    GameTag.REBORN, GameTag.STEALTH, GameTag.PREMIUM, GameTag.TECH_LEVEL,
+})
+
+# Power.log carries two streams. GameState is the authoritative game state and
+# is what hslog parses; it flips out of combat about a second after flipping
+# in, because that is how long the engine takes to resolve the fight.
+# PowerTaskList is the client's animation queue — its flip back to shop is when
+# the player actually stops watching the battle (median 23s later, up to 48s).
+# Nothing the player looks at should be driven by the GameState timing.
+_ANIMATION_SHOP = re.compile(
+    r"PowerTaskList\.DebugPrintPower\(\).*"
+    r"TAG_CHANGE Entity=GameEntity tag=BOARD_VISUAL_STATE value=1"
+)
+
 
 class BGExporter(EntityTreeExporter):
     """EntityTreeExporter that emits BG events as tag changes stream in."""
@@ -53,6 +80,11 @@ class BGExporter(EntityTreeExporter):
         self._end_emitted = False
         self._standings_dirty = False
         self._standings: tuple = ()
+        # Elimination is permanent, but a Kel'Thuzad ghost fight reuses the
+        # dead player's hero entity and can reset its HP — latch deaths here.
+        self._dead_player_ids: set[int] = set()
+        self._shop_dirty = False
+        self._shop_board = None
         # (entries, spells) — seeded empty so the first read of an unbuffed
         # player doesn't look like a change and emit a no-op Buffs event.
         self._buffs: tuple = ((), ())
@@ -113,6 +145,25 @@ class BGExporter(EntityTreeExporter):
             self._pending_combat = False
             self._emit(ev.CombatStart(snapshot=snap))
 
+    def maybe_emit_shop_board(self):
+        """Friendly board during the shop, so odds can follow what you build.
+
+        The dirty flag narrows the work to packets that could have changed the
+        board; the projection then decides whether anything actually did. Both
+        gates matter — the flag keeps this off the per-packet hot path, and the
+        comparison keeps a redundant tag write from triggering a re-simulation.
+        """
+        if not self._shop_dirty or self._board_state != SHOP:
+            return
+        self._shop_dirty = False
+        fid = self.friendly_player_id()
+        if fid is None:
+            return
+        board = project_player_board(self.game, fid)
+        if board is not None and board != self._shop_board:
+            self._shop_board = board
+            self._emit(ev.ShopBoard(board=board, turn=self._turn))
+
     def maybe_emit_buffs(self):
         fid = self.friendly_player_id()
         if fid is None:
@@ -153,9 +204,11 @@ class BGExporter(EntityTreeExporter):
                     # The opponent's board may materialize a few packets after
                     # the flag flips; emission is deferred until it exists.
                     self._pending_combat = True
+                    self._shop_board = None   # next shop phase re-reports fresh
                     self.maybe_emit_combat()
                 elif value == SHOP:
                     self._pending_combat = False
+                    self._shop_dirty = True
                     self._emit(ev.CombatEnd(snapshot=self.snapshot()))
             elif gametag == GameTag.STATE and value == State.COMPLETE and not self._ended:
                 # Placement tags land a few packets AFTER the COMPLETE state;
@@ -168,13 +221,24 @@ class BGExporter(EntityTreeExporter):
             self._standings_dirty = True
             if self._ended:
                 self._maybe_emit_end()
+        elif gametag in _HERO_HP_TAGS and getattr(entity, "type", None) == CardType.HERO:
+            # The rail shows live HP, which changes far more often than a
+            # player's place. maybe_emit_standings() dedupes, so flagging on
+            # every hero HP tick costs nothing but keeps the numbers current.
+            self._standings_dirty = True
+
+        # Deliberately outside the chain above: HEALTH already belongs to the
+        # hero branch, and a minion buff must still flag the board as stale.
+        if self._board_state == SHOP and gametag in _SHOP_BOARD_TAGS:
+            self._shop_dirty = True
         return entity
 
     def maybe_emit_standings(self):
         if not self._standings_dirty:
             return
         self._standings_dirty = False
-        places: dict[int, tuple[int, int, str | None]] = {}
+        friendly = self.friendly_player_id()
+        places: dict[int, ev.Standing] = {}
         for entity in self.game.entities:
             if not isinstance(entity, Card) or entity.type != CardType.HERO:
                 continue
@@ -183,8 +247,33 @@ class BGExporter(EntityTreeExporter):
             place = tag(entity, GameTag.PLAYER_LEADERBOARD_PLACE)
             if place:
                 # PLAYER_ID is the stable per-player identity; the controller
-                # is a shared slot. Newest entity wins (ghost copies linger).
-                places[place] = (place, tag(entity, GameTag.PLAYER_ID), entity.card_id)
+                # is a shared slot. Newest entity wins (ghost copies linger) —
+                # except that duplicate hero entities with no PLAYER_ID at all
+                # accumulate in GRAVEYARD with a stale place tag, and one of
+                # those must never displace an identified player's row.
+                player_id = tag(entity, GameTag.PLAYER_ID)
+                prev = places.get(place)
+                if prev is not None and prev.player_id and not player_id:
+                    continue
+                health = tag(entity, GameTag.HEALTH) - tag(entity, GameTag.DAMAGE)
+                # Alive opponents' heroes rest in SETASIDE — only the current
+                # pairing is in PLAY — so "not in PLAY" is where you sit
+                # between fights, not death. Elimination reads as hp<=0
+                # (where dead heroes reliably land) or GRAVEYARD, and is then
+                # latched: a ghost fight can hand the entity full HP back.
+                dead = health <= 0 or tag(entity, GameTag.ZONE) == Zone.GRAVEYARD
+                if dead and player_id:
+                    self._dead_player_ids.add(player_id)
+                dead = dead or player_id in self._dead_player_ids
+                places[place] = ev.Standing(
+                    place=place,
+                    player_id=player_id,
+                    hero_card_id=entity.card_id,
+                    health=health,
+                    armor=tag(entity, GameTag.ARMOR),
+                    dead=dead,
+                    you=bool(friendly) and tag(entity, GameTag.CONTROLLER) == friendly,
+                )
         standings = tuple(places[p] for p in sorted(places))
         if standings and standings != self._standings:
             self._standings = standings
@@ -243,11 +332,14 @@ class LiveGameProcessor:
     _queue: deque = field(default_factory=deque)
 
     def feed(self, lines: list[str]) -> list[ev.Event]:
+        shop_ready = 0
         for line in lines:
             # Non-log content (blank lines, truncation banners) has no
             # "D hh:mm:ss" prefix — skip it without ceremony.
             if not line or line[0] not in "DWE" or len(line) < 2 or line[1] != " ":
                 continue
+            if _ANIMATION_SHOP.search(line):
+                shop_ready += 1
             # A session log holds many games, but hslog's player registry
             # chokes when battletags reappear with new player ids. Each
             # CREATE_GAME gets a completely fresh parser instead. Check
@@ -263,7 +355,12 @@ class LiveGameProcessor:
                 self.parser.read_line(line)
             except Exception:
                 log.exception("parser choked on line: %r", line[:200])
-        return self._drain()
+        out = self._drain()
+        # Appended after the batch's parsed events so a combat's resolution
+        # always precedes its animation finishing. A live poll covers a
+        # fraction of a second, so nothing else can slip between them.
+        out.extend(ev.ShopReady() for _ in range(shop_ready))
+        return out
 
     def _register_and_advance(self) -> None:
         for pt in self.parser.games[len(self._tracks):]:
@@ -309,6 +406,7 @@ class LiveGameProcessor:
                 track.exporter.maybe_emit_combat()
                 track.exporter.maybe_emit_standings()
                 track.exporter.maybe_emit_buffs()
+                track.exporter.maybe_emit_shop_board()
 
     @staticmethod
     def _is_complete(packet, is_last: bool) -> bool:

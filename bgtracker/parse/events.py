@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bgtracker.state.game import BoardSnapshot
+from bgtracker.state.game import BoardSnapshot, PlayerBoard
 
 
 @dataclass(frozen=True)
@@ -36,15 +36,96 @@ class CombatEnd:
 
 
 @dataclass(frozen=True)
+class CombatForecast:
+    """A provisional forecast for a fight already in progress.
+
+    Raised repeatedly as a run tightens, before the `CombatStart` that carries
+    the final numbers. Purely a display refresh — nothing durable should be
+    derived from it, because the figures are still moving.
+    """
+
+    snapshot: BoardSnapshot
+
+
+@dataclass(frozen=True)
+class CombatResult:
+    """How the fight the tracker just forecast actually went.
+
+    Derived by the pipeline from the HP swing across the combat, not parsed —
+    it exists so the overlay can show the forecast against what happened
+    instead of the forecast alone. Raised alongside `CombatEnd`, which means it
+    arrives while the player is still watching the battle animate: whoever
+    displays it must hold it until `ShopReady`.
+    """
+
+    turn: int
+    outcome: str | None      # 'win' | 'tie' | 'loss' | 'ghost' | None (unknown)
+    damage: int = 0          # HP that actually changed hands
+
+
+@dataclass(frozen=True)
+class ShopReady:
+    """The combat animation finished and the player is back at the shop.
+
+    CombatEnd fires when the engine has *resolved* the fight, which happens
+    about a second after it starts; the client then spends 20-45s animating
+    it. Anything the player looks at — the phase title, the odds — must follow
+    this event instead, or it changes while they are still watching the fight.
+    """
+
+
+@dataclass(frozen=True)
+class ShopBoard:
+    """The friendly board changed during the recruit phase.
+
+    Emitted only when the projection actually differs from the last one, so a
+    consumer can treat every one of these as a real change.
+    """
+
+    board: PlayerBoard
+    turn: int
+
+
+@dataclass(frozen=True)
+class ShopForecast:
+    """Odds against the next opponent's last-seen board, from the shop.
+
+    A guess, and labelled as one: the opponent goes on buying after you last
+    saw them, so `seen_turn` is how stale the board behind this number is.
+    """
+
+    opponent_id: int
+    seen_turn: int
+    turn: int
+
+
+@dataclass(frozen=True)
 class NextOpponent:
     player_id: int
 
 
 @dataclass(frozen=True)
-class Standings:
-    """Current leaderboard order: (place, player_id, hero_card_id) tuples."""
+class Standing:
+    """One player's row on the leaderboard."""
 
-    places: tuple[tuple[int, int, str | None], ...]
+    place: int
+    player_id: int          # hero PLAYER_ID tag — the stable per-player identity
+    hero_card_id: str | None
+    health: int = 0
+    armor: int = 0
+    dead: bool = False
+    you: bool = False
+
+    @property
+    def total_health(self) -> int:
+        return self.health + self.armor
+
+
+@dataclass(frozen=True)
+class Standings:
+    """Current leaderboard order, best place first."""
+
+    places: tuple[Standing, ...]
 
 
 @dataclass(frozen=True)
@@ -69,7 +150,12 @@ Event = (
     | HeroPicked
     | TurnChange
     | CombatStart
+    | CombatForecast
     | CombatEnd
+    | CombatResult
+    | ShopReady
+    | ShopBoard
+    | ShopForecast
     | NextOpponent
     | Standings
     | GameEnd
