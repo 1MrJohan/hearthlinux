@@ -95,3 +95,21 @@ def test_panels_are_padded_but_the_gear_is_not():
     panel = win._input_rects()[0]
     assert panel[2] > 300, "panels get a margin of error for grabbing"
     assert (1278, 74, 22, 22) in win._input_rects()
+
+
+def test_window_constructs_for_real():
+    """__init__ must run end to end — the __new__-based tests above cannot see
+    attribute-order bugs (e.g. _set_content reaching gear_btn before it exists),
+    which take the whole overlay down at launch."""
+    from gi.repository import Gtk
+    from gi.repository import Gtk4LayerShell as LayerShell
+
+    if not LayerShell.is_supported():
+        pytest.skip("no layer-shell compositor (headless run)")
+    if not Gtk.init_check():
+        pytest.skip("no display")
+    win = OverlayWindow(application=None, on_settings=lambda: None)
+    try:
+        assert win.gear_btn is not None
+    finally:
+        win.destroy()

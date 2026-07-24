@@ -149,12 +149,9 @@ class OverlayWindow(Gtk.Window):
             self._pos[name] = [x, y]
             self.canvas.put(self._panels[name], x, y)
 
-        # hud always shows; the rest only when they have something (or edit)
-        self._set_content("hud", True)
-        for name in ("board", "next", "hover", "buffs", "rail"):
-            self._set_content(name, False)
-
         # -- gear: the only pixels on a locked overlay that take a click ----
+        # Built before the first _set_content: that path re-places the gear,
+        # so the attribute must exist by then.
         self.gear_btn: Gtk.Button | None = None
         self._gear_pos = (0, 0)
         if on_settings is not None:
@@ -163,6 +160,11 @@ class OverlayWindow(Gtk.Window):
             self.gear_btn.set_tooltip_text("Tracker settings")
             self.gear_btn.connect("clicked", lambda _b: self._on_settings())
             self.canvas.put(self.gear_btn, 0, 0)
+
+        # hud always shows; the rest only when they have something (or edit)
+        self._set_content("hud", True)
+        for name in ("board", "next", "hover", "buffs", "rail"):
+            self._set_content(name, False)
 
         if self.edit:
             self._add_lock_button()
