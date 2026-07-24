@@ -97,6 +97,9 @@ class SettingsWindow(Gtk.ApplicationWindow):
         heading = Gtk.Label(label="Tracker Settings")
         heading.set_ellipsize(Pango.EllipsizeMode.NONE)
         header.set_title_widget(heading)
+        history = _button("Match History")
+        history.connect("clicked", self._open_history)
+        header.pack_start(history)
         self.set_titlebar(header)
 
         self.stack = Gtk.Stack()
@@ -543,6 +546,13 @@ class SettingsWindow(Gtk.ApplicationWindow):
 
     def _confirm_history(self) -> None:
         HistoryResetDialog(self, self.settings, self._on_reset_history).present()
+
+    def _open_history(self, _button) -> None:
+        # Imported here: the history window pulls in the review queries, which
+        # nothing else in the settings path needs.
+        from bgtracker.overlay.history_window import HistoryWindow
+
+        HistoryWindow.open(self.get_application())
 
     # -- teardown --------------------------------------------------------
     def _on_close(self, *_):

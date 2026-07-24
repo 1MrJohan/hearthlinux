@@ -41,6 +41,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m bgtracker resim 40              # re-simulate stored combats (regression harness)
 .venv/bin/python -m bgtracker doctor                # diagnose the pipeline end to end
 .venv/bin/python -m bgtracker settings              # settings window, standalone
+.venv/bin/python -m bgtracker history               # match history & MMR review window
 .venv/bin/python -m bgtracker mmr 8421              # record a rating reading by hand
 .venv/bin/python -m bgtracker --replay FILE --odds  # replay a saved Power.log
 .venv/bin/python -m bgtracker --no-names            # skip the card-name DB download

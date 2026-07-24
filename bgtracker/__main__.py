@@ -247,6 +247,32 @@ def run_settings_window(settings: SettingsService) -> None:
     app.run(None)
 
 
+def run_history_window() -> None:
+    """`bgtracker history` — match review, standalone.
+
+    Like the settings window: an ordinary window, no layer shell, no preload.
+    """
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gio, Gtk
+
+    from bgtracker.overlay import theme
+    from bgtracker.overlay.history_window import HistoryWindow
+
+    app = Gtk.Application(
+        application_id="dev.bgtracker.history",
+        flags=Gio.ApplicationFlags.NON_UNIQUE,
+    )
+
+    def activate(_app):
+        theme.register_fonts()
+        HistoryWindow.open(app)
+
+    app.connect("activate", activate)
+    app.run(None)
+
+
 def _reexec_with_layer_shell_preload() -> None:
     """gtk4-layer-shell must link before libwayland; from Python that means
     LD_PRELOAD. Re-exec ourselves once with it set."""
@@ -268,7 +294,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
     parser.add_argument(
         "command", nargs="?",
-        choices=["run", "stats", "doctor", "mmr", "resim", "settings"], default="run",
+        choices=["run", "stats", "doctor", "mmr", "resim", "settings", "history"],
+        default="run",
     )
     parser.add_argument("value", nargs="?", type=int,
                         help="rating for `mmr`; number of recent combats for `resim`")
@@ -307,6 +334,8 @@ def main() -> None:
             doctor_run()
         elif args.command == "settings":
             run_settings_window(settings)
+        elif args.command == "history":
+            run_history_window()
         elif args.command == "stats":
             from bgtracker.history.stats import report
 

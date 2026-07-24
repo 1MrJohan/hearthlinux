@@ -548,6 +548,64 @@ window.bg-settings separator { background-color: $rule; }
 """)
 
 
+# The history window shares the settings window's chrome (it adds the
+# `bg-settings` class for exactly that reason); this only adds the classes the
+# review UI introduces. Same rule as above: geometry only on classes we own.
+_HISTORY_CSS = Template("""
+.history-rating {
+    font-family: $display;
+    font-weight: 800;
+    font-size: 30px;
+    color: $gold;
+}
+.history-chart {
+    background-color: rgba(10,7,3,.55);
+    border: 1px solid $rule;
+    border-radius: 10px;
+}
+.history-delta-up   { color: $win;  font-weight: 700; }
+.history-delta-down { color: $loss; font-weight: 700; }
+.history-place {
+    font-family: $display;
+    font-weight: 800;
+    font-size: 14px;
+    min-width: 30px;
+}
+.history-place-first { color: $gold; }
+.history-place-top   { color: $win; }
+.history-place-bot   { color: $loss; }
+.history-cell { color: $ink; font-size: 13px; }
+.history-head {
+    color: $dim;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+.history-combat-win   { color: $win; }
+.history-combat-loss  { color: $loss; }
+.history-combat-tie   { color: $tie; }
+.history-combat-ghost { color: $dim; }
+window.bg-settings expander-widget > box > title:hover,
+window.bg-settings row:hover {
+    background-color: rgba(244,212,122,.06);
+}
+""")
+
+
+def history_stylesheet() -> str:
+    """Extra classes for the history window, on top of the settings sheet."""
+    return _HISTORY_CSS.substitute(
+        ink=INK, dim=DIM, gold=GOLD, rule=RULE, win=WIN, tie=TIE, loss=LOSS,
+        display=DISPLAY,
+    )
+
+
+def install_history(display) -> Gtk.CssProvider:
+    """Apply the history additions to `display` (alongside the settings sheet)."""
+    return _add(display, history_stylesheet())
+
+
 def settings_stylesheet() -> str:
     """Dark Oak for the settings window, at a fixed size (see `_SETTINGS_CSS`)."""
     return _SETTINGS_CSS.substitute(
