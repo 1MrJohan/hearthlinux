@@ -80,6 +80,9 @@ class BGExporter(EntityTreeExporter):
         self._end_emitted = False
         self._standings_dirty = False
         self._standings: tuple = ()
+        # Elimination is permanent, but a Kel'Thuzad ghost fight reuses the
+        # dead player's hero entity and can reset its HP — latch deaths here.
+        self._dead_player_ids: set[int] = set()
         self._shop_dirty = False
         self._shop_board = None
         # (entries, spells) — seeded empty so the first read of an unbuffed
@@ -243,18 +246,32 @@ class BGExporter(EntityTreeExporter):
                 continue
             place = tag(entity, GameTag.PLAYER_LEADERBOARD_PLACE)
             if place:
-                health = tag(entity, GameTag.HEALTH) - tag(entity, GameTag.DAMAGE)
                 # PLAYER_ID is the stable per-player identity; the controller
-                # is a shared slot. Newest entity wins (ghost copies linger).
+                # is a shared slot. Newest entity wins (ghost copies linger) —
+                # except that duplicate hero entities with no PLAYER_ID at all
+                # accumulate in GRAVEYARD with a stale place tag, and one of
+                # those must never displace an identified player's row.
+                player_id = tag(entity, GameTag.PLAYER_ID)
+                prev = places.get(place)
+                if prev is not None and prev.player_id and not player_id:
+                    continue
+                health = tag(entity, GameTag.HEALTH) - tag(entity, GameTag.DAMAGE)
+                # Alive opponents' heroes rest in SETASIDE — only the current
+                # pairing is in PLAY — so "not in PLAY" is where you sit
+                # between fights, not death. Elimination reads as hp<=0
+                # (where dead heroes reliably land) or GRAVEYARD, and is then
+                # latched: a ghost fight can hand the entity full HP back.
+                dead = health <= 0 or tag(entity, GameTag.ZONE) == Zone.GRAVEYARD
+                if dead and player_id:
+                    self._dead_player_ids.add(player_id)
+                dead = dead or player_id in self._dead_player_ids
                 places[place] = ev.Standing(
                     place=place,
-                    player_id=tag(entity, GameTag.PLAYER_ID),
+                    player_id=player_id,
                     hero_card_id=entity.card_id,
                     health=health,
                     armor=tag(entity, GameTag.ARMOR),
-                    # A dead hero is moved out of PLAY; its HP may still read
-                    # positive, so zone is the reliable signal.
-                    dead=health <= 0 or tag(entity, GameTag.ZONE) != Zone.PLAY,
+                    dead=dead,
                     you=bool(friendly) and tag(entity, GameTag.CONTROLLER) == friendly,
                 )
         standings = tuple(places[p] for p in sorted(places))

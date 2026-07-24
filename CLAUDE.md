@@ -238,9 +238,13 @@ tends to reintroduce a fixed bug.
   opponent at all, so outcome classification reads a stranger's untouched HP as a tie.
 - **Friendly-player detection**: only the local player's cards are revealed in `Zone.HAND`,
   so the first controller with a revealed hand card is us.
-- **A dead hero moves out of `Zone.PLAY`** (into GRAVEYARD) and its HP may still read
-  positive — use zone, not HP, as the death signal. Final placement must be read from
-  any zone for the same reason.
+- **`Zone.PLAY` holds only the current pairing's heroes** — every other living
+  opponent's hero rests in `SETASIDE`, so "not in PLAY" is *not* a death signal
+  (that bug greyed out most of the leaderboard). Eliminated players reliably read
+  `hp <= 0` (usually still in SETASIDE; occasionally GRAVEYARD with positive HP) —
+  and the death must be **latched** per `PLAYER_ID`, because a Kel'Thuzad ghost
+  fight reuses the dead player's hero entity and can hand it full HP back. Final
+  placement must be read from any zone, not just PLAY.
 - **Kel'Thuzad is not a player.** With an odd number of players left, somebody is paired
   against a *ghost* of an eliminated player (`TB_BaconShop_HERO_KelThuzad`). The ghost's
   hero is a dead player's entity and its HP reads **0 or negative**, so it cannot confirm

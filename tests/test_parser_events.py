@@ -129,6 +129,78 @@ def test_standings_carry_rail_fields():
     assert entry.dead is False
 
 
+def _last_standings(events) -> dict[int, ev.Standing]:
+    standings = [e for e in events if isinstance(e, ev.Standings)]
+    assert standings, "no Standings emitted"
+    return {s.place: s for s in standings[-1].places}
+
+
+def test_alive_opponent_in_setaside_is_not_dead():
+    """Opponents' heroes rest in SETASIDE except while paired against us;
+    only GRAVEYARD or hp<=0 means eliminated."""
+    b = minimal_bg_game()
+    b.tag_change(5, "PLAYER_ID", 2)
+    b.tag_change(5, "ZONE", "SETASIDE")
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 2)
+    _, events = feed_all(b.lines)
+    entry = _last_standings(events)[2]
+    assert entry.health == 30
+    assert entry.dead is False
+
+
+def test_hero_at_zero_hp_is_dead_wherever_it_sits():
+    b = minimal_bg_game()
+    b.tag_change(5, "PLAYER_ID", 2)
+    b.tag_change(5, "ZONE", "SETASIDE")
+    b.tag_change(5, "DAMAGE", 35)
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 2)
+    _, events = feed_all(b.lines)
+    assert _last_standings(events)[2].dead is True
+
+
+def test_hero_in_graveyard_is_dead_even_at_positive_hp():
+    b = minimal_bg_game()
+    b.tag_change(5, "PLAYER_ID", 2)
+    b.tag_change(5, "ZONE", "GRAVEYARD")
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 2)
+    _, events = feed_all(b.lines)
+    assert _last_standings(events)[2].dead is True
+
+
+def test_stale_unidentified_hero_copy_cannot_steal_a_place():
+    """Real logs grow duplicate hero entities with no PLAYER_ID that linger in
+    GRAVEYARD carrying a stale place tag; they must not override the real
+    player's row (which would grey out a living player)."""
+    b = minimal_bg_game()
+    b.tag_change(5, "PLAYER_ID", 2)
+    b.tag_change(5, "ZONE", "SETASIDE")
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 2)
+    # Newer entity, same place, no PLAYER_ID, dead-looking zone.
+    b.entity(11, "TB_BaconShop_HERO_22", CARDTYPE="HERO", ZONE="GRAVEYARD",
+             CONTROLLER=2, HEALTH=30)
+    b.tag_change(11, "PLAYER_LEADERBOARD_PLACE", 2)
+    _, events = feed_all(b.lines)
+    entry = _last_standings(events)[2]
+    assert entry.player_id == 2
+    assert entry.dead is False
+
+
+def test_elimination_is_sticky_across_ghost_reuse():
+    """A Kel'Thuzad ghost fight reuses the dead player's hero entity and can
+    reset it to full HP; elimination is permanent, so the rail must not
+    resurrect them."""
+    b = minimal_bg_game()
+    b.tag_change(5, "PLAYER_ID", 2)
+    b.tag_change(5, "ZONE", "SETASIDE")
+    b.tag_change(5, "DAMAGE", 35)
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 8)
+    b.tag_change(5, "DAMAGE", 0)   # ghost reuse: back to full HP
+    _, events = feed_all(b.lines)
+    entry = _last_standings(events)[8]
+    assert entry.health == 30      # live HP still reported honestly
+    assert entry.dead is True
+
+
 def test_hero_hp_change_refreshes_standings():
     """HP moves far more often than place; the rail must not show stale HP."""
     game = minimal_bg_game()
