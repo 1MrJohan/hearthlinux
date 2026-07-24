@@ -6,6 +6,12 @@ from bgtracker.parse.exporter import LiveGameProcessor
 from .synthetic import minimal_bg_game
 
 
+# Emitted whenever their underlying state moves, so how many arrive is a
+# property of the log rather than of the game's shape. The sequence
+# assertions below are about phase order; these are covered directly.
+_BOOKKEEPING = {"Standings", "ShopBoard"}
+
+
 def feed_all(lines):
     proc = LiveGameProcessor()
     out = proc.feed(lines)
@@ -14,7 +20,7 @@ def feed_all(lines):
 
 def test_minimal_game_event_sequence():
     _, events = feed_all(minimal_bg_game().lines)
-    kinds = [type(e).__name__ for e in events if type(e).__name__ != "Standings"]
+    kinds = [type(e).__name__ for e in events if type(e).__name__ not in _BOOKKEEPING]
     assert kinds == [
         "GameStart",
         "HeroPicked",
@@ -23,6 +29,29 @@ def test_minimal_game_event_sequence():
         "CombatEnd",
         "GameEnd",
     ]
+
+
+def test_the_shop_board_is_reported_for_live_odds():
+    """The recruit-phase forecast needs the board as it is being built."""
+    _, events = feed_all(minimal_bg_game().lines)
+    shop = [e for e in events if isinstance(e, ev.ShopBoard)]
+    assert shop, "no ShopBoard emitted during the recruit phase"
+    [mine] = shop[-1].board.minions
+    assert (mine.card_id, mine.attack, mine.health) == ("BG_EX1_506", 2, 3)
+
+
+def test_an_unchanged_shop_board_is_not_re_reported():
+    """Every one of these starts a simulation, so a repeat tag write that
+    leaves the board identical must not trigger one."""
+    proc, _ = feed_all(minimal_bg_game().lines)
+    exporter = proc.current_exporter
+    before = exporter._shop_board
+    exporter._shop_dirty = True
+    emitted: list = []
+    exporter._emit = emitted.append
+    exporter.maybe_emit_shop_board()
+    assert emitted == []
+    assert exporter._shop_board == before
 
 
 def test_combat_snapshot_contents():
@@ -53,7 +82,7 @@ def test_incremental_feed_matches_bulk():
     events = []
     for line in lines:  # one line at a time, like live tailing
         events.extend(proc.feed([line]))
-    kinds = [type(e).__name__ for e in events if type(e).__name__ != "Standings"]
+    kinds = [type(e).__name__ for e in events if type(e).__name__ not in _BOOKKEEPING]
     assert kinds == [
         "GameStart",
         "HeroPicked",
@@ -103,7 +132,7 @@ def test_two_games_in_one_batch():
     lines = minimal_bg_game().lines + minimal_bg_game().lines
     proc = LiveGameProcessor()
     events = proc.feed(lines)
-    kinds = [type(e).__name__ for e in events if type(e).__name__ != "Standings"]
+    kinds = [type(e).__name__ for e in events if type(e).__name__ not in _BOOKKEEPING]
     assert kinds.count("GameStart") == 2
     assert kinds.count("GameEnd") == 2
     assert kinds.count("CombatStart") == 2

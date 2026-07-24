@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 from bgtracker.data import cards
-from bgtracker.history.db import DB_FILE
+from bgtracker.history.db import DB_FILE, HistoryDB
 
 
 def report(path: Path = DB_FILE) -> str:
     if not path.is_file():
         return "no match history yet"
-    conn = sqlite3.connect(path)
+    # Opened through HistoryDB, not a bare sqlite3.connect: the migrations live
+    # there, and a read-only path that skips them reports on a stale schema.
+    db = HistoryDB(path)
+    conn = db.conn
     lines: list[str] = []
 
     rows = conn.execute(
@@ -44,11 +46,22 @@ def report(path: Path = DB_FILE) -> str:
 
     lines.append("")
     lines.append("== simulator calibration ==")
+    ghosts = conn.execute(
+        "SELECT COUNT(*) FROM combats WHERE opponent_is_ghost = 1"
+    ).fetchone()[0]
+    if ghosts:
+        # Never drop rows silently: excluding them moves the top bucket by
+        # more than ten points, and a reader deserves to know why.
+        lines.append(
+            f"  ({ghosts} ghost fight(s) excluded — a ghost's hero HP is not a"
+            " readable signal, so a win against one cannot be told from a tie)"
+        )
     lines.append("  predicted win% -> actual outcomes (ties are damage-free, not misses):")
     buckets = conn.execute(
         "SELECT MIN(CAST(predicted_win / 10 AS INT), 9) AS bucket, COUNT(*),"
         " SUM(outcome = 'win'), SUM(outcome = 'tie'), SUM(outcome = 'loss')"
         " FROM combats WHERE predicted_win IS NOT NULL AND outcome IS NOT NULL"
+        " AND COALESCE(opponent_is_ghost, 0) = 0"
         " GROUP BY bucket ORDER BY bucket"
     ).fetchall()
     if not buckets:
@@ -67,10 +80,11 @@ def report(path: Path = DB_FILE) -> str:
         "SELECT MIN(CAST(predicted_loss / 10 AS INT), 9) AS bucket, COUNT(*),"
         " SUM(outcome = 'loss')"
         " FROM combats WHERE predicted_loss IS NOT NULL AND outcome IS NOT NULL"
+        " AND COALESCE(opponent_is_ghost, 0) = 0"
         " GROUP BY bucket ORDER BY bucket"
     ).fetchall()
     for bucket, n, losses in loss_buckets:
         low = min(bucket, 9) * 10
         lines.append(f"    {low:3d}-{low + 10:3d}%: {n:4d} combats, actual loss {100 * losses / n:.0f}%")
-    conn.close()
+    db.close()
     return "\n".join(lines)

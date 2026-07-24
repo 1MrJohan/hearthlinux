@@ -212,6 +212,29 @@ window { background: transparent; }
     text-transform: uppercase;
     color: $dim;
 }
+.lethal {
+    font-size: ${f11}px;
+    font-weight: 700;
+    letter-spacing: ${ls1_5}px;
+    text-transform: uppercase;
+    color: $loss;
+}
+.result {
+    font-size: ${f11}px;
+    font-weight: 700;
+    letter-spacing: ${ls1_5}px;
+    text-transform: uppercase;
+    color: $dim;
+}
+.board-odds {
+    font-size: ${f11}px;
+    font-weight: 700;
+    letter-spacing: ${ls1_5}px;
+    color: $dim;
+}
+.result.win  { color: $win; }
+.result.loss { color: $loss; }
+.result.tie  { color: $tie; }
 .bar-win  { background-image: linear-gradient(180deg,#8ed36a,#57a038); }
 .bar-tie  { background-image: linear-gradient(180deg,#f0c85a,#cf9a1f); }
 .bar-loss { background-image: linear-gradient(180deg,#dd6f52,#a83220); }

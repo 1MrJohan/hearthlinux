@@ -106,6 +106,100 @@ def test_shop_ready_ends_the_combat_display():
     assert win.last("set_combat") == (False,)
 
 
+def test_a_provisional_forecast_shows_before_the_run_finishes():
+    """A heavy 7v7 board takes seconds to simulate; the odds block should not
+    sit empty until then."""
+    app, win = _app()
+    rough = SimResult(won_percent=60, tied_percent=10, lost_percent=30,
+                      avg_damage_won=13, avg_damage_lost=8, sims_run=400)
+    app.on_event(ev.CombatForecast(snapshot=SNAPSHOT), rough)
+    assert win.last("set_odds") == (60, 10, 30)
+    assert win.last("set_phase")[0] == "Combat Forecast"
+
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    assert win.last("set_odds") == (63, 9, 28), "final numbers did not replace the partial"
+
+
+def test_a_forecast_without_numbers_is_ignored():
+    """The guard is on the prediction, not the event: a partial with nothing in
+    it must not blank a forecast already on screen."""
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatForecast(snapshot=SNAPSHOT), None)
+    assert win.last("set_odds") == (63, 9, 28)
+
+
+def test_the_result_waits_for_the_animation_to_finish():
+    """CombatResult arrives ~1s into a fight the player watches for 20-45s.
+
+    Showing it the moment it lands spoils the battle they are still watching,
+    so it is banked and revealed at ShopReady — the same rule the phase title
+    already follows.
+    """
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatResult(turn=7, outcome="win", damage=14), None)
+    assert win.last("set_result") is None, "result revealed mid-animation"
+
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_result") == ("win", 14)
+
+
+def test_the_forecast_stays_open_through_the_recruit_phase():
+    """The forecast only becomes checkable once the fight is over, so that is
+    the worst possible moment to hide it behind a hover."""
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatResult(turn=7, outcome="loss", damage=9), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_odds") == (63, 9, 28)
+    assert win.last("set_result") == ("loss", 9)
+
+
+def test_a_result_from_a_fight_with_no_forecast_is_still_shown():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatResult(turn=7, outcome="tie", damage=0), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_result") == ("tie", 0)
+
+
+def test_a_new_game_clears_the_previous_result():
+    app, win = _app()
+    app.on_event(ev.CombatResult(turn=7, outcome="win", damage=14), None)
+    app.on_event(ev.ShopReady(), None)
+    app.on_event(ev.GameStart(), None)
+    assert win.last("set_result") == (None, 0)
+
+
+def test_the_shop_forecast_says_how_stale_its_board_is():
+    """The opponent keeps buying after you last saw them, so the number is a
+    guess and has to admit it."""
+    app, win = _app()
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    text = win.last("set_next_forecast")[0]
+    assert "63" in text and "28" in text
+    assert "2 turns old" in text
+
+
+def test_a_board_seen_this_turn_is_not_called_stale():
+    app, win = _app()
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=8, turn=8), ODDS)
+    assert "current" in win.last("set_next_forecast")[0]
+
+
+def test_a_new_opponent_drops_the_previous_forecast():
+    """Odds for the player you are no longer facing are worse than none."""
+    app, win = _app()
+    app.pipeline = None
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    assert win.last("set_next_forecast")[0] is not None
+    app.on_event(ev.NextOpponent(player_id=5), None)
+    assert win.last("set_next_forecast") == (None,)
+
+
 def test_shop_ready_outside_combat_is_ignored():
     """The marker also fires around hero select; it must not clobber the phase."""
     app, win = _app()
@@ -145,7 +239,7 @@ def test_combat_start_shows_the_forecast():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     assert win.last("set_odds") == (63, 9, 28)
-    assert win.last("set_damage") == (14, 9)
+    assert win.last("set_damage") == ("14", "9")
 
 
 def test_odds_survive_the_end_of_combat():
@@ -160,7 +254,7 @@ def test_odds_survive_the_end_of_combat():
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
     assert win.last("set_odds") == (63, 9, 28), "odds were cleared when combat ended"
-    assert win.last("set_damage") == (14, 9), "damage forecast was cleared too"
+    assert win.last("set_damage") == ("14", "9"), "damage forecast was cleared too"
 
 
 def test_a_new_combat_replaces_the_previous_forecast():

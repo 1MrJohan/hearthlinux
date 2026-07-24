@@ -182,6 +182,27 @@ def read_active_spells(game: Game, player_id: int) -> tuple[str, ...]:
     return tuple(out)
 
 
+# When an odd number of players remain, somebody is paired against a "ghost" —
+# a copy of an eliminated player's board, fronted by Kel'Thuzad.
+#
+# The ghost's hero is a dead player's entity, so its HP is not a readable
+# signal: every recorded ghost fight shows it at 0 or negative. A *win* against
+# one therefore cannot be told from a tie, and app.py gives that case its own
+# outcome. A ghost fight that costs you HP is still a genuine loss and records
+# one — do not assume these fights are damage-free. Either way the opponent was
+# a ghost, which is why history/db.py flags the row and stats.py drops the whole
+# category: scoring only the fights that happen to be legible would bias the
+# calibration table toward losses.
+#
+# Prefix match, because heroes carry `_SKIN_*` variants.
+GHOST_HERO_PREFIX = "TB_BaconShop_HERO_KelThuzad"
+
+
+def is_ghost(board: "PlayerBoard | None") -> bool:
+    """Whether this board is the odd-player-out ghost rather than a real player."""
+    return bool(board and board.hero_card_id and board.hero_card_id.startswith(GHOST_HERO_PREFIX))
+
+
 # Not equipment: these sit in play announcing "the Trinket Shop opens in N
 # turns". They carry the trinket card type, so only the id tells them apart.
 _TRINKET_SLOT_PLACEHOLDERS = frozenset({"BG30_Trinket_1st", "BG30_Trinket_2nd"})

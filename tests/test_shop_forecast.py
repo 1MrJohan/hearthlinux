@@ -1,0 +1,123 @@
+"""Shop-phase forecast loop: debouncing, staleness, and yielding to combat."""
+
+from __future__ import annotations
+
+import asyncio
+
+from bgtracker.app import SHOP_DEBOUNCE, Pipeline
+from bgtracker.parse import events as ev
+from bgtracker.sim.client import SimResult
+from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard
+
+
+class StubSim:
+    """Records every simulate() call instead of running one."""
+
+    def __init__(self):
+        self.calls: list[int] = []
+
+    async def simulate(self, battle_info, on_partial=None, sims=None):
+        self.calls.append(sims)
+        return SimResult(
+            won_percent=55, tied_percent=5, lost_percent=40,
+            avg_damage_won=10, avg_damage_lost=8, sims_run=sims or 8000,
+        )
+
+
+def _board(pid: int, minions: int = 1) -> PlayerBoard:
+    return PlayerBoard(
+        player_id=pid, bg_player_id=pid, hero_card_id="TB_BaconShop_HERO_11",
+        hero_entity_id=pid, health=30, armor=0, tier=3,
+        minions=tuple(
+            Minion(entity_id=100 + i, card_id="BG_EX1_506", position=i + 1, attack=2, health=3)
+            for i in range(minions)
+        ),
+    )
+
+
+def _pipeline() -> tuple[Pipeline, StubSim, list]:
+    sim = StubSim()
+    pipe = Pipeline(sim=sim, db=None)
+    seen: list = []
+    pipe.listeners.append(lambda e, p: seen.append((e, p)) if isinstance(e, ev.ShopForecast) else None)
+    # Scout the opponent, as fighting them once would.
+    pipe.memory.record(6, _board(4, minions=2))
+    return pipe, sim, seen
+
+
+async def _drain(pipe: Pipeline) -> None:
+    """Let the debounce elapse and the forecast run."""
+    await asyncio.sleep(SHOP_DEBOUNCE * 2)
+    if pipe._shop_task is not None:
+        await asyncio.gather(pipe._shop_task, return_exceptions=True)
+
+
+def test_a_burst_of_board_changes_runs_one_simulation():
+    """Selling and re-buying fires a flurry of tag changes. Simulating each one
+    would queue work the player has already moved past."""
+    async def run():
+        pipe, sim, seen = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        for n in (1, 2, 3, 4):
+            await pipe.handle([ev.ShopBoard(board=_board(1, minions=n), turn=8)])
+        await _drain(pipe)
+        return sim.calls, seen
+
+    calls, seen = asyncio.run(run())
+    assert len(calls) == 1, f"expected one coalesced simulation, got {len(calls)}"
+    assert len(seen) == 1
+
+
+def test_the_shop_forecast_is_cheaper_than_a_combat_forecast():
+    """It re-runs constantly and is a guide, not the number of record."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1), turn=8)])
+        await _drain(pipe)
+        return sim.calls
+
+    [sims] = asyncio.run(run())
+    assert sims is not None and sims < 8000
+
+
+def test_combat_cancels_a_pending_shop_forecast():
+    """The real fight supersedes any guess about it and must not wait behind
+    one holding the simulator's lock."""
+    async def run():
+        pipe, sim, seen = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1), turn=8)])
+        # Combat lands inside the debounce window, before the guess ever runs.
+        snapshot = BoardSnapshot(turn=8, friendly=_board(1), opponent=_board(4))
+        await pipe.handle([ev.CombatStart(snapshot=snapshot)])
+        await _drain(pipe)
+        return seen
+
+    assert asyncio.run(run()) == []
+
+
+def test_an_unscouted_opponent_gets_no_forecast():
+    """Inventing a board would be worse than showing nothing."""
+    async def run():
+        pipe, sim, seen = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=99)])
+        await pipe.handle([ev.ShopBoard(board=_board(1), turn=8)])
+        await _drain(pipe)
+        return sim.calls, seen
+
+    calls, seen = asyncio.run(run())
+    assert calls == [] and seen == []
+
+
+def test_the_forecast_reports_how_old_the_scouted_board_is():
+    async def run():
+        pipe, sim, seen = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=9), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1), turn=9)])
+        await _drain(pipe)
+        return seen
+
+    [(event, prediction)] = asyncio.run(run())
+    assert (event.turn, event.seen_turn) == (9, 6)
+    assert prediction.won_percent == 55

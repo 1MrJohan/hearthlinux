@@ -41,6 +41,18 @@ COMBAT = 2
 # Hero tags that move a player's leaderboard HP.
 _HERO_HP_TAGS = frozenset({GameTag.HEALTH, GameTag.DAMAGE, GameTag.ARMOR})
 
+# Tags that can change what the friendly board looks like during the shop —
+# buying, selling, repositioning, and every buff that lands on a minion.
+# Projecting the board walks the whole entity tree, which is far too expensive
+# to do per packet, so this narrows it to packets that could plausibly matter
+# and the projection then confirms whether anything really changed.
+_SHOP_BOARD_TAGS = frozenset({
+    GameTag.ZONE, GameTag.ZONE_POSITION, GameTag.ATK, GameTag.HEALTH,
+    GameTag.DAMAGE, GameTag.ATTACHED, GameTag.TAUNT, GameTag.DIVINE_SHIELD,
+    GameTag.POISONOUS, GameTag.VENOMOUS, GameTag.WINDFURY, GameTag.MEGA_WINDFURY,
+    GameTag.REBORN, GameTag.STEALTH, GameTag.PREMIUM, GameTag.TECH_LEVEL,
+})
+
 # Power.log carries two streams. GameState is the authoritative game state and
 # is what hslog parses; it flips out of combat about a second after flipping
 # in, because that is how long the engine takes to resolve the fight.
@@ -68,6 +80,8 @@ class BGExporter(EntityTreeExporter):
         self._end_emitted = False
         self._standings_dirty = False
         self._standings: tuple = ()
+        self._shop_dirty = False
+        self._shop_board = None
         # (entries, spells) — seeded empty so the first read of an unbuffed
         # player doesn't look like a change and emit a no-op Buffs event.
         self._buffs: tuple = ((), ())
@@ -128,6 +142,25 @@ class BGExporter(EntityTreeExporter):
             self._pending_combat = False
             self._emit(ev.CombatStart(snapshot=snap))
 
+    def maybe_emit_shop_board(self):
+        """Friendly board during the shop, so odds can follow what you build.
+
+        The dirty flag narrows the work to packets that could have changed the
+        board; the projection then decides whether anything actually did. Both
+        gates matter — the flag keeps this off the per-packet hot path, and the
+        comparison keeps a redundant tag write from triggering a re-simulation.
+        """
+        if not self._shop_dirty or self._board_state != SHOP:
+            return
+        self._shop_dirty = False
+        fid = self.friendly_player_id()
+        if fid is None:
+            return
+        board = project_player_board(self.game, fid)
+        if board is not None and board != self._shop_board:
+            self._shop_board = board
+            self._emit(ev.ShopBoard(board=board, turn=self._turn))
+
     def maybe_emit_buffs(self):
         fid = self.friendly_player_id()
         if fid is None:
@@ -168,9 +201,11 @@ class BGExporter(EntityTreeExporter):
                     # The opponent's board may materialize a few packets after
                     # the flag flips; emission is deferred until it exists.
                     self._pending_combat = True
+                    self._shop_board = None   # next shop phase re-reports fresh
                     self.maybe_emit_combat()
                 elif value == SHOP:
                     self._pending_combat = False
+                    self._shop_dirty = True
                     self._emit(ev.CombatEnd(snapshot=self.snapshot()))
             elif gametag == GameTag.STATE and value == State.COMPLETE and not self._ended:
                 # Placement tags land a few packets AFTER the COMPLETE state;
@@ -188,6 +223,11 @@ class BGExporter(EntityTreeExporter):
             # player's place. maybe_emit_standings() dedupes, so flagging on
             # every hero HP tick costs nothing but keeps the numbers current.
             self._standings_dirty = True
+
+        # Deliberately outside the chain above: HEALTH already belongs to the
+        # hero branch, and a minion buff must still flag the board as stale.
+        if self._board_state == SHOP and gametag in _SHOP_BOARD_TAGS:
+            self._shop_dirty = True
         return entity
 
     def maybe_emit_standings(self):
@@ -349,6 +389,7 @@ class LiveGameProcessor:
                 track.exporter.maybe_emit_combat()
                 track.exporter.maybe_emit_standings()
                 track.exporter.maybe_emit_buffs()
+                track.exporter.maybe_emit_shop_board()
 
     @staticmethod
     def _is_complete(packet, is_last: bool) -> bool:

@@ -29,7 +29,7 @@ log = logging.getLogger("bgtracker")
 
 
 async def start_sim(cfg) -> SimClient | None:
-    sim = SimClient(timeout=cfg.sim_timeout, sims=cfg.sim_count)
+    sim = SimClient(timeout=cfg.sim_timeout, sims=cfg.sim_count, workers=cfg.sim_workers)
     if await sim.ping():
         return sim
     log.warning("combat simulator unavailable (node/sidecar missing?) — odds disabled")
@@ -192,8 +192,12 @@ def _reexec_with_layer_shell_preload() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
-    parser.add_argument("command", nargs="?", choices=["run", "stats", "doctor", "mmr"], default="run")
-    parser.add_argument("value", nargs="?", type=int, help="rating value for the mmr command")
+    parser.add_argument(
+        "command", nargs="?",
+        choices=["run", "stats", "doctor", "mmr", "resim"], default="run",
+    )
+    parser.add_argument("value", nargs="?", type=int,
+                        help="rating for `mmr`; number of recent combats for `resim`")
     parser.add_argument("--replay", type=Path, help="replay a saved Power.log file")
     parser.add_argument("--overlay", action="store_true", help="show the on-screen overlay")
     parser.add_argument("--demo", action="store_true",
@@ -237,6 +241,10 @@ def main() -> None:
             from bgtracker.history.stats import report
 
             print(report())
+        elif args.command == "resim":
+            from bgtracker.history.resim import resim
+
+            print(asyncio.run(resim(limit=args.value)))
         elif args.replay:
             asyncio.run(replay(args.replay, args.odds, args.record))
         elif args.overlay:

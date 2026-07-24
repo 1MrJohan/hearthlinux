@@ -18,6 +18,19 @@ from . import theme  # noqa: E402
 MEDALLION_D = 58
 BODY_SPACING = 12
 
+# Below this the warning is noise: a sub-1% chance of dying is not a decision
+# input, and a permanently-lit skull stops meaning anything.
+LETHAL_WARN_PCT = 1.0
+
+# outcome -> (glyph, word, damage verb). A ghost fight is damage-free by design,
+# so it gets no verb: there is no number to report.
+_RESULTS = {
+    "win": ("✔", "WON", "dealt"),
+    "loss": ("✘", "LOST", "took"),
+    "tie": ("—", "TIE", ""),
+    "ghost": ("◇", "GHOST", ""),
+}
+
 
 def bar_widths(win: float, tie: float, loss: float, track: int) -> tuple[int, int, int]:
     """Split a track into win/tie/loss pixel widths that always sum to `track`.
@@ -82,6 +95,18 @@ class HudPanel(Gtk.Box):
         self.pills.append(self.taken[0])
         self.append(self.pills)
 
+        # The one number worth interrupting for: how often this fight ends the
+        # game for you. Hidden unless the risk is real.
+        self.lethal = Gtk.Label(label="", xalign=0)
+        self.lethal.add_css_class("lethal")
+        self.append(self.lethal)
+
+        # What actually happened, shown against the forecast above it once the
+        # fight has finished animating.
+        self.result = Gtk.Label(label="", xalign=0)
+        self.result.add_css_class("result")
+        self.append(self.result)
+
         # Stands in for the forecast once the fight is over; hovering the HUD
         # swaps it back for the real thing.
         self.hint = Gtk.Label(label="▾ last fight", xalign=0)
@@ -92,9 +117,14 @@ class HudPanel(Gtk.Box):
         # be recalled, but they only take up room while the fight is live or
         # while the pointer is over the HUD.
         self._odds: tuple[float, float, float] | None = None
-        self._damage: tuple[float, float] | None = None
+        self._damage: tuple[str, str] | None = None
+        self._lethal = 0.0
         self._live = False
         self._hovered = False
+        # A finished fight keeps the block open through the recruit phase: the
+        # forecast only becomes checkable once there is a result to check it
+        # against, so that is the wrong moment to hide it behind a hover.
+        self._pinned = False
 
         self.set_turn(None)
         self.set_odds(None, None, None)
@@ -190,6 +220,9 @@ class HudPanel(Gtk.Box):
         """Set the forecast. A fresh forecast is always shown expanded."""
         self._odds = None if win is None else (win, tie, loss)
         self._live = self._odds is not None
+        # A new fight supersedes the last one's result; leaving it up would
+        # caption this forecast with the previous combat's outcome.
+        self.set_result(None)
         if self._odds is None:
             self._damage = None
         else:
@@ -202,11 +235,33 @@ class HudPanel(Gtk.Box):
                 segment.set_size_request(width, -1)
         self._sync_odds()
 
-    def set_damage(self, dealt: float | None, taken: float | None) -> None:
+    def set_damage(self, dealt: str | None, taken: str | None) -> None:
+        """Damage forecast, already formatted — `14` or a `9–17` spread."""
         self._damage = None if dealt is None else (dealt, taken)
         if self._damage is not None:
-            self.dealt[1].set_label(f"{dealt:.0f}")
-            self.taken[1].set_label(f"{taken:.0f}")
+            self.dealt[1].set_label(dealt)
+            self.taken[1].set_label(taken)
+        self._sync_odds()
+
+    def set_lethal(self, risk: float | None) -> None:
+        """Chance this fight eliminates you, as a percentage."""
+        self._lethal = risk or 0.0
+        if self._lethal >= LETHAL_WARN_PCT:
+            self.lethal.set_label(f"☠ lethal {self._lethal:.0f}%")
+        self._sync_odds()
+
+    def set_result(self, outcome: str | None, damage: int = 0) -> None:
+        """How the forecast fight actually went. None clears it."""
+        for name in _RESULTS:
+            self.result.remove_css_class(name)
+        if outcome is None:
+            self._pinned = False
+        else:
+            glyph, word, verb = _RESULTS.get(outcome, ("·", outcome.upper(), ""))
+            swing = f" · {verb} {damage}" if verb and damage else ""
+            self.result.set_label(f"{glyph} {word}{swing}")
+            self.result.add_css_class(outcome)
+            self._pinned = True
         self._sync_odds()
 
     def set_forecast_live(self, live: bool) -> None:
@@ -223,9 +278,15 @@ class HudPanel(Gtk.Box):
 
     def _sync_odds(self) -> None:
         have = self._odds is not None
-        expanded = have and (self._live or self._hovered)
+        expanded = have and (self._live or self._hovered or self._pinned)
         self.odds_box.set_visible(expanded)
         self.pills.set_visible(expanded and self._damage is not None)
+        # The lethal warning belongs to the fight being forecast; once it is
+        # over the result line says what actually happened instead.
+        self.lethal.set_visible(
+            expanded and not self._pinned and self._lethal >= LETHAL_WARN_PCT
+        )
+        self.result.set_visible(self._pinned)
         self.hint.set_visible(have and not expanded)
         self._sync_body()
 

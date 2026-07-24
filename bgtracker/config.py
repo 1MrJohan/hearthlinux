@@ -26,6 +26,10 @@ class Config:
     # Combat simulator
     sim_count: int = 8000
     sim_timeout: float = 6.0
+    # Worker threads the sidecar shards trials across. 0 = the sidecar's own
+    # default (4). Each holds its own ~350MB card DB, and throughput flattens
+    # past 4, so raising this trades a lot of memory for very little speed.
+    sim_workers: int = 0
     # Overlay. None = derive from the monitor height so the HUD occupies the
     # same share of the screen as the design mock (1080p ~1.53, 1440p ~2.04).
     overlay_scale: float | None = None
@@ -44,7 +48,7 @@ def load_config(path: Path | None = None) -> Config:
         if "hearthstone_dir" in raw:
             cfg.hearthstone_dir = Path(raw.pop("hearthstone_dir")).expanduser()
         for key in (
-            "poll_active", "poll_idle", "sim_count", "sim_timeout",
+            "poll_active", "poll_idle", "sim_count", "sim_timeout", "sim_workers",
             "overlay_scale", "log_keep_days", "log_keep_min",
         ):
             if key in raw:

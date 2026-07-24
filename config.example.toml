@@ -12,6 +12,9 @@
 # Combat simulator
 # sim_count = 8000     # simulations per combat; more = slower + more accurate
 # sim_timeout = 6.0    # seconds before giving up on a combat's odds
+# sim_workers = 4      # threads the trials are split across. Each holds its own
+#                      # ~350MB card DB and throughput flattens past 4, so
+#                      # raising this costs a lot of memory for very little.
 
 # Overlay
 # Size of every panel, font and gem. Unset = derived from the monitor height

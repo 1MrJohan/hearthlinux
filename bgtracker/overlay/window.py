@@ -354,9 +354,16 @@ class OverlayWindow(Gtk.Window):
         self.hud.set_odds(win, tie, loss)
         if win is None:
             self.hud.set_damage(None, None)
+            self.hud.set_lethal(None)
 
-    def set_damage(self, dealt: float | None, taken: float | None) -> None:
+    def set_damage(self, dealt: str | None, taken: str | None) -> None:
         self.hud.set_damage(dealt, taken)
+
+    def set_lethal(self, risk: float | None) -> None:
+        self.hud.set_lethal(risk)
+
+    def set_result(self, outcome: str | None, damage: int = 0) -> None:
+        self.hud.set_result(outcome, damage)
 
     def set_buffs(self, entries, spells=()) -> None:
         for row in self._buff_rows:
@@ -407,6 +414,9 @@ class OverlayWindow(Gtk.Window):
     def clear_next_board(self) -> None:
         self.next_board.clear()
         self._set_content("next", False)
+
+    def set_next_forecast(self, text: str | None) -> None:
+        self.next_board.set_odds(text)
 
     def set_hover_board(self, title: str, subtitle: str = "", board=None,
                         hero_card_id: str | None = None, dead: bool = False) -> None:

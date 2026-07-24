@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+from types import SimpleNamespace
 
 from bgtracker.parse import events as ev
 from bgtracker.sim.client import SimResult
 from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard
+from bgtracker.state.opponents import OpponentMemory
 
 # Hero art ids verified against the HearthstoneJSON CDN in the handoff.
 HEROES = [
@@ -81,10 +83,26 @@ async def run(overlay, interval: float = 4.0) -> None:
     """Loop the three game phases forever, `interval` seconds apart."""
     you = _board("TB_BaconShop_HERO_43", 18, 3, MECHS, player_id=1)
     enemy = _board("TB_BaconShop_HERO_94", 27, 5, DEMONS, player_id=2)
+    # The next-opponent panel and the scout popout both read the pipeline's
+    # opponent memory. Without one the demo can only ever render the
+    # "not scouted yet" state, which is the least interesting of them.
+    memory = OpponentMemory()
+    memory.record(6, _board("TB_BaconShop_HERO_94", 27, 5, DEMONS, player_id=4))
+    overlay.pipeline = SimpleNamespace(memory=memory)
     combat = BoardSnapshot(turn=7, friendly=you, opponent=enemy)
     odds = SimResult(
         won_percent=63, tied_percent=9, lost_percent=28,
         avg_damage_won=14, avg_damage_lost=9,
+        sims_run=8000, sim_ms=240.0,
+        # You are on 18 HP against a spread topping out at 17: close enough to
+        # dying that the skull earns its place, which is what makes this a
+        # useful demo state rather than a decorative one.
+        lost_lethal_percent=14.0,
+        damage_won_range=(11.0, 19.0), damage_lost_range=(4.0, 17.0),
+    )
+    shop_odds = SimResult(
+        won_percent=41, tied_percent=12, lost_percent=47,
+        avg_damage_won=9, avg_damage_lost=11, sims_run=2000,
     )
     buffs = ev.Buffs(entries=(("Blood Gem", 2, 2), ("Elemental", 4, 3)),
                      spells=("BG28_800", "BG28_168"))  # Careful Investment, Shiny Ring
@@ -101,7 +119,14 @@ async def run(overlay, interval: float = 4.0) -> None:
         (buffs, None, 0.0),
         (ev.CombatStart(snapshot=combat), odds, interval),
         (ev.NextOpponent(player_id=4), None, 0.0),
-        (ev.CombatEnd(snapshot=combat), None, interval),
+        (ev.CombatEnd(snapshot=combat), None, 0.0),
+        # Banked, not shown — the reveal is ShopReady's job. Having both in the
+        # script is what makes the demo prove that ordering rather than assume it.
+        (ev.CombatResult(turn=7, outcome="win", damage=14), None, interval),
+        (ev.ShopReady(), None, interval),
+        # Live shop odds against the next opponent's last-seen board, two turns
+        # stale — the state the staleness label exists for.
+        (ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), shop_odds, interval),
     ]
 
     for event, prediction, dwell in itertools.cycle(script):

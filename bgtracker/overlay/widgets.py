@@ -221,6 +221,18 @@ class BoardPanel(Gtk.Box):
         self.append(self.row)
         self._tiles: list[MinionTile] = []
 
+        # Odds against this board, for panels that forecast one. Sits under the
+        # tiles so the number stays next to the board it was derived from.
+        self.odds = Gtk.Label(label="", xalign=0)
+        self.odds.add_css_class("board-odds")
+        self.odds.set_visible(False)
+        self.append(self.odds)
+
+    def set_odds(self, text: str | None) -> None:
+        """A one-line forecast under the board, or None to hide it."""
+        self.odds.set_label(text or "")
+        self.odds.set_visible(bool(text))
+
     def show_board(
         self,
         title: str,
@@ -255,3 +267,4 @@ class BoardPanel(Gtk.Box):
 
     def clear(self) -> None:
         self.show_board("")
+        self.set_odds(None)

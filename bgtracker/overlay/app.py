@@ -57,6 +57,7 @@ class OverlayApp:
     # Class-level defaults so a bare __new__ (tests) still has them.
     _in_combat = False
     _shop_meta = ""
+    _shop_result: tuple[str | None, int] = (None, 0)
 
     def __init__(self):
         from gi.repository import Gio
@@ -134,6 +135,14 @@ class OverlayApp:
             self.window.set_hud_hovered(hovered)
             self.hover.present()
 
+    @staticmethod
+    def _show_forecast(win, prediction: SimResult) -> None:
+        win.set_odds(
+            prediction.won_percent, prediction.tied_percent, prediction.lost_percent
+        )
+        win.set_damage(prediction.damage_dealt_text, prediction.damage_taken_text)
+        win.set_lethal(prediction.lost_lethal_percent)
+
     # Pipeline listener -------------------------------------------------
     def on_event(self, event: ev.Event, prediction: SimResult | None) -> None:
         # State updates must happen even before the window exists — events
@@ -148,11 +157,13 @@ class OverlayApp:
         match event:
             case ev.GameStart():
                 self._in_combat = False
+                self._shop_result = (None, 0)
                 win.set_phase("Hero Select")
                 win.set_status("Waiting — choose your hero")
                 win.set_turn(None)
                 win.set_combat(False)
                 win.set_odds(None, None, None)
+                win.set_result(None, 0)
                 win.clear_board()
                 win.clear_next_board()
                 win.set_standings(())
@@ -161,6 +172,16 @@ class OverlayApp:
                 win.set_status(f"Playing {cards.name(cid)}")
             case ev.TurnChange(turn=t):
                 win.set_turn(t)
+            case ev.CombatForecast(snapshot=s) if prediction is not None:
+                # A run still tightening. Same widgets, same treatment — the
+                # numbers simply firm up in place instead of appearing late.
+                self._in_combat = True
+                win.set_phase("Combat Forecast", _combat_meta(s))
+                win.set_status("")
+                win.set_turn(s.turn)
+                win.set_combat(True)
+                self._show_forecast(win, prediction)
+                win.set_board("Enemy Board", _board_meta(s.opponent), s.opponent)
             case ev.CombatStart(snapshot=s):
                 self._in_combat = True
                 win.set_phase("Combat Forecast", _combat_meta(s))
@@ -168,12 +189,7 @@ class OverlayApp:
                 win.set_turn(s.turn)
                 win.set_combat(True)
                 if prediction is not None:
-                    win.set_odds(
-                        prediction.won_percent,
-                        prediction.tied_percent,
-                        prediction.lost_percent,
-                    )
-                    win.set_damage(prediction.avg_damage_won, prediction.avg_damage_lost)
+                    self._show_forecast(win, prediction)
                 else:
                     win.set_odds(None, None, None)
                 win.set_board("Enemy Board", _board_meta(s.opponent), s.opponent)
@@ -186,31 +202,53 @@ class OverlayApp:
                 # animating it for another 20-45s. Bank the post-combat state
                 # and leave the display alone until ShopReady.
                 self._shop_meta = _hero_meta(s.friendly)
+            case ev.CombatResult(outcome=outcome, damage=damage):
+                # Banked, never shown here: this lands with CombatEnd, while
+                # the player is still watching the battle play out. Revealing
+                # it now tells them who won before they have seen it.
+                self._shop_result = (outcome, damage)
             case ev.ShopReady() if self._in_combat:
                 self._in_combat = False
                 win.set_phase("Recruit Phase", self._shop_meta)
                 win.set_status("")
                 win.set_combat(False)
-                # The forecast is kept, not discarded: it collapses to a hint
-                # here and comes back while the pointer is over the HUD.
                 win.set_forecast_live(False)
+                # The forecast stays open through the recruit phase now, with
+                # what actually happened underneath it — a fight only becomes
+                # checkable once it is over.
+                win.set_result(*self._shop_result)
+                self._shop_result = (None, 0)
                 # The design shows the enemy board only during combat.
                 win.clear_board()
-            case ev.NextOpponent(player_id=pid) if self.pipeline is not None:
-                seen = self.pipeline.memory.last_seen(pid)
+            case ev.NextOpponent(player_id=pid):
+                # A new opponent invalidates the previous one's odds well before
+                # a fresh forecast arrives. Deliberately not gated on the
+                # pipeline: stale odds must go regardless of whether the
+                # opponent-memory lookup below can run.
+                win.set_next_forecast(None)
+                seen = self.pipeline.memory.last_seen(pid) if self.pipeline else None
                 if seen and seen.board:
                     win.set_next_board(
                         "Next Opponent", f"last seen · turn {seen.turn}", seen.board
                     )
                 else:
                     win.set_next_board("Next Opponent", "not scouted yet", None)
+            case ev.ShopForecast(seen_turn=seen_turn, turn=turn) if prediction is not None:
+                age = turn - seen_turn
+                staleness = "current" if age <= 0 else f"{age} turn{'s' if age > 1 else ''} old"
+                win.set_next_forecast(
+                    f"{prediction.won_percent:.0f} / {prediction.tied_percent:.0f}"
+                    f" / {prediction.lost_percent:.0f}  ·  {staleness}"
+                )
             case ev.GameEnd(placement=p):
                 self._in_combat = False
+                self._shop_result = (None, 0)
                 win.set_phase("Game Over", f"finished #{p}" if p else "")
                 win.set_status(f"Finished #{p}" if p else "Game over")
                 win.set_turn(None)
                 win.set_combat(False)
                 win.set_odds(None, None, None)
+                win.set_result(None, 0)
                 win.clear_board()
                 win.clear_hover_board()
                 self.standings = ()
