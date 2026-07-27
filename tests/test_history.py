@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 
 from bgtracker.app import Pipeline, _apply_damage_cap, _classify_outcome
 from bgtracker.sim.client import SimResult
@@ -240,3 +241,58 @@ def test_pipeline_records_game(tmp_path):
     assert turn == 1 and opp_hero == "TB_BaconShop_HERO_22"
     # synthetic log doesn't change HP during combat -> tie
     assert outcome == "tie"
+
+
+# -- resim reads through the migrations --------------------------------
+def test_resim_skips_ghost_fights_on_an_unmigrated_database(tmp_path):
+    """resim must open through HistoryDB, never a bare sqlite3.connect.
+
+    The ghost flag it filters on is created by a migration. A reader that
+    skipped them would find no `opponent_is_ghost` column (and, before
+    user_version 1, no 'ghost' outcome either) and quietly resim ghost fights —
+    exactly the failure stats.py carries a comment warning about.
+    """
+    from bgtracker.history.resim import _rows
+
+    path = tmp_path / "history.db"
+    db = HistoryDB(path)
+    game = db.start_game("g1")
+    for turn, hero in ((5, "TB_BaconShop_HERO_KelThuzad"), (6, "TB_BaconShop_HERO_22")):
+        db.conn.execute(
+            "INSERT INTO combats (game_id, turn, opponent_hero, outcome,"
+            " predicted_win, my_board, opp_board) VALUES (?,?,?,?,?,?,?)",
+            (game, turn, hero, "tie", 50.0, "{}", "{}"),
+        )
+    # Strip every trace of the migrations, as a database written before them.
+    db.conn.execute("UPDATE combats SET opponent_is_ghost = NULL")
+    db.conn.execute("PRAGMA user_version = 0")
+    db.conn.commit()
+    db.close()
+
+    # A bare connection is what resim used to open: no migration runs, the
+    # ghost row is unflagged, and it sails straight through the filter.
+    raw = sqlite3.connect(path)
+    assert len(_rows(raw, None)) == 2, "precondition: unmigrated, both rows visible"
+    raw.close()
+
+    # Through HistoryDB the migration flags the ghost first, so it drops out.
+    migrated = HistoryDB(path)
+    rows = _rows(migrated.conn, None)
+    migrated.close()
+    assert [r[1] for r in rows] == ["TB_BaconShop_HERO_22"]
+
+
+def test_resim_also_drops_a_ghost_fight_that_cost_hp(tmp_path):
+    """The flag, not the outcome. A ghost loss is a genuine loss and records one,
+    but its prediction still cannot be scored — same predicate stats.py uses."""
+    from bgtracker.history.resim import _rows
+
+    db = HistoryDB(tmp_path / "history.db")
+    game = db.start_game("g1")
+    ghost = _board(2, 0, hero="TB_BaconShop_HERO_KelThuzad")
+    prediction = SimResult(won_percent=95, tied_percent=0, lost_percent=5,
+                           avg_damage_won=10, avg_damage_lost=4, sims_run=8000)
+    db.record_combat(game, BoardSnapshot(turn=9, friendly=_board(1, 20), opponent=ghost),
+                     prediction, "loss")
+    assert _rows(db.conn, None) == []
+    db.close()

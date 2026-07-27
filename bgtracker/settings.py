@@ -322,6 +322,33 @@ def example_toml() -> str:
     return "\n".join(out)
 
 
+def sanitize(cfg: Config) -> Config:
+    """Bring a freshly loaded Config inside the schema, in place.
+
+    `load_config` walks the dataclass fields and assigns raw TOML, so nothing
+    on that path has ever met `Setting.coerce` — a hand-edited
+    `sim_count = 99999999`, `poll_active = 0` (which spins the tail loop), or
+    `log_level = "chatty"` all used to load verbatim. Coercion clamps what is
+    merely out of range; a value the schema cannot represent at all falls back
+    to the default with a warning, because **refusing to start is the one
+    outcome a config typo must not have** — the tracker is normally launched by
+    the game, where a traceback goes nowhere anybody reads.
+    """
+    for setting in SETTINGS:
+        raw = getattr(cfg, setting.key)
+        try:
+            value = setting.coerce(raw)
+        except (ValueError, TypeError):
+            log.warning(
+                "config: %s = %r is not valid; using the default (%r)",
+                setting.key, raw, setting.default,
+            )
+            value = setting.default
+        if value != raw:
+            setattr(cfg, setting.key, value)
+    return cfg
+
+
 def defaults_config() -> Config:
     """A Config carrying nothing but defaults — the target of "reset all"."""
     cfg = Config()
@@ -363,7 +390,10 @@ class SettingsService:
     """
 
     def __init__(self, cfg: Config, path: Path | None = None):
-        self.cfg = cfg
+        # Every entry point builds the service straight from `load_config()`,
+        # which does no validation of its own — so this is where a hand-edited
+        # file gets brought inside the schema, once, before anything reads it.
+        self.cfg = sanitize(cfg)
         self.path = path
         self._subscribers: dict[str, list] = {}
 
@@ -473,5 +503,5 @@ class SettingsService:
 __all__ = [
     "BY_KEY", "SECTIONS", "SETTINGS", "Setting", "SettingsService",
     "by_section", "coerce", "defaults_config", "example_toml",
-    "missing_settings",
+    "missing_settings", "sanitize",
 ]

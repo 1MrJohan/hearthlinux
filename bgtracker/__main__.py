@@ -22,7 +22,7 @@ from bgtracker.diagnostics import status
 from bgtracker.data import cards
 from bgtracker.history.db import HistoryDB
 from bgtracker.logwatch.session import newest_session_dir, power_log_path, prune_old_sessions
-from bgtracker.logwatch.tailer import Tailer
+from bgtracker.logwatch.tailer import Tailer, poll_delay
 from bgtracker.parse.exporter import LiveGameProcessor
 from bgtracker.settings import SIM, SIM_RESPAWN, TAILER, SettingsService
 from bgtracker.sim.client import SimClient
@@ -112,6 +112,11 @@ async def live(settings: SettingsService, overlay=None) -> None:
     processor = None
     session_started = None
     warned_no_log = False
+    # Consecutive empty reads. Without this the log is stat()ed four times a
+    # second forever, including all the time spent at the menu — and the
+    # poll_idle setting, which advertises exactly this behaviour, would do
+    # nothing at all.
+    idle_streak = 0
     try:
         while True:
             if retarget.is_set():
@@ -132,9 +137,11 @@ async def live(settings: SettingsService, overlay=None) -> None:
                     processor = LiveGameProcessor()
                     session_started = asyncio.get_running_loop().time()
                     warned_no_log = False
+                    idle_streak = 0   # a new session is activity by definition
                     status.session = session.name
             if tailer and processor:
                 lines = tailer.read_new_lines()
+                idle_streak = 0 if lines else idle_streak + 1
                 status.note_lines(len(lines))
                 await pipeline.handle(processor.feed(lines))
                 if (
@@ -149,7 +156,7 @@ async def live(settings: SettingsService, overlay=None) -> None:
                         "entered a match. If it stays missing during a game, logging "
                         "is broken: run `python -m bgtracker doctor` and restart Hearthstone."
                     )
-            await asyncio.sleep(cfg.poll_active)
+            await asyncio.sleep(poll_delay(cfg, idle_streak))
     finally:
         if sim:
             await sim.close()

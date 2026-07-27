@@ -12,12 +12,11 @@ neither confirm nor contradict a prediction.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from bgtracker.data import cards
-from bgtracker.history.db import DB_FILE, board_from_json
+from bgtracker.history.db import DB_FILE, HistoryDB, board_from_json
 from bgtracker.sim.client import SimClient
 from bgtracker.sim.mapper import to_battle_info
 from bgtracker.state.game import BoardSnapshot
@@ -40,12 +39,15 @@ class Row:
         return abs(self.now - self.then)
 
 
-def _rows(conn: sqlite3.Connection, limit: int | None) -> list[tuple]:
+def _rows(conn, limit: int | None) -> list[tuple]:
     sql = (
         "SELECT turn, opponent_hero, outcome, predicted_win, my_board, opp_board"
         " FROM combats"
         " WHERE my_board IS NOT NULL AND opp_board IS NOT NULL"
-        " AND (outcome IS NULL OR outcome != 'ghost')"
+        # The flag, not the outcome: a ghost fight that cost HP is recorded as a
+        # genuine 'loss', and it still cannot score a prediction. Same predicate
+        # stats.py uses, for the same reason.
+        " AND COALESCE(opponent_is_ghost, 0) = 0"
         " ORDER BY id DESC"
     )
     if limit:
@@ -56,9 +58,13 @@ def _rows(conn: sqlite3.Connection, limit: int | None) -> list[tuple]:
 async def resim(path: Path = DB_FILE, limit: int | None = None) -> str:
     if not path.is_file():
         return "no match history yet"
-    conn = sqlite3.connect(path)
-    stored = _rows(conn, limit)
-    conn.close()
+    # Opened through HistoryDB, never a bare sqlite3.connect: the migrations
+    # live there, and the ghost flag this filters on is one of them. A reader
+    # that skipped them would silently resim ghost fights on any database
+    # written before the flag existed.
+    db = HistoryDB(path)
+    stored = _rows(db.conn, limit)
+    db.close()
     if not stored:
         return "no recorded combats with stored boards"
 

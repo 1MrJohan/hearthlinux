@@ -27,7 +27,7 @@ a personal-use tool.
 ## Commands
 
 ```bash
-# Setup (Arch/CachyOS system deps: python-gobject gtk4 gtk4-layer-shell nodejs)
+# Setup (Arch/CachyOS system deps: python-gobject gtk4 gtk4-layer-shell python-xlib nodejs)
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -e .
 (cd sidecar && npm install)
@@ -356,6 +356,18 @@ Non-obvious constraints:
   swallows clicks instead of passing them to Hearthstone. `_input_rects()` is the whole
   list, and it should stay this short — every entry is a hole in the click-through
   guarantee.
+- **`HoverStrips` must present itself, and must cancel its poll before it dies.**
+  Both are load-bearing and neither is obvious, because the window is invisible in
+  live mode and looks like it needs neither. It is rebuilt on every `HOVER` change —
+  which is `hover_strips`, `hover_debug` **and all five `leaderboard_*` calibration
+  settings**, the ones a user nudges repeatedly. Unpresented it is never realized, so
+  it has no surface: the `realize` handler that uploads the input region never runs,
+  the `hover_debug` boxes never draw, and `destroy()` **segfaults** — GTK dereferences
+  the surface while removing the window from the application. Separately, the X11
+  pointer poll is a GLib source and outlives the widget, so `stop()` before `destroy()`
+  is what keeps ten calibration nudges from leaving eleven pollers fighting over the
+  scout popout with stale geometry. `tests/test_overlay_hover.py` covers both, the
+  crash out of process because an exit code is the only assertion a segfault can't eat.
 - **Never write an unscoped `window { … }` rule.** These CSS providers attach to the
   *display*, not to a window, so a bare selector reaches every window the process
   opens. `theme.py` and `hover.py` each used to load their own

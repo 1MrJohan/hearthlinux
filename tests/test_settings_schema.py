@@ -117,3 +117,42 @@ def test_coerce_passes_unknown_keys_through():
 
 def test_defaults_config_matches_a_fresh_config():
     assert settings.defaults_config() == Config()
+
+
+# -- sanitising a loaded config ----------------------------------------
+def test_a_hand_edited_config_is_brought_inside_the_schema():
+    """`load_config` assigns raw TOML, so this is the only thing that clamps it.
+
+    Coercion used to be reachable only through the settings *window*, which
+    meant an absurd hand-edited value loaded verbatim — `poll_active = 0` in
+    particular would spin the tail loop.
+    """
+    cfg = settings.sanitize(Config(sim_count=10**9, poll_active=0.0, overlay_scale=99.0))
+    assert cfg.sim_count == 50000
+    assert cfg.poll_active == 0.05
+    assert cfg.overlay_scale == 3.0
+
+
+def test_a_value_the_schema_cannot_represent_falls_back_to_the_default():
+    """Never raise on load. The tracker is normally launched by the game, where
+    a traceback from a config typo goes nowhere anybody will ever read."""
+    cfg = settings.sanitize(Config(log_level="chatty", sim_timeout=None))
+    assert cfg.log_level == "info"
+    assert cfg.sim_timeout == 6.0
+
+
+def test_sanitize_leaves_a_default_config_untouched():
+    assert settings.sanitize(Config()) == Config()
+
+
+def test_sanitize_preserves_nullable_settings():
+    # None is meaningful for these ("auto"); clamping it away would pin the
+    # overlay to one scale and one monitor.
+    cfg = settings.sanitize(Config())
+    assert cfg.overlay_scale is None and cfg.overlay_monitor is None
+    assert cfg.hearthstone_dir is None
+
+
+def test_the_service_sanitizes_what_it_is_handed():
+    service = settings.SettingsService(Config(sim_count=10**9), path=None)
+    assert service.cfg.sim_count == 50000

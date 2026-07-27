@@ -311,7 +311,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
     try {
         if (msg.op === 'ping') out({ id: msg.id, result: 'pong' });
-        else if (msg.op === 'simulate') simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline);
+        // simulate() is async and deliberately not awaited — the readline
+        // handler must stay free to take the next line. That makes the catch
+        // mandatory: an unhandled rejection (a postMessage to a worker retired
+        // between poolReady() and dispatch, say) terminates the process, which
+        // would take the sidecar down mid-game instead of failing one fight.
+        else if (msg.op === 'simulate') {
+            simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline)
+                .catch((e) => out({ id: msg.id, error: String(e?.stack ?? e) }));
+        }
         else out({ id: msg.id, error: `unknown op: ${msg.op}` });
     } catch (e) {
         out({ id: msg.id, error: String(e?.stack ?? e) });

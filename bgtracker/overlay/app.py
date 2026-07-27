@@ -89,12 +89,16 @@ class OverlayApp:
         st.hot_place = entry.place if entry else None
         if entry is None:
             if slot is not None:
-                log.info("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, standings)
+                log.debug("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, standings)
             st.hover_board = None
             self._flush()
             return
         seen = self.pipeline.memory.last_seen(entry.player_id) if self.pipeline else None
-        log.info(
+        # DEBUG, not INFO: this fires on every pointer move across the rail, and
+        # log_to_file is on by default — at INFO it churns the rotating log for
+        # nothing. `hover_debug` already advertises itself as what turns slot
+        # logging on, and the log level is what does that.
+        log.debug(
             "hover-lookup: slot %s -> place %s %s pid=%s seen=%s",
             slot, entry.place, entry.hero_card_id, entry.player_id,
             f"turn {seen.turn}" if seen else None,
@@ -153,6 +157,12 @@ class OverlayApp:
         """(Re)build the leaderboard hover column, if it is enabled at all."""
         cfg = self.settings.cfg
         if self.hover is not None:
+            # Before destroy(): the X11 pointer poll is a GLib source, which
+            # outlives the window unless it is cancelled. This method runs on
+            # every HOVER-channel change, so leaking one poll per call means a
+            # handful of calibration nudges leaves several of them fighting
+            # over the scout popout with stale geometry.
+            self.hover.stop()
             self.hover.destroy()
             self.hover = None
         if not cfg.hover_strips:
@@ -191,10 +201,14 @@ class OverlayApp:
         self._build_hover()
 
     def _on_hud_hover(self, hovered: bool) -> None:
+        # Only the HUD. This used to also present the hover window, which was
+        # never about hovering: that call was the last line of the HoverStrips
+        # construction block until this method was inserted directly above it
+        # and swallowed it. Construction was then left without a present, and an
+        # unrealized window is what made rebuilding the hover column segfault.
+        # Presentation now belongs to HoverStrips itself.
         if self.window is not None:
             self.window.set_hud_hovered(hovered)
-            if self.hover is not None:
-                self.hover.present()
 
     def open_settings(self) -> None:
         from .settings_window import SettingsWindow

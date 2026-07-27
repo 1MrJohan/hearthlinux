@@ -118,6 +118,21 @@ def _check_overlay():
     except Exception as exc:
         yield ("bad", f"overlay deps unavailable ({exc}) — "
                       "install: sudo pacman -S python-gobject gtk4 gtk4-layer-shell")
+    # The overlay itself runs without this; only the hover column does not.
+    # Worth its own line because the failure is silent — the game keeps its
+    # native preview, so a missing scout popout looks like a calibration
+    # problem rather than a missing package.
+    try:
+        # The same two modules hover.py imports, so a partial install is caught
+        # here rather than silently at the first hover. __import__ keeps this an
+        # honest import (a broken package fails) without an unused binding.
+        __import__("Xlib.display")
+        __import__("Xlib.ext.randr")
+
+        yield ("ok", "python-xlib available (leaderboard hover column)")
+    except Exception as exc:
+        yield ("bad", f"python-xlib missing ({exc}) — the leaderboard hover column "
+                      "and scout popout are disabled; install: sudo pacman -S python-xlib")
 
 
 async def checks(cfg: Config | None = None):
@@ -126,7 +141,11 @@ async def checks(cfg: Config | None = None):
     Async because the simulator check has to talk to the sidecar; the settings
     window consumes this directly on the shared loop.
     """
-    cfg = cfg if cfg is not None else load_config()
+    # Same sanitising the SettingsService does, so `doctor` diagnoses the
+    # values the tracker would actually run with rather than the raw file.
+    from bgtracker.settings import sanitize
+
+    cfg = cfg if cfg is not None else sanitize(load_config())
     state = "present" if CONFIG_FILE.is_file() else "defaults"
     yield ("plain", f"config file: {CONFIG_FILE} ({state})")
     # `yield from` is not available inside an async generator.

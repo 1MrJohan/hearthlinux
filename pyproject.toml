@@ -9,7 +9,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-overlay = ["PyGObject>=3.50"]
+# python-xlib is not optional *within* the overlay: Hearthstone runs on
+# XWayland, so the leaderboard hover column detects the pointer by polling the
+# X11 cursor rather than capturing it (which would break the game's own
+# board preview). Without it the scout popout silently never fires.
+overlay = ["PyGObject>=3.50", "python-xlib>=0.33"]
 
 [tool.setuptools.packages.find]
 include = ["bgtracker*"]

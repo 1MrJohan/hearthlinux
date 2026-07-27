@@ -67,6 +67,13 @@ class HoverStrips(Gtk.Window):
         self.on_hud = on_hud
         self._current: int | None = None
         self._hud_hot = False
+        # The X11 pointer poll is a GLib source, and a GLib source outlives the
+        # window that started it. This window is rebuilt on every HOVER-channel
+        # change — which includes all five leaderboard_* calibration settings —
+        # so an un-cancelled poll would leave one extra 12.5Hz X11 query per
+        # nudge, each still calling the shared on_slot with its own stale
+        # `_current` and a rail_rect bound to a destroyed OverlayWindow.
+        self._poll_source: int | None = None
 
         self.cfg = cfg
         self.top_frac = float(cfg.leaderboard_top_frac)
@@ -114,6 +121,8 @@ class HoverStrips(Gtk.Window):
         self.add_css_class("bg-overlay")
 
         self.connect("realize", self._set_input_region)
+        # Safety net for any caller that destroys without calling stop() first.
+        self.connect("destroy", lambda *_: self.stop())
 
         if self.edit:
             drag = Gtk.GestureDrag()
@@ -132,6 +141,21 @@ class HoverStrips(Gtk.Window):
             # LIVE: capture nothing (game keeps its native preview); poll the
             # X11 cursor to detect which box we're over.
             self._setup_pointer_poll(wanted)
+
+        # Presented here, not left to the caller. Everything this window does
+        # needs a realized surface, and without one it is not merely idle:
+        #
+        #  * `_set_input_region` runs on `realize`, so layout mode's boxes would
+        #    never accept the drag that calibrates them;
+        #  * the `hover_debug` boxes would never be drawn;
+        #  * **`destroy()` segfaults.** GTK dereferences the window's surface
+        #    while removing it from the application, and an unrealized window
+        #    has none — so rebuilding on any HOVER-channel change (which is
+        #    every calibration setting) took the whole overlay down.
+        #
+        # Live mode presents an empty, click-through, transparent surface, which
+        # is exactly what this window is meant to be.
+        self.present()
 
     # -- geometry -------------------------------------------------------
     def _band(self) -> tuple[int, int]:
@@ -236,9 +260,20 @@ class HoverStrips(Gtk.Window):
             log.warning("pointer poll setup failed (%s)", exc)
             return
         log.info("live hover via X11 pointer poll; monitor origin (%d,%d)", self._mon_x, self._mon_y)
-        GLib.timeout_add(80, self._poll_pointer)
+        self._poll_source = GLib.timeout_add(80, self._poll_pointer)
+
+    def stop(self) -> None:
+        """Cancel the pointer poll. Idempotent; call before destroying."""
+        if self._poll_source is not None:
+            GLib.source_remove(self._poll_source)
+            self._poll_source = None
 
     def _poll_pointer(self):
+        # Belt and braces: `stop()` removes the source, but a callback already
+        # queued when it ran would otherwise still fire once against a window
+        # that is on its way out.
+        if self._poll_source is None:
+            return GLib.SOURCE_REMOVE
         try:
             p = self._xroot.query_pointer()
         except Exception:
