@@ -179,6 +179,16 @@ SETTINGS: tuple[Setting, ...] = (
         "it restarts the sidecar.",
         channel=SIM_RESPAWN, choices=("auto", "off"),
     ),
+    Setting(
+        "sim_shop_workers", "simulator", "int", 1,
+        "Workers reserved for shop odds",
+        "The recruit-phase forecast is a guide against a board of stated age, "
+        "re-run every time you buy, sell or reposition. Giving it its own "
+        "worker keeps it from taking the whole pool the real combat forecast "
+        "needs, at the cost of it firming up more slowly. 0 shares the pool, "
+        "which is the older behaviour.",
+        channel=SIM, minimum=0, maximum=4, step=1,
+    ),
 
     # -- game & logs ----------------------------------------------------
     Setting(

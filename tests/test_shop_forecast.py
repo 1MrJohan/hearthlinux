@@ -15,9 +15,11 @@ class StubSim:
 
     def __init__(self):
         self.calls: list[int] = []
+        self.lanes: list[bool] = []
 
-    async def simulate(self, battle_info, on_partial=None, sims=None):
+    async def simulate(self, battle_info, on_partial=None, sims=None, background=False):
         self.calls.append(sims)
+        self.lanes.append(background)
         return SimResult(
             won_percent=55, tied_percent=5, lost_percent=40,
             avg_damage_won=10, avg_damage_lost=8, sims_run=sims or 8000,
@@ -156,3 +158,26 @@ def test_catch_up_still_remembers_the_boards_it_saw():
         return pipe.memory.last_seen(7)
 
     assert asyncio.run(run()) is not None
+
+
+def test_the_shop_forecast_runs_in_the_background_lane():
+    """A guide the player is shuffling minions against has no business taking
+    the whole worker pool the real fight needs."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1, minions=2), turn=8)])
+        await _drain(pipe)
+        return sim.lanes
+
+    assert asyncio.run(run()) == [True]
+
+
+def test_the_combat_forecast_runs_in_the_foreground_lane():
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(4, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)])
+        return sim.lanes
+
+    assert asyncio.run(run()) == [False]

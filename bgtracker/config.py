@@ -48,6 +48,10 @@ class Config:
     # sidecar at SCHED_IDLE / nice 19 and, on a hybrid CPU, pins it to the
     # efficiency cores. "off" is the old behaviour, for bisecting.
     sim_cpu_policy: str = "auto"
+    # Workers set aside for the recruit-phase shop forecast, so a guide the
+    # player is shuffling minions against cannot take the pool the real fight
+    # needs. 0 = no reservation (both share the whole pool).
+    sim_shop_workers: int = 1
 
     # -- overlay ---------------------------------------------------------
     # None = derive from the monitor height so the HUD occupies the same share

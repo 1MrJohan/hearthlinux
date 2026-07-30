@@ -49,6 +49,13 @@
 # restarts the sidecar.
 # sim_cpu_policy = "auto"
 
+# The recruit-phase forecast is a guide against a board of stated age, re-
+# run every time you buy, sell or reposition. Giving it its own worker keeps
+# it from taking the whole pool the real combat forecast needs, at the cost
+# of it firming up more slowly. 0 shares the pool, which is the older
+# behaviour.
+# sim_shop_workers = 1
+
 # ---- Game & Logs -----------------------------------------------------------
 
 # The folder containing Logs/. Auto-discovers across Steam compatdata and

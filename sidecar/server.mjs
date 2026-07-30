@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { lanes } from './lanes.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -267,10 +268,12 @@ function onJobTimeout(jobId) {
     }
 }
 
-async function simulate(id, input, sims, workers, deadline) {
+async function simulate(id, input, sims, workers, deadline, background, reserve) {
     await poolReady();
     const total = sims ?? 8000;
-    const usable = Math.max(1, Math.min(pool.length, workers || pool.length));
+    const split = lanes(pool, reserve);
+    const lane = background ? split.bg : split.fg;
+    const usable = Math.max(1, Math.min(lane.length, workers || lane.length));
     const shards = [];
     for (let i = 0; i < usable; i++) {
         // Spread the remainder so the shards differ by at most one trial.
@@ -281,12 +284,12 @@ async function simulate(id, input, sims, workers, deadline) {
         id, expected: usable, shards: {}, done: new Set(), lastPartial: 0,
         // The worker entry each shard went to, so the watchdog can kill exactly
         // the ones that never report back.
-        workers: pool.slice(0, usable), timer: null,
+        workers: lane.slice(0, usable), timer: null,
     };
     inflight.set(jobId, job);
     if (deadline) job.timer = setTimeout(() => onJobTimeout(jobId), deadline);
     shards.forEach((count, i) => {
-        pool[i].worker.postMessage({ jobId, shard: i, input, sims: count });
+        lane[i].worker.postMessage({ jobId, shard: i, input, sims: count });
     });
 }
 
@@ -317,7 +320,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         // between poolReady() and dispatch, say) terminates the process, which
         // would take the sidecar down mid-game instead of failing one fight.
         else if (msg.op === 'simulate') {
-            simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline)
+            simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline,
+                     msg.background, msg.reserve)
                 .catch((e) => out({ id: msg.id, error: String(e?.stack ?? e) }));
         }
         else out({ id: msg.id, error: `unknown op: ${msg.op}` });

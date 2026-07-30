@@ -113,6 +113,7 @@ class SimClient:
         sims: int = 8000,
         workers: int = 0,
         cpu_policy: str = "auto",
+        shop_workers: int = 1,
     ):
         self.sidecar_dir = sidecar_dir
         self.timeout = timeout
@@ -120,6 +121,9 @@ class SimClient:
         # 0 leaves the choice to the sidecar's own default.
         self.workers = workers
         self.cpu_policy = cpu_policy
+        # Workers the sidecar sets aside for background jobs. Read fresh per
+        # request, so it needs no respawn.
+        self.shop_workers = shop_workers
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._next_id = 0
@@ -173,12 +177,23 @@ class SimClient:
                     continue
                 return msg["result"]
 
-    async def simulate(self, battle_info: dict, on_partial=None, sims: int | None = None) -> SimResult:
+    async def simulate(
+        self,
+        battle_info: dict,
+        on_partial=None,
+        sims: int | None = None,
+        background: bool = False,
+    ) -> SimResult:
         """Run a combat.
 
         `on_partial`, if given, is called with a provisional SimResult each time
         the run tightens — a usable number lands in a fraction of the time the
         full run takes, which matters on the boards that take seconds.
+
+        `background` puts the job in the sidecar's reserved lane, at the end of
+        the worker pool. The shop forecast uses it: it is a guide, re-run
+        constantly, and it must not take the workers the real fight needs or
+        share one with it.
         """
         # Give the sidecar a duration budget below our own timeout so it
         # returns a partial-but-valid result instead of us abandoning it.
@@ -195,6 +210,8 @@ class SimClient:
                 "op": "simulate",
                 "input": battle_info,
                 "sims": sims or self.sims,
+                "background": background,
+                "reserve": self.shop_workers,
                 # A board can send the simulator into a non-terminating trial,
                 # hanging the worker with no message, error or exit. Give the
                 # sidecar a deadline just under our own readline timeout so it
@@ -215,11 +232,12 @@ class SimClient:
 
     # -- live reconfiguration -------------------------------------------
     def apply_config(self, cfg) -> None:
-        """Adopt trial count and timeout. Both are read fresh per `simulate()`,
-        so assignment is the entire mechanism — no restart, nothing in flight
-        disturbed."""
+        """Adopt trial count, timeout and lane reservation. All are read fresh
+        per `simulate()`, so assignment is the entire mechanism — no restart,
+        nothing in flight disturbed."""
         self.sims = cfg.sim_count
         self.timeout = cfg.sim_timeout
+        self.shop_workers = cfg.sim_shop_workers
 
     async def reconfigure(self, workers: int, cpu_policy: str) -> bool:
         """Restart the sidecar on new spawn-time settings. Returns whether it moved.

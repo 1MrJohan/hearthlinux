@@ -141,7 +141,9 @@ class Pipeline:
             info = to_battle_info(snapshot)
             if info is None:
                 return
-            result = await self.sim.simulate(info, sims=SHOP_SIM_COUNT)
+            result = await self.sim.simulate(
+                info, sims=SHOP_SIM_COUNT, background=True
+            )
             _apply_damage_cap(result, snapshot)
             event = ev.ShopForecast(
                 opponent_id=self._next_opponent, seen_turn=seen.turn, turn=self._turn
