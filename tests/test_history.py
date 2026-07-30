@@ -365,3 +365,34 @@ def test_re_ending_without_a_placement_keeps_the_recorded_one(tmp_path):
         "SELECT placement FROM games WHERE id=?", (game,)
     ).fetchone()[0] == 2
     db.close()
+
+
+def test_a_later_real_prediction_replaces_an_earlier_one(tmp_path):
+    """Pins the direction of the COALESCE guard, not just its presence.
+    test_re_recording_without_a_prediction_keeps_the_stored_one only writes
+    a real value once, so COALESCE(excluded.X, X) and the reversed
+    COALESCE(X, excluded.X) both pass it — they only disagree when the old
+    value is non-NULL and the new one is also non-NULL. Without this test a
+    reversed guard would freeze the first prediction forever and silently
+    drop every later real one, which is the same class of data loss this
+    task exists to prevent, just pointing the other way."""
+    db = HistoryDB(tmp_path / "h.db")
+    game = db.start_game("2026-07-28T10:00:00")
+    snap = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 30))
+    db.record_combat(game, snap, SimResult(
+        won_percent=61, tied_percent=4, lost_percent=35,
+        avg_damage_won=9, avg_damage_lost=7, sims_run=8000, sim_ms=412.0,
+        lost_lethal_percent=3.0,
+    ), "win")
+    db.record_combat(game, snap, SimResult(
+        won_percent=74, tied_percent=6, lost_percent=20,
+        avg_damage_won=11, avg_damage_lost=5, sims_run=12000, sim_ms=530.0,
+        lost_lethal_percent=1.0,
+    ), "win")
+
+    row = db.conn.execute(
+        "SELECT predicted_win, sims_run, sim_ms FROM combats"
+        " WHERE game_id=? AND turn=5", (game,)
+    ).fetchone()
+    assert row == (74, 12000, 530.0)
+    db.close()
