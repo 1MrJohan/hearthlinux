@@ -113,8 +113,6 @@ def test_a_log_with_no_frames_reports_that_rather_than_dividing_by_zero(mod):
     assert "no frames" in mod.report([])
 ```
 
-Delete the stray `fr = ...` placeholder line before running — it is not part of the test.
-
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_frametime_report.py -v`
@@ -763,7 +761,7 @@ Completes A. After this task the fix is live and measurable.
 
 **Interfaces:**
 - Consumes: `spawn_preexec` from Task 4.
-- Produces: `SimClient(..., cpu_policy: str = "auto")` with a `cpu_policy` attribute, and `SimClient.reconfigure(workers: int, cpu_policy: str) -> bool` replacing `reconfigure_workers`. Task 9 adds a `shop_workers` attribute alongside `cpu_policy`.
+- Produces: `SimClient(..., cpu_policy: str = "auto")` with a `cpu_policy` attribute, and `SimClient.reconfigure(workers: int, cpu_policy: str) -> bool` replacing `reconfigure_workers`. Task 10 adds a `shop_workers` attribute alongside `cpu_policy`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1018,7 +1016,7 @@ EOF
 
 ### Task 6: `resim` reports wall-clock
 
-Turns the existing regression harness into the throughput bench, so Task 10 has numbers to set defaults from.
+Turns the existing regression harness into the throughput bench, so Tasks 7 and 11 have numbers to judge A and set defaults from.
 
 **Files:**
 - Modify: `bgtracker/history/resim.py` (`Row`, the `resim` loop, `_report`)

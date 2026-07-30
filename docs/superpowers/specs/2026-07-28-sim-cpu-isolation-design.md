@@ -160,19 +160,20 @@ the load-bearing part.
 
 ### B1 — the shop forecast stops fanning out
 
-`server.mjs::simulate` already accepts a per-job `workers` count and honours it
-(`usable = max(1, min(pool.length, workers || pool.length))`). `SimClient`
-simply never sends it. Add:
+The shop forecast is marked as background work rather than merely asking for
+fewer workers, because *which* workers matters as much as how many (see the
+lane split below). Add:
 
-- `SimClient.simulate(..., workers: int | None = None)`, passed through to the
-  payload;
+- `SimClient.simulate(..., background: bool = False)`; the payload gains
+  `"background"` and `"reserve"` fields;
 - a `shop_workers` attribute on `SimClient`, set from config in `apply_config`
-  (channel `SIM`, free — read fresh per call, exactly as `sims` already is);
-- `Pipeline._shop_forecast` passes `workers=self.sim.shop_workers`.
+  (channel `SIM`, free — read fresh per call, exactly as `sims` already is),
+  sent as `reserve` on every request;
+- `Pipeline._shop_forecast` passes `background=True`.
 
 | Key | Type | Default | Channel |
 |---|---|---|---|
-| `sim_shop_workers` | int, 0–8 (0 = all) | `1` | `SIM` |
+| `sim_shop_workers` | int, 0–4 (0 = all) | `1` | `SIM` |
 
 Peak parallel load during the recruit phase drops four-fold. The shop number
 arrives in roughly 400ms instead of 100ms, which is the cheap side of the trade
@@ -195,7 +196,10 @@ so it gets fixed here rather than left:
 
 - shop jobs dispatch from the **end** of the pool, combat jobs from the start;
 - a combat job's `usable` excludes the shop workers whenever that leaves it at
-  least one.
+  least one;
+- the arithmetic lives in its own `sidecar/lanes.mjs`, so it can be tested
+  without importing `server.mjs` (which spawns the pool and pays ~350 MB for a
+  card DB per worker).
 
 With the default four workers and `sim_shop_workers = 1` that is 3 for combat,
 1 for shop, and the watchdog's one-job-at-a-time assumption becomes true by
@@ -295,12 +299,14 @@ to notice, it is a small follow-up.
 Two questions, two instruments, and only one of them is new.
 
 **"Did the game stop hitching?"** Nothing in the repo can answer this. Add
-`scripts/frametime-capture.sh`, wrapping MangoHud's logging
-(`MANGOHUD_CONFIG=output_folder=…,log_duration=…`; `mangohud` is already
-installed), plus a small reader that reports mean, 1% low and 0.1% low frame
-times from the CSV. Capture several recruit phases and shop→combat transitions
-before and after each of A and B. The 0.1% low is the number that corresponds to
-"hitch"; a mean FPS figure will hide exactly the thing being fixed.
+`scripts/frametime-report.py`, reading MangoHud's CSV logs and reporting
+median, 1% low, 0.1% low and max frame times. Capture itself stays a manual
+step — MangoHud reads its config from the environment at game launch, which no
+script run later can inject — via `MANGOHUD=1 MANGOHUD_CONFIG=output_folder=…,
+toggle_logging=F2` in the game's launch options. Capture several recruit
+phases and shop→combat transitions before and after each of A and B. The 0.1%
+low is the number that corresponds to "hitch"; a mean FPS figure will hide
+exactly the thing being fixed.
 
 **"Did the odds get worse?"** Already built, and needs only extending.
 `sims_run` is recorded per combat and is a flat 8000 across all 589 rows today,
