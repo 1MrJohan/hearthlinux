@@ -169,6 +169,16 @@ SETTINGS: tuple[Setting, ...] = (
         "seconds and waits for any combat in flight.",
         channel=SIM_RESPAWN, minimum=0, maximum=16, step=1,
     ),
+    Setting(
+        "sim_cpu_policy", "simulator", "choice", "auto",
+        "Keep the simulator off the game's cores",
+        "Runs the sidecar at idle priority, and on a hybrid CPU pins it to the "
+        "efficiency cores so it cannot compete with the game for the fast ones. "
+        "Odds take longer to firm up; a first number still arrives in about a "
+        "tenth of a second. Turn off to bisect a performance problem. Changing "
+        "it restarts the sidecar.",
+        channel=SIM_RESPAWN, choices=("auto", "off"),
+    ),
 
     # -- game & logs ----------------------------------------------------
     Setting(

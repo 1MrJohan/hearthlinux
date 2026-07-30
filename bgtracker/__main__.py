@@ -31,7 +31,10 @@ log = logging.getLogger("bgtracker")
 
 
 async def start_sim(cfg) -> SimClient | None:
-    sim = SimClient(timeout=cfg.sim_timeout, sims=cfg.sim_count, workers=cfg.sim_workers)
+    sim = SimClient(
+        timeout=cfg.sim_timeout, sims=cfg.sim_count, workers=cfg.sim_workers,
+        cpu_policy=cfg.sim_cpu_policy,
+    )
     if await sim.ping():
         status.sidecar_up = True
         status.sidecar_workers = cfg.sim_workers or None
@@ -99,7 +102,9 @@ async def live(settings: SettingsService, overlay=None) -> None:
         settings.subscribe(SIM, lambda _keys: sim.apply_config(cfg))
         settings.subscribe(
             SIM_RESPAWN,
-            lambda _keys: settings.spawn(sim.reconfigure_workers(cfg.sim_workers)),
+            lambda _keys: settings.spawn(
+                sim.reconfigure(cfg.sim_workers, cfg.sim_cpu_policy)
+            ),
         )
     # Re-targeting tears down the tailer, which must happen on the loop rather
     # than inside a GTK signal handler — so the applier only raises a flag and

@@ -44,6 +44,10 @@ class Config:
     # default (4). Each holds its own ~350MB card DB, and throughput flattens
     # past 4, so raising this trades a lot of memory for very little speed.
     sim_workers: int = 0
+    # Keep the simulator off the cores the game is drawing on. "auto" runs the
+    # sidecar at SCHED_IDLE / nice 19 and, on a hybrid CPU, pins it to the
+    # efficiency cores. "off" is the old behaviour, for bisecting.
+    sim_cpu_policy: str = "auto"
 
     # -- overlay ---------------------------------------------------------
     # None = derive from the monitor height so the HUD occupies the same share

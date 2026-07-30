@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from bgtracker.sim.cpu import spawn_preexec
+
 log = logging.getLogger(__name__)
 
 SIDECAR_DIR = Path(__file__).resolve().parent.parent.parent / "sidecar"
@@ -110,12 +112,14 @@ class SimClient:
         timeout: float = 6.0,
         sims: int = 8000,
         workers: int = 0,
+        cpu_policy: str = "auto",
     ):
         self.sidecar_dir = sidecar_dir
         self.timeout = timeout
         self.sims = sims
         # 0 leaves the choice to the sidecar's own default.
         self.workers = workers
+        self.cpu_policy = cpu_policy
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._next_id = 0
@@ -132,6 +136,10 @@ class SimClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=env,
+                # Applied in the child between fork and exec, so every worker
+                # thread the sidecar creates — including ones retireWorker
+                # spawns mid-game — inherits it. None when the policy is off.
+                preexec_fn=spawn_preexec(self.cpu_policy),
             )
             ready = await asyncio.wait_for(self._proc.stdout.readline(), timeout=60)
             info = json.loads(ready)
@@ -213,26 +221,26 @@ class SimClient:
         self.sims = cfg.sim_count
         self.timeout = cfg.sim_timeout
 
-    async def reconfigure_workers(self, workers: int) -> bool:
-        """Restart the sidecar on a new worker count. Returns whether it moved.
+    async def reconfigure(self, workers: int, cpu_policy: str) -> bool:
+        """Restart the sidecar on new spawn-time settings. Returns whether it moved.
 
-        The worker count reaches the sidecar only as an environment variable at
-        spawn (`BGTRACKER_SIM_WORKERS`), so it genuinely cannot change without a
-        restart.
+        Both of these reach the sidecar only at spawn — the worker count as an
+        environment variable, the CPU policy as a `preexec_fn` — so they
+        genuinely cannot change without a restart.
 
         **The lock is the point.** `_request` holds `self._lock` across its
-        `readline()` await, so taking it here means a worker change queues
-        behind any combat forecast already in flight instead of killing the
-        process under it — which would raise "sidecar died mid-request" and
-        leave that fight with no odds at all. Respawning eagerly inside the
-        lock also pays the multi-second card-DB rebuild now, while the user is
-        looking at the settings window, rather than charging it to the next
-        combat's timeout.
+        `readline()` await, so taking it here means a change queues behind any
+        combat forecast already in flight instead of killing the process under
+        it — which would raise "sidecar died mid-request" and leave that fight
+        with no odds at all. Respawning eagerly inside the lock also pays the
+        multi-second card-DB rebuild now, while the user is looking at the
+        settings window, rather than charging it to the next combat's timeout.
         """
-        if workers == self.workers:
+        if workers == self.workers and cpu_policy == self.cpu_policy:
             return False
         async with self._lock:
             self.workers = workers
+            self.cpu_policy = cpu_policy
             await self._stop()
             await self._ensure_proc()
         return True

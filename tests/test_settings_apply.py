@@ -207,7 +207,7 @@ def test_worker_change_waits_for_a_combat_in_flight():
         sim._ensure_proc = lambda: asyncio.sleep(0)
 
         await sim._lock.acquire()          # stand in for a simulate() in flight
-        task = asyncio.create_task(sim.reconfigure_workers(4))
+        task = asyncio.create_task(sim.reconfigure(4, "auto"))
         await asyncio.sleep(0)
         assert not stopped.is_set(), "restarted the sidecar under a live request"
         assert sim.workers == 2, "worker count moved before the lock was free"
@@ -223,6 +223,65 @@ def test_an_unchanged_worker_count_does_not_restart_anything():
     async def scenario():
         sim = SimClient(workers=4)
         sim._stop = lambda: pytest.fail("restarted for a no-op change")
-        assert await sim.reconfigure_workers(4) is False
+        assert await sim.reconfigure(4, "auto") is False
 
     asyncio.run(scenario())
+
+
+def _stubbed_client(**kwargs):
+    """A SimClient whose respawn is recorded instead of performed.
+
+    Spawning for real would build a ~350MB card DB per worker, which is the
+    cost `reconfigure` exists to avoid paying twice.
+    """
+    from bgtracker.sim.client import SimClient
+
+    sim = SimClient(**kwargs)
+    sim.spawned = []
+
+    async def fake_stop():
+        sim.spawned.append("stop")
+
+    async def fake_ensure():
+        sim.spawned.append("start")
+
+    sim._stop = fake_stop
+    sim._ensure_proc = fake_ensure
+    return sim
+
+
+def test_changing_the_cpu_policy_respawns_the_sidecar():
+    """The mask is set at spawn, so the policy genuinely cannot change without
+    a restart — which is why it rides SIM_RESPAWN rather than SIM."""
+    async def run():
+        sim = _stubbed_client(workers=2, cpu_policy="auto")
+        moved = await sim.reconfigure(workers=2, cpu_policy="off")
+        return moved, sim.cpu_policy, sim.spawned
+
+    moved, policy, spawned = asyncio.run(run())
+    assert moved is True
+    assert policy == "off"
+    assert spawned == ["stop", "start"]
+
+
+def test_changing_the_worker_count_still_respawns():
+    async def run():
+        sim = _stubbed_client(workers=2, cpu_policy="auto")
+        moved = await sim.reconfigure(workers=6, cpu_policy="auto")
+        return moved, sim.workers, sim.spawned
+
+    moved, workers, spawned = asyncio.run(run())
+    assert moved is True
+    assert workers == 6
+    assert spawned == ["stop", "start"]
+
+
+def test_reconfigure_is_a_no_op_when_nothing_moved():
+    """Respawning costs a multi-second card-DB rebuild per worker. Doing it on
+    an unchanged value would charge that to whatever combat came next."""
+    async def run():
+        sim = _stubbed_client(workers=4, cpu_policy="auto")
+        moved = await sim.reconfigure(workers=4, cpu_policy="auto")
+        return moved, sim.spawned
+
+    assert asyncio.run(run()) == (False, [])
