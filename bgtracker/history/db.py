@@ -214,11 +214,31 @@ class HistoryDB:
         prediction: SimResult | None,
         outcome: str | None,
     ) -> None:
+        # An upsert rather than INSERT OR REPLACE, because catch-up replays a
+        # session from the top and re-records every combat in it. Once catch-up
+        # stops simulating, that second write carries prediction=None — and
+        # REPLACE would blank the very columns the calibration table is built
+        # from. Boards and the ghost flag are projections of the same log and
+        # overwrite freely; the prediction and the outcome are the ones a null
+        # must never overwrite.
         self.conn.execute(
-            "INSERT OR REPLACE INTO combats (game_id, turn, opponent_hero, predicted_win,"
+            "INSERT INTO combats (game_id, turn, opponent_hero, predicted_win,"
             " predicted_tie, predicted_loss, outcome, my_board, opp_board,"
             " sims_run, sim_ms, predicted_lost_lethal, opponent_is_ghost)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT (game_id, turn) DO UPDATE SET"
+            "  predicted_win  = COALESCE(excluded.predicted_win,  predicted_win),"
+            "  predicted_tie  = COALESCE(excluded.predicted_tie,  predicted_tie),"
+            "  predicted_loss = COALESCE(excluded.predicted_loss, predicted_loss),"
+            "  sims_run       = COALESCE(excluded.sims_run,       sims_run),"
+            "  sim_ms         = COALESCE(excluded.sim_ms,         sim_ms),"
+            "  predicted_lost_lethal ="
+            "    COALESCE(excluded.predicted_lost_lethal, predicted_lost_lethal),"
+            "  outcome        = COALESCE(excluded.outcome,        outcome),"
+            "  opponent_hero  = COALESCE(excluded.opponent_hero,  opponent_hero),"
+            "  my_board          = excluded.my_board,"
+            "  opp_board         = excluded.opp_board,"
+            "  opponent_is_ghost = excluded.opponent_is_ghost",
             (
                 game_id,
                 snapshot.turn,
@@ -240,8 +260,21 @@ class HistoryDB:
         self.conn.commit()
 
     def end_game(self, game_id: int, placement: int | None, final_turn: int) -> None:
+        # A game ends once, and the first time it was seen to end is the true
+        # one. This used to be a plain assignment, so re-recording a finished
+        # game on catch-up stamped ended_at with the replay's clock: 14 games
+        # in the author's database claim durations over three hours, their end
+        # times clustered seconds apart on the evening they were replayed.
+        # Harmless only by luck — review.py groups periods on started_at, which
+        # start_game preserves, and nothing reads ended_at at all.
+        #
+        # placement gets the same treatment for the same reason: GameEnd is
+        # deferred until a placement tag appears, but finalize() can flush one
+        # carrying None, which would blank a real result.
         self.conn.execute(
-            "UPDATE games SET ended_at=?, placement=?, final_turn=? WHERE id=?",
+            "UPDATE games SET ended_at = COALESCE(ended_at, ?),"
+            " placement = COALESCE(?, placement), final_turn = ?"
+            " WHERE id = ?",
             (_now(), placement, final_turn, game_id),
         )
         self.conn.commit()

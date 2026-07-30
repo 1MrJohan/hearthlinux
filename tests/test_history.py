@@ -296,3 +296,72 @@ def test_resim_also_drops_a_ghost_fight_that_cost_hp(tmp_path):
                      prediction, "loss")
     assert _rows(db.conn, None) == []
     db.close()
+
+
+def test_re_recording_without_a_prediction_keeps_the_stored_one(tmp_path):
+    """Catch-up replays a session from the top and re-records every combat.
+    Once it stops simulating them, the second write carries prediction=None —
+    and the calibration table is built from exactly those columns."""
+    db = HistoryDB(tmp_path / "h.db")
+    game = db.start_game("2026-07-28T10:00:00")
+    snap = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 30))
+    db.record_combat(game, snap, SimResult(
+        won_percent=61, tied_percent=4, lost_percent=35,
+        avg_damage_won=9, avg_damage_lost=7, sims_run=8000, sim_ms=412.0,
+        lost_lethal_percent=3.0,
+    ), "win")
+
+    db.record_combat(game, snap, None, "win")
+
+    row = db.conn.execute(
+        "SELECT predicted_win, sims_run, sim_ms, predicted_lost_lethal,"
+        " outcome FROM combats WHERE game_id=? AND turn=5", (game,)
+    ).fetchone()
+    assert row == (61, 8000, 412.0, 3.0, "win")
+    db.close()
+
+
+def test_re_recording_still_refreshes_the_boards(tmp_path):
+    """Boards are projections of the same log, so the newer read wins — only
+    the prediction columns are the ones a null must never blank."""
+    db = HistoryDB(tmp_path / "h.db")
+    game = db.start_game("2026-07-28T10:00:00")
+    first = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 30))
+    second = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 22))
+    db.record_combat(game, first, None, None)
+    db.record_combat(game, second, None, "loss")
+
+    row = db.conn.execute(
+        "SELECT opp_board, outcome FROM combats WHERE game_id=? AND turn=5", (game,)
+    ).fetchone()
+    assert json.loads(row[0])["health"] == 22
+    assert row[1] == "loss"
+    db.close()
+
+
+def test_a_game_ends_once(tmp_path):
+    """end_game stamped ended_at with _now() on every write, so replaying a
+    finished session moved its end time to the replay's clock — 14 games in the
+    author's database claim durations over three hours, their end times
+    clustered seconds apart on the evening they were replayed."""
+    db = HistoryDB(tmp_path / "h.db")
+    game = db.start_game("2026-07-28T10:00:00")
+    db.end_game(game, placement=3, final_turn=24)
+    first = db.conn.execute("SELECT ended_at FROM games WHERE id=?", (game,)).fetchone()[0]
+
+    db.end_game(game, placement=3, final_turn=24)
+    again = db.conn.execute("SELECT ended_at FROM games WHERE id=?", (game,)).fetchone()[0]
+    assert again == first
+
+
+def test_re_ending_without_a_placement_keeps_the_recorded_one(tmp_path):
+    """GameEnd is deferred until a placement tag appears, but finalize() can
+    flush one carrying None. On catch-up that would blank a real placement."""
+    db = HistoryDB(tmp_path / "h.db")
+    game = db.start_game("2026-07-28T10:00:00")
+    db.end_game(game, placement=2, final_turn=24)
+    db.end_game(game, placement=None, final_turn=24)
+    assert db.conn.execute(
+        "SELECT placement FROM games WHERE id=?", (game,)
+    ).fetchone()[0] == 2
+    db.close()
