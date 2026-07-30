@@ -38,7 +38,9 @@ def test_reads_mangohud_csv_and_converts_microseconds_to_ms(tmp_path, mod):
         "58,17241,21,51,2000\n"
         "11,90000,80,52,3000\n"
     )
-    assert mod.read_frametimes(log) == pytest.approx([16.667, 17.241, 90.0])
+    frametimes, discarded = mod.read_frametimes(log)
+    assert frametimes == pytest.approx([16.667, 17.241, 90.0])
+    assert discarded == 0
 
 
 def test_low_is_the_mean_of_the_slowest_fraction(mod):
@@ -65,3 +67,36 @@ def test_report_names_the_numbers_and_the_sample_size(mod):
 
 def test_a_log_with_no_frames_reports_that_rather_than_dividing_by_zero(mod):
     assert "no frames" in mod.report([])
+
+
+def test_implausible_frames_over_threshold_are_excluded_and_counted(tmp_path, mod):
+    """Frames over 2000ms (load screens, paused captures) are filtered out
+    and the count is tracked."""
+    log = tmp_path / "hs.csv"
+    log.write_text(
+        "os,cpu,gpu,ram,kernel,driver\n"
+        "Linux,i9-14900K,RTX,62GB,7.1.5,555\n"
+        "fps,frametime,cpu_load,gpu_load,elapsed\n"
+        "60,16667,20,50,1000\n"
+        "5,2100000,10,60,2000\n"
+        "58,17241,21,51,3000\n"
+        "1,3500000,5,70,4000\n"
+    )
+    frametimes, discarded = mod.read_frametimes(log)
+    assert frametimes == pytest.approx([16.667, 17.241])
+    assert discarded == 2
+
+
+def test_report_shows_discard_count_when_non_zero(mod):
+    """The report mentions discarded frames when the count is greater than
+    zero, so the reader knows they were excluded from the statistics above."""
+    text = mod.report([10.0] * 99 + [100.0], discarded=3)
+    assert "discarded" in text
+    assert "3 frames" in text
+    assert "2000ms" in text
+
+
+def test_report_omits_discard_line_when_zero(mod):
+    """A clean log with no discards should not mention them, to avoid noise."""
+    text = mod.report([10.0] * 99 + [100.0], discarded=0)
+    assert "discarded" not in text

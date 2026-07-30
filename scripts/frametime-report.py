@@ -34,12 +34,15 @@ _US_PER_MS = 1000.0
 _IMPLAUSIBLE_MS = 2000.0
 
 
-def read_frametimes(path: Path) -> list[float]:
+def read_frametimes(path: Path) -> tuple[list[float], int]:
     """Frame times in milliseconds, from a MangoHud CSV log.
 
     The file opens with a system-info preamble (a header row and one data row)
     before the real header, so the columns are found by name rather than by
     position.
+
+    Returns a tuple of (frametimes, discarded_count), where discarded_count
+    is the number of frames filtered out for being implausibly slow (>2000ms).
     """
     rows = list(csv.reader(Path(path).read_text().splitlines()))
     for index, row in enumerate(rows):
@@ -50,6 +53,7 @@ def read_frametimes(path: Path) -> list[float]:
         raise ValueError(f"{path}: no 'frametime' column found")
 
     out: list[float] = []
+    discarded = 0
     for row in rows[index + 1:]:
         if len(row) <= column:
             continue
@@ -59,7 +63,9 @@ def read_frametimes(path: Path) -> list[float]:
             continue
         if 0 < value < _IMPLAUSIBLE_MS:
             out.append(value)
-    return out
+        elif value >= _IMPLAUSIBLE_MS:
+            discarded += 1
+    return out, discarded
 
 
 def low(frametimes_ms: list[float], fraction: float) -> float:
@@ -75,18 +81,24 @@ def low(frametimes_ms: list[float], fraction: float) -> float:
     return sum(worst) / len(worst)
 
 
-def report(frametimes_ms: list[float]) -> str:
+def report(frametimes_ms: list[float], discarded: int = 0) -> str:
     if not frametimes_ms:
         return "no frames in log"
     ordered = sorted(frametimes_ms)
     median = ordered[len(ordered) // 2]
-    return (
+    lines = [
         f"{len(frametimes_ms)} frames\n"
         f"  median    {median:7.2f} ms  ({1000 / median:5.1f} fps)\n"
         f"  1% low    {low(frametimes_ms, 0.01):7.2f} ms\n"
         f"  0.1% low  {low(frametimes_ms, 0.001):7.2f} ms\n"
         f"  max       {ordered[-1]:7.2f} ms"
-    )
+    ]
+    if discarded > 0:
+        lines.append(
+            f"  discarded  {discarded} frames over {_IMPLAUSIBLE_MS:.0f}ms "
+            "(load screen or paused capture)"
+        )
+    return "".join(lines)
 
 
 def main(argv: list[str]) -> int:
@@ -95,7 +107,8 @@ def main(argv: list[str]) -> int:
         return 2
     for path in argv:
         print(f"== {path}")
-        print(report(read_frametimes(Path(path))))
+        frametimes, discarded = read_frametimes(Path(path))
+        print(report(frametimes, discarded))
     return 0
 
 
