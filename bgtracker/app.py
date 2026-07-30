@@ -48,7 +48,12 @@ class Pipeline:
         self._shop_board: PlayerBoard | None = None
         self._shop_task: asyncio.Task | None = None
 
-    async def handle(self, events: list[ev.Event]) -> None:
+    async def handle(self, events: list[ev.Event], historical: bool = False) -> None:
+        """Fan events out. `historical` marks a batch the tracker did not watch
+        happen — the drain of a session log that already existed when it
+        started — so it rebuilds state and memory without paying for odds
+        nobody is waiting on.
+        """
         for event in events:
             print_event(event)
             status.note_event(type(event).__name__)
@@ -75,7 +80,7 @@ class Pipeline:
                     # never queue behind one.
                     self._cancel_shop_forecast()
                     self.memory.record(snap.turn, snap.opponent)
-                    prediction = await self._simulate(snap)
+                    prediction = await self._simulate(snap, historical)
                     self._pending = (snap, prediction)
                 case ev.CombatEnd(snapshot=end_snap):
                     derived = self._finish_combat(end_snap)
@@ -150,8 +155,11 @@ class Pipeline:
             # the tailer or the combat path.
             log.debug("shop forecast failed: %r", exc)
 
-    async def _simulate(self, snapshot: BoardSnapshot) -> SimResult | None:
-        if self.sim is None:
+    async def _simulate(self, snapshot: BoardSnapshot, historical: bool = False) -> SimResult | None:
+        # A combat that already happened cannot be forecast, and the player is
+        # not waiting on it. Ahead of the board check so a catch-up prints
+        # nothing at all.
+        if self.sim is None or historical:
             return None
         info = to_battle_info(snapshot)
         if info is None:

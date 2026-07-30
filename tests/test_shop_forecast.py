@@ -121,3 +121,38 @@ def test_the_forecast_reports_how_old_the_scouted_board_is():
     [(event, prediction)] = asyncio.run(run())
     assert (event.turn, event.seen_turn) == (9, 6)
     assert prediction.won_percent == 55
+
+
+def test_catch_up_does_not_simulate_combats_that_already_happened():
+    """The tailer reads each session log from the top, so a restart mid-session
+    replays every combat in it. Each one used to cost a full 8000-trial run,
+    serialized, while the player is in a game."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(4, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)], historical=True)
+        return sim.calls
+
+    assert asyncio.run(run()) == []
+
+
+def test_a_live_combat_still_gets_odds():
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(4, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)])
+        return sim.calls
+
+    assert asyncio.run(run()) == [None], "one live simulation, at the default trial count"
+
+
+def test_catch_up_still_remembers_the_boards_it_saw():
+    """Skipping the simulation must not skip opponent memory — the scout popout
+    and the shop forecast are both built from boards seen in past combats."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(7, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)], historical=True)
+        return pipe.memory.last_seen(7)
+
+    assert asyncio.run(run()) is not None
