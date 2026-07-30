@@ -2013,19 +2013,50 @@ EOF
 
 ## Measurements
 
-Filled in by Tasks 2, 7 and 11.
+### Frametimes — NOT CAPTURED
 
 | When | 0.1% low | 1% low | median | max | Notes |
 |---|---|---|---|---|---|
-| baseline, tracker stopped | | | | | control |
-| baseline, tracker running | | | | | |
-| after A | | | | | |
-| after A + B | | | | | |
+| baseline, tracker stopped | — | — | — | — | control, not captured |
+| baseline, tracker running | — | — | — | — | not captured |
+| after A | — | — | — | — | not captured |
+| after A + B | — | — | — | — | not captured |
+
+**Outstanding.** MangoHud capture needs a play session set up in advance
+(`MANGOHUD=1 MANGOHUD_CONFIG=output_folder=/tmp/ft,toggle_logging=F2`), and the branch
+merged before one happened. **The hitch diagnosis therefore remains inference, not
+measurement**: the two moments the author reports stuttering are the two moments the
+simulator runs, and the recorded 387ms mean / 1859ms max of unniced four-thread work at a
+combat transition is a plausible cause — but no preempted frame was ever observed. If a
+capture shows the hitches survive the change, the mechanism is not what this branch
+assumed and the design should be reconsidered rather than extended.
+
+### Accuracy — measured, and the change is clean
+
+`resim 40` after change A: **mean drift 0.14 points, 0 rows moved ≥1 point, no
+truncation warning.** Change A cost no accuracy. Every one of the 589 combats recorded
+before this branch has `sims_run = 8000`, so any future row below 8000 is the first sign
+that a scheduling default has gone too far — that is the standing tripwire.
+
+### Throughput — not validly measured
 
 | Config | resim wall mean | wall max | runs under 4000 trials |
 |---|---|---|---|
-| before (P-cores, 4 workers) | | | 0 of 589 recorded |
-| after A (E-cores, 4 workers) | | | |
-| after B (E-cores, 3 + 1) | | | |
-| 6 workers | | | |
-| 8 workers | | | |
+| before (P-cores, 4 workers) | 387 (from `history.db` `sim_ms`) | 1859 | 0 of 589 recorded |
+| after A (E-cores) | *(2170)* | *(8775)* | 0 of 40 |
+| 6 / 8 workers | — | — | not run |
+
+The parenthesised numbers are **discarded, not results.** They were taken while a live
+game was running *and* the author's own tracker was simulating real combats on the same
+16 efficiency cores at the same idle priority — two `SCHED_IDLE` sidecars sharing a lane
+plus the game itself. They are not a measurement of this change.
+
+### `sim_workers` — left at its default, deliberately unmeasured
+
+The plan's open decision is **unresolved**. The default stays `0` (the sidecar's own 4).
+The combat forecast now runs on 3 workers instead of 4, on 4.4 GHz cores instead of
+5.7–6.0, and whether raising the count recovers that was never benched. `resim` can now
+answer it — `SimClient.from_config` means `sim_cpu_policy` and `sim_workers` reach it, and
+`BGTRACKER_SIM_WORKERS=<n> bgtracker resim 40` sweeps the count — but it must be run on a
+quiet machine. Raising the default without that measurement would be exactly the
+argument-instead-of-evidence the spec refused.

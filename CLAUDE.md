@@ -44,6 +44,7 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/python -m bgtracker history               # match history & MMR review window
 .venv/bin/python -m bgtracker mmr 8421              # record a rating reading by hand
 .venv/bin/python -m bgtracker --replay FILE --odds  # replay a saved Power.log
+.venv/bin/python -m bgtracker --replay FILE --record  # …and write its games to history
 .venv/bin/python -m bgtracker --no-names            # skip the card-name DB download
 
 # Tests
@@ -61,9 +62,40 @@ scripts/capture-fixture.sh normal-game
 
 There is no linter configured; `pyflakes` is in the venv if you want a quick check.
 
+`--system-site-packages` is load-bearing, not a convenience: `gi` (PyGObject) is a
+system package and cannot be pip-installed usefully, so the venv runs the *system*
+interpreter — currently 3.14, above the `requires-python = ">=3.12"` floor.
+
 Tests run against synthetic `Power.log` content built by `tests/synthetic.py`, plus any
 real captured fixtures in `tests/fixtures/`. `test_sim_roundtrip.py` shells out to the
-real Node sidecar and self-skips when `node` is missing.
+real Node sidecar and self-skips when `node` is missing. The whole suite is ~320 tests
+in ~23s — fast enough that there is no reason to run a subset and call it done.
+
+## How work gets done here
+
+**Design spec first, for anything with a decision in it.** Specs live in
+`docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md` and are committed *on their own*,
+before the implementation commit. The spec is where the log evidence goes — which tags
+carry the data, what the alternatives were, what makes the read ambiguous — so the
+implementation commit can be about code. Skip it only for a fix whose whole rationale
+fits in the commit message.
+
+**Commits explain the failure, not the diff.** The body says what was wrong, why the
+fix is shaped the way it is, and what the change was verified against (a captured game,
+a resim, a count). `git log` here is the primary record of *why* — several facts in this
+file were promoted out of it. Match that. Feature work goes on a branch and merges
+`--no-ff` with a summary subject.
+
+**Before calling anything done:**
+
+| If you touched | Run |
+|---|---|
+| anything at all | `pytest tests/` — the whole suite, every time |
+| `sim/mapper.py`, the sidecar, or the pinned sim version | `resim`, judged by **Brier direction**, not mean drift |
+| the skin, theme tokens, or any panel | `--overlay --demo`, which renders every state |
+| settings, `Config`, or `config.example.toml` | `test_settings_schema.py` — it catches half-added options |
+| the sidecar spawn, `sim/cpu.py`, or `sidecar/lanes.mjs` | a MangoHud capture read with `scripts/frametime-report.py`, judged on the **0.1% low** — a mean FPS hides a hitch |
+| nothing yet, but this is a new machine | `scripts/layer-shell-probe.py` before the first `--overlay` |
 
 ## Architecture
 
@@ -108,6 +140,66 @@ a card DB itself, because each worker already pays ~350MB for one. Two rules the
 A run streams `{"id": n, "partial": {...}}` lines as it tightens before the final
 `result`, so a number reaches the HUD in a fraction of the time a heavy 7v7 board takes.
 
+**The sidecar runs where the game is not.** `sim_cpu_policy = "auto"` (the default) spawns
+it under a `preexec_fn` from `sim/cpu.py` that applies CPU affinity to the machine's
+efficiency cores, `SCHED_IDLE`, and an absolute `setpriority` of 19. Twelve percent
+utilisation was never the problem — a hitch is one preempted frame — so the fix is denying
+the simulator the cores the game draws on, not finding it more cores. Three things there
+are easy to get wrong:
+
+- **It must be applied before `exec`, not to the running process.** Affinity and
+  scheduling policy are per-*thread* on Linux and inherited at thread creation, never
+  applied retroactively. The sidecar's workers exist before the parent reads the `ready`
+  line, and `retireWorker` spawns more mid-game, so `preexec_fn` is the only point that
+  covers every thread with no race and no walk of `/proc/<pid>/task`.
+- **The applier must never raise.** An exception inside a `preexec_fn` comes back to the
+  parent as a `SubprocessError`, so a kernel refusing one of these would take the sidecar
+  down rather than merely run it at normal priority. Each call is guarded separately, and
+  the body must stay three thin syscall wrappers — `fork()`'s hazard is a lock held by
+  another thread, and this process has runtime-owned threads (asyncio's child handling,
+  GLib) even though CLAUDE.md forbids adding our own.
+- **Efficiency cores are found by frequency tier, and only the lowest one counts.**
+  `/sys/devices/system/cpu/types/intel_atom/cpulist` is preferred but absent on the
+  author's kernel, so the fallback groups `cpuinfo_max_freq` and takes the slowest group.
+  Turbo Boost Max gives two P-cores a *higher* ceiling than their siblings (6.0 vs 5.7 GHz
+  on a 14900K), so "anything below the top tier" would classify fourteen P-cores as
+  efficiency silicon and pin the simulator onto exactly the cores this keeps clear.
+  `cpu_capacity` is unusable — on x86 the kernel reports 1024 for every CPU.
+
+The trade is deliberate and one-directional: odds get **slower**, never wrong. Latency and
+sample size are what the simulator can give up, because `maxAcceptableDuration` truncates
+a starved run and the sidecar pools whatever shards finished. `sims_run` records what the
+number is actually backed by.
+
+**The pool is split into two lanes, and that is what makes retiring a stuck worker safe
+— not the request lock.** `SimClient._request` holds `_lock` across its `readline()`, so
+one job is in flight at a time *except on cancellation*: `_cancel_shop_forecast` raises
+`CancelledError` at the `await`, which releases the lock while the sidecar job keeps
+running. The watchdog's `retireWorker` then `terminate()`s a worker and its `retired`
+flag suppresses the exit handler — so a worker shared between two jobs would cost the
+other job its shards with **no error anywhere**. `sidecar/lanes.mjs` gives the combat
+forecast the head of the pool and the shop forecast the tail, so they cannot share one.
+Three things there are load-bearing:
+
+- **A replaced worker is spliced back in at the vacated index, never appended.**
+  `retireWorker` removes at `i` and `spawnWorker(i)` puts the replacement back at `i`.
+  Appending would shift every later worker left and move the lane boundary out from
+  under a job already dispatched against it — the old background worker becomes
+  foreground, and the guarantee silently degrades from by-construction to by-luck.
+- **Readiness is awaited per lane, not per pool.** A foreground job that waited on
+  `poolReady()` would block on a background worker rebuilding its ~350MB card DB and
+  could burn its own timeout — no odds for the fight of record, which is the exact
+  outcome the lanes exist to protect. `notReady(lane)` re-reads the pool each poll,
+  because a retirement splices it while the loop is awaiting.
+- **With a pool of one the isolation does not exist.** `lanes()` clamps the reservation
+  to `n-1`, so at one worker both lanes are the same worker and the foreground keeps it.
+  That is deliberate — the real fight is what somebody is waiting on — but it means
+  `sim_workers = 1` silently has no lane separation.
+
+`failAllFor` still fails *every* in-flight job when any worker errors or exits non-zero,
+so a dying shop worker can still cost a concurrent combat forecast its odds. The lanes
+only close the silent `terminate()` path. Known and unfixed.
+
 The overlay is a *listener*, never a driver. `OverlayApp.on_event` is a pure
 event→widget translation; adding data to the overlay means adding it to the snapshot
 and the event, not reaching back into the parser.
@@ -115,22 +207,88 @@ and the event, not reaching back into the parser.
 `overlay/app.py` runs GTK and asyncio on **one** loop via `gi.events.GLibEventLoopPolicy`
 (PyGObject ≥ 3.50) — tailer, sim client, and UI are all single-threaded. Don't add threads.
 
+### Match history and MMR
+
+`history/db.py` owns the schema (`games`, `combats`, `ratings`) and every write;
+`history/review.py` is the read side — periods, game drill-down, MMR — and holds **no
+GTK import**, so `overlay/history_window.py` is a thin renderer and the same views could
+grow a CLI later. Three rules there, each of which is a correctness question rather than
+a style one:
+
+- **Adding a column to `combats` needs an `ALTER`, not a schema edit.**
+  `CREATE TABLE IF NOT EXISTS` silently leaves an existing table alone, so a column added
+  only to `_SCHEMA` works on a fresh database and is missing on the author's real one.
+  New columns go in `_ADDED_COMBAT_COLUMNS`; a one-shot *data* fixup instead bumps
+  `_USER_VERSION` and adds a guarded block in `_migrate()`.
+- **Timestamps are stored UTC and grouped in the caller's timezone.** "How did I do on
+  Tuesday" is a local-calendar question, so the bucketing happens at read time.
+- **Every write is a COALESCE upsert, because catch-up re-records.** `start_game` resumes
+  an existing row by `log_id` and a restart replays the whole session log, so
+  `record_combat` and `end_game` are called again for games already recorded. They used
+  to be `INSERT OR REPLACE` and a bare `SET`, which was harmless only while the replay
+  re-predicted everything — and catch-up no longer simulates, so a null would now blank
+  the prediction columns the calibration table is built from. `record_combat` guards
+  every prediction column, the outcome and `opponent_hero` with
+  `COALESCE(excluded.X, X)`; boards and the ghost flag overwrite freely, being
+  projections of the same log. **The two guards in `end_game` deliberately point opposite
+  ways**: `ended_at = COALESCE(ended_at, ?)` keeps the *first* value because a game ends
+  once, while `placement = COALESCE(?, placement)` prefers the *new* one because
+  `finalize()` can flush a `GameEnd` carrying `None`. Do not make them consistent.
+  Fourteen games written before this fix still claim durations over three hours — their
+  `ended_at` was stamped with a replay's clock. Left as they are: the real values are
+  gone, nothing reads `ended_at`, and a fixup that guessed would be worse.
+- **MMR readings are manual snapshots, not per-game facts**, and every derived number is
+  held to what they can honestly support: a period's net is the difference between the
+  last readings either side of it, and a single game gets a delta *only* when it is the
+  only game between two consecutive readings. Do not interpolate to fill the gaps.
+
+The window opens the DB per refresh and closes it again, and re-queries whenever it
+becomes the active window. Reads are cheap at this scale, and a cached handle would
+survive a `Delete history` reset still pointing at an unlinked file.
+
 ### Layer boundaries
 
 | Concern | Lives in |
 |---|---|
 | Log discovery, `log.config` bootstrap | `discovery.py` |
+| XDG paths; `Config` fields *are* the recognised key list | `config.py` |
+| Card names, tribes, pool-spell flags; card art fetch/cache | `data/cards.py`, `data/art.py` |
 | Raw line → typed event | `parse/` |
 | Entity tree → dataclasses | `state/game.py` |
+| Opponent boards remembered between sightings | `state/opponents.py` |
 | Event fan-out, outcome classification | `app.py` |
 | Snapshot → simulator JSON | `sim/mapper.py` |
+| JSON-lines transport, request lock, worker reconfigure | `sim/client.py` |
+| Efficiency-core detection; the sidecar's scheduling policy | `sim/cpu.py` |
+| Trial sharding, worker pool, hang watchdog | `sidecar/server.mjs`, `sidecar/sim-worker.mjs` |
+| Which workers a job may use (foreground vs background lane) | `sidecar/lanes.mjs` |
+| History schema, migrations, writes | `history/db.py` |
+| History read-side queries (periods, games, MMR) | `history/review.py` |
+| Calibration table; the resim regression harness | `history/stats.py`, `history/resim.py` |
 | Widget layout & plumbing | `overlay/window.py`, `hud.py`, `rail.py`, `widgets.py` |
 | Colours, sizes, fonts, stylesheet | `overlay/theme.py` (design tokens only) |
 | What the overlay is showing, as data | `overlay/model.py` |
+| Fake events that drive `--demo` | `overlay/demo.py` |
 | Option metadata, validation, live apply | `settings.py` |
-| Settings UI | `overlay/settings_window.py` |
+| Settings UI / match-history UI | `overlay/settings_window.py`, `overlay/history_window.py` |
 | Log handlers and level | `logging_setup.py` |
 | Live status and the diagnostics bundle | `diagnostics.py` |
+
+### Where state lives on disk
+
+Everything is XDG, resolved in `config.py`; nothing is written beside the source tree.
+
+```
+~/.config/hs-bg-tracker/config.toml    hand-edited options + machine-written panel positions
+~/.local/share/hs-bg-tracker/history.db  games, combats, ratings — the only durable data
+~/.cache/hs-bg-tracker/cards.json      HearthstoneJSON card DB
+~/.cache/hs-bg-tracker/art/            downloaded card art
+~/.cache/hs-bg-tracker/bgtracker.log   rotating tracker log (`log_to_file`)
+~/.cache/hs-bg-tracker/launch.log      scripts/steam-launch.sh activity
+```
+
+Cache is disposable — deleting it costs one re-download. `history.db` is not, and
+`HistoryDB.reset()` backs it up rather than truncating in place.
 
 ## Domain: Hearthstone Battlegrounds
 
@@ -188,6 +346,12 @@ Quilboar, Undead. Only a rotating subset is in any given lobby (the sidecar acce
 lobby-wide accumulating buffs stored as *player-level* tags, which the code surfaces as
 the Buffs panel and forwards to the sim as `globalInfo`: Blood Gem (Quilboar), Elemental,
 Pirate, and Tavern Spell. Undead has no player counter — it is tracked per-minion.
+
+**Tavern shop buffs** (Nomi, Dune Dweller and friends) buff minions *while they sit in
+Bob's tavern*, and are a different quantity from those counters — see the entry below.
+They get their own labelled group in the Buffs panel and are deliberately not sent to
+the simulator: by the time you own the minion the buff is already in its live stats, so
+forwarding it would double-count.
 
 **Enchantments** (`CardType.ENCHANTMENT`, `ATTACHED` tag) are how every buff is actually
 represented. A minion's printed stats are almost never its real ones, so **always read
@@ -260,12 +424,33 @@ tends to reintroduce a fixed bug.
   is deferred until one appears (or flushed by `finalize()`).
 - **A fresh `LogParser` per `CREATE_GAME`.** A session log holds many games and hslog's
   player registry corrupts the entity tree when battletags reappear with new player ids.
+- **Tavern shop buffs are enchantments, not counters, and both ways of reading them the
+  obvious way fail silently.** The game keeps one `BG_ShopBuff_<tribe>` enchantment on
+  the *player* entity per tribe, and every source feeding that tribe stacks into the same
+  one — Dune Dweller, Nomi and a Nomi Sticker all read as a single running total, not a
+  count of triggers. (1) **Match the card id exactly.** The sibling `BG_ShopBuff*_Ench`
+  ids are the per-minion "Tavern Buffed" marks on the shop minions themselves, so a
+  prefix match sums every buffed minion in the tavern into the player total. (2) **The
+  value is in `TAG_SCRIPT_DATA_NUM_1/2`.** These entities carry no `ATK` or `HEALTH`, so
+  reading those yields a silent 0/0 rather than an error. `BG_ShopBuff_MultiRace` covers
+  several tribes at once and the log never says which, so it is labelled for what it is.
 - **Hero powers are deliberately NOT sent to the simulator.** The sim needs per-power
   `info` state; sending a bare id (info=0) makes it misapply even non-combat powers —
   verified swinging a 16% combat to 0%. `globalInfo` is safe and *is* sent.
-- **Restarting mid-game is safe and cheap.** The tailer reads each session log from the
-  top, so a fresh tracker replays the whole session (~3s for an 86MB log) and rebuilds
-  current state. History rows are deduped by `log_id` (the game-start timestamp).
+- **Restarting mid-game is safe and cheap — but only because catch-up does not
+  simulate.** The tailer reads each session log from the top, so a fresh tracker replays
+  the whole session (~3s for an 86MB log) and rebuilds current state. History rows are
+  deduped by `log_id` (the game-start timestamp). That first drain is passed
+  `historical=True`, which makes `Pipeline._simulate` return immediately: before that,
+  every past combat in the log cost a full 8000-trial run, serialized, while the player
+  was in a game. "The first read of a session" is exactly the right definition of
+  catch-up — a fresh `Tailer` reads from offset 0, so everything already in the file is
+  history and everything after is live, including the case where `Power.log` did not
+  exist yet. The flag therefore clears **unconditionally** after the first drain;
+  guarding it on the read being non-empty would misclassify a live game's first lines as
+  history and cost that game its odds. Opponent memory is still recorded during catch-up
+  (the scout popout and shop forecast are built from it) — only the odds are skipped, so
+  restarting *into* a live combat loses that one fight's forecast until `ShopReady`.
 - Instances are deliberately **NON_UNIQUE** so a stale process can't swallow a new
   launch — which also means an old process keeps running the code it started with. Use
   `--replace` when testing changes.
@@ -278,10 +463,26 @@ table (predicted vs actual win rate per bucket) — that table is the evidence f
 map next. Every combat row in `history.db` stores both board snapshots as JSON alongside
 the prediction, so a mispredicted fight can be re-simulated offline from the row.
 
-**`bgtracker resim [N]` is the regression harness.** It replays stored combats through
-the current mapper and simulator and prints predicted-then vs predicted-now vs actual,
-worst disagreement first. Run it after any change that could move the numbers; a mean
-drift under ~0.2 points is Monte Carlo noise, anything larger is the change itself.
+**`bgtracker resim [N]` is the regression harness, and also the throughput bench.** It
+replays stored combats through the current mapper and simulator and prints
+predicted-then vs predicted-now vs actual, worst disagreement first. Run it after any
+change that could move the numbers; a mean drift under ~0.2 points is Monte Carlo noise,
+anything larger is the change itself. It also prints a wall-time line (mean/median/max),
+which is how the cost of a scheduling or worker-count change gets measured — it already
+replays hundreds of real boards through the live sidecar serially, which is the
+benchmark loop.
+
+It builds its client with `SimClient.from_config(...)`, so `sim_cpu_policy` and
+`sim_workers` from `config.toml` actually reach it — a bench that always ran at the
+default policy could not A/B the thing it is measuring. It overrides `shop_workers=0`
+because it issues no background job and must not bench on a reserved-away worker. The
+worker-count sweep needs no flag: `SimClient` passes `env=None` when `workers` is 0, so
+the sidecar inherits `BGTRACKER_SIM_WORKERS=<n>` from the shell and reads it itself.
+
+**Two numbers, not one.** Wall time says what the change cost; `sims_run` says whether it
+cost *accuracy*. Every combat recorded before the efficiency-core move is a flat 8000, so
+any row below that is the simulator being starved into a truncated run — a noisier number,
+not a wrong one, but the signal that a scheduling default has gone too far.
 
 Two operational gotchas for `resim`, both learned the hard way:
 
@@ -374,7 +575,9 @@ Non-obvious constraints:
   `window { background: transparent }`, which is why the settings window would have
   come up transparent over a light system theme. Transparency is now
   `window.bg-overlay`, and `tests/test_overlay_theme.py` fails on any bare `window`
-  selector.
+  selector. "Every window the process opens" is not hypothetical: there are three
+  kinds — the overlay, the settings window, and the match-history window, which
+  reuses the settings chrome by carrying the same `bg-settings` class.
 - **Colours only on GTK's own widget parts.** Switch sliders, scrollbar sliders, spin
   steppers and the titlebar's window controls take their minimum sizes, padding and
   baselines from the system theme; overriding any of those makes GTK compute negative
@@ -410,7 +613,7 @@ one of the two, or if the example file drifts.
 |---|---|---|
 | `NONE` | nobody — read fresh from the shared `Config` (`poll_active`) | free |
 | `SIM` | attribute assignment on the live `SimClient` | free |
-| `SIM_RESPAWN` | `SimClient.reconfigure_workers`, **under the request lock** | seconds |
+| `SIM_RESPAWN` | `SimClient.reconfigure`, **under the request lock** | seconds |
 | `TAILER` | the tail loop re-resolves and rebuilds on its next pass | one poll |
 | `OVERLAY` | `OverlayWindow.set_edit` in place | free |
 | `OVERLAY_REBUILD` | window destroyed and rebuilt, then repainted from state | a frame |
@@ -423,7 +626,7 @@ Three things make that safe, and all three are load-bearing:
   downstream holds the same object. Handing out copies would make half the settings
   silently inert.
 - **The sim lock.** `SimClient._request` holds `_lock` across its `readline()`
-  await, so `reconfigure_workers` takes that lock before killing the sidecar.
+  await, so `reconfigure` takes that lock before killing the sidecar.
   Without it a worker change during a combat raises `sidecar died mid-request` and
   that fight gets no odds.
 - **The overlay state model** (`overlay/model.py`). See below.
