@@ -169,6 +169,27 @@ SETTINGS: tuple[Setting, ...] = (
         "seconds and waits for any combat in flight.",
         channel=SIM_RESPAWN, minimum=0, maximum=16, step=1,
     ),
+    Setting(
+        "sim_cpu_policy", "simulator", "choice", "auto",
+        "Keep the simulator off the game's cores",
+        "Runs the sidecar at idle priority, and on a hybrid CPU pins it to the "
+        "efficiency cores so it cannot compete with the game for the fast ones. "
+        "Odds take longer to firm up; a first number still arrives in about a "
+        "tenth of a second. Turn off to bisect a performance problem. Changing "
+        "it restarts the sidecar.",
+        channel=SIM_RESPAWN, choices=("auto", "off"),
+    ),
+    Setting(
+        "sim_shop_workers", "simulator", "int", 1,
+        "Workers reserved for shop odds",
+        "The recruit-phase forecast is a guide against a board of stated age, "
+        "re-run every time you buy, sell or reposition. Giving it its own "
+        "worker keeps it from taking the whole pool the real combat forecast "
+        "needs, at the cost of it firming up more slowly. 0 shares the pool, "
+        "which is the older behaviour. With sim_workers=1 the reservation is "
+        "always clamped to 0: the real fight keeps the only worker there is.",
+        channel=SIM, minimum=0, maximum=4, step=1,
+    ),
 
     # -- game & logs ----------------------------------------------------
     Setting(

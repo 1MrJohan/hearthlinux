@@ -15,9 +15,11 @@ class StubSim:
 
     def __init__(self):
         self.calls: list[int] = []
+        self.lanes: list[bool] = []
 
-    async def simulate(self, battle_info, on_partial=None, sims=None):
+    async def simulate(self, battle_info, on_partial=None, sims=None, background=False):
         self.calls.append(sims)
+        self.lanes.append(background)
         return SimResult(
             won_percent=55, tied_percent=5, lost_percent=40,
             avg_damage_won=10, avg_damage_lost=8, sims_run=sims or 8000,
@@ -121,3 +123,61 @@ def test_the_forecast_reports_how_old_the_scouted_board_is():
     [(event, prediction)] = asyncio.run(run())
     assert (event.turn, event.seen_turn) == (9, 6)
     assert prediction.won_percent == 55
+
+
+def test_catch_up_does_not_simulate_combats_that_already_happened():
+    """The tailer reads each session log from the top, so a restart mid-session
+    replays every combat in it. Each one used to cost a full 8000-trial run,
+    serialized, while the player is in a game."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(4, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)], historical=True)
+        return sim.calls
+
+    assert asyncio.run(run()) == []
+
+
+def test_a_live_combat_still_gets_odds():
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(4, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)])
+        return sim.calls
+
+    assert asyncio.run(run()) == [None], "one live simulation, at the default trial count"
+
+
+def test_catch_up_still_remembers_the_boards_it_saw():
+    """Skipping the simulation must not skip opponent memory — the scout popout
+    and the shop forecast are both built from boards seen in past combats."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(7, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)], historical=True)
+        return pipe.memory.last_seen(7)
+
+    assert asyncio.run(run()) is not None
+
+
+def test_the_shop_forecast_runs_in_the_background_lane():
+    """A guide the player is shuffling minions against has no business taking
+    the whole worker pool the real fight needs."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1, minions=2), turn=8)])
+        await _drain(pipe)
+        return sim.lanes
+
+    assert asyncio.run(run()) == [True]
+
+
+def test_the_combat_forecast_runs_in_the_foreground_lane():
+    async def run():
+        pipe, sim, _ = _pipeline()
+        snap = BoardSnapshot(turn=8, friendly=_board(1, minions=3), opponent=_board(4, minions=2))
+        await pipe.handle([ev.CombatStart(snapshot=snap)])
+        return sim.lanes
+
+    assert asyncio.run(run()) == [False]

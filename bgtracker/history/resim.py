@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bgtracker.data import cards
+from bgtracker.config import load_config
 from bgtracker.history.db import DB_FILE, HistoryDB, board_from_json
+from bgtracker.settings import sanitize
 from bgtracker.sim.client import SimClient
 from bgtracker.sim.mapper import to_battle_info
 from bgtracker.state.game import BoardSnapshot
@@ -30,6 +32,7 @@ class Row:
     then: float | None          # win% predicted when the combat was played
     now: float | None           # win% the current code predicts
     sims_run: int = 0
+    sim_ms: float = 0.0
 
     @property
     def drift(self) -> float:
@@ -68,7 +71,16 @@ async def resim(path: Path = DB_FILE, limit: int | None = None) -> str:
     if not stored:
         return "no recorded combats with stored boards"
 
-    sim = SimClient()
+    # Read the live config so resim benches the sim_workers/sim_cpu_policy the
+    # user actually has set, not the constructor defaults — otherwise this
+    # tool can never see the throughput of anything but "auto" at 4 workers,
+    # which defeats its purpose as the bench for tuning both.
+    #
+    # shop_workers=0: resim issues no background job, and it is the throughput
+    # bench sim_workers gets tuned from — reserving a worker it never uses
+    # would silently bench the pool this plan configures as n-1, not n.
+    cfg = sanitize(load_config())
+    sim = SimClient.from_config(cfg, shop_workers=0)
     if not await sim.ping():
         await sim.close()
         return "combat simulator unavailable (node/sidecar missing?)"
@@ -88,6 +100,7 @@ async def resim(path: Path = DB_FILE, limit: int | None = None) -> str:
                     current = await sim.simulate(info)
                     row.now = current.won_percent
                     row.sims_run = current.sims_run
+                    row.sim_ms = current.sim_ms
                 except Exception as exc:  # a board the current mapper chokes on is a finding
                     row.now = None
                     print(f"  turn {turn}: simulation failed: {exc!r}")
@@ -101,6 +114,16 @@ async def resim(path: Path = DB_FILE, limit: int | None = None) -> str:
 def _report(results: list[Row]) -> str:
     scored = [r for r in results if r.then is not None and r.now is not None]
     lines = [f"re-simulated {len(results)} combats ({len(scored)} comparable)"]
+
+    timed = [r.sim_ms for r in results if r.sim_ms > 0]
+    if timed:
+        # This is the throughput bench: how long a real board costs under
+        # whatever CPU policy and worker count the sidecar just ran with.
+        ordered = sorted(timed)
+        lines.append(
+            f"  wall time: mean {sum(timed) / len(timed):.0f}ms, "
+            f"median {ordered[len(ordered) // 2]:.0f}ms, max {ordered[-1]:.0f}ms"
+        )
 
     if scored:
         moved = [r for r in scored if r.drift >= 1.0]

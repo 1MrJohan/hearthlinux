@@ -20,6 +20,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { lanes, notReady } from './lanes.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -90,7 +91,11 @@ function spawnWorker(index) {
     });
     worker.stdout.resume();
     worker.stderr.resume();
-    const entry = { worker, index, ready: false };
+    // No `index` field: pool position is authoritative via pool.indexOf(entry)
+    // (see retireWorker), and after a mid-pool replacement a stored index
+    // would be stale — actively misleading next to code whose whole invariant
+    // is about live pool positions.
+    const entry = { worker, ready: false };
     worker.on('message', (msg) => {
         if (msg.ready) {
             entry.ready = true;
@@ -102,7 +107,13 @@ function spawnWorker(index) {
     worker.on('exit', (code) => {
         if (!entry.retired && code !== 0) failAllFor(entry, `worker exited with code ${code}`);
     });
-    pool.push(entry);
+    // Inserted at `index` rather than pushed, so a mid-pool replacement (from
+    // retireWorker, below) lands where the retired worker sat instead of at
+    // the tail — pool *positions* are what lanes() splits on, so a replacement
+    // that landed at the end would silently move the fg/bg boundary. The
+    // initial construction loop calls this with 0..n-1 in order, where
+    // splice(index, 0, entry) and push() are equivalent.
+    pool.splice(index, 0, entry);
     return entry;
 }
 
@@ -113,6 +124,12 @@ async function poolReady() {
         await new Promise((r) => setTimeout(r, 20));
     }
 }
+
+// The background (shop-forecast) job's inflight id, so a new background
+// request can drop the previous one's bookkeeping before dispatching. Only
+// one background job is ever wanted at a time — the shop forecast debounces
+// on the Python side — so tracking a single id is enough.
+let backgroundJobId = null;
 
 // ---- pooling ---------------------------------------------------------
 // Sum counts and damage SUMS, then derive percentages once. Averaging the
@@ -186,6 +203,7 @@ function onShardMessage(msg) {
     if (msg.error) {
         clearTimeout(job.timer);
         inflight.delete(msg.jobId);
+        if (backgroundJobId === msg.jobId) backgroundJobId = null;
         out({ id: job.id, error: msg.error });
         return;
     }
@@ -204,6 +222,7 @@ function onShardMessage(msg) {
     if (job.done.size === job.expected) {
         clearTimeout(job.timer);
         inflight.delete(msg.jobId);
+        if (backgroundJobId === msg.jobId) backgroundJobId = null;
         out({ id: job.id, result: present(combine(Object.values(job.shards))) });
     }
 }
@@ -218,6 +237,14 @@ function maybeEmitPartial(job) {
     }
 }
 
+// Known remaining hole: this fails EVERY inflight job, not just the one on
+// `entry`. The lane split only closes the silent terminate()+`retired` path a
+// stuck-worker retirement takes above — a genuine worker error or non-zero
+// exit still takes down a concurrent job on the other lane with an explicit
+// error, regardless of lane. Narrowing this needs a worker-crash test first;
+// left as-is deliberately. This branch made that blast radius reachable
+// rather than theoretical — before it, only one job was ever in flight, so
+// "every inflight job" and "the one job in flight" were the same thing.
 function failAllFor(entry, message) {
     for (const [jobId, job] of [...inflight]) {
         clearTimeout(job.timer);
@@ -237,7 +264,11 @@ function retireWorker(entry) {
     const i = pool.indexOf(entry);
     if (i >= 0) pool.splice(i, 1);
     entry.worker.terminate();
-    if (pool.length < workerCount) spawnWorker(pool.length);
+    // Reinsert the replacement at the vacated index, not the tail. Appending
+    // would shift every worker after i left by one, moving the fg/bg lane
+    // boundary out from under any job already dispatched against it — see the
+    // comment on spawnWorker.
+    if (pool.length < workerCount) spawnWorker(i >= 0 ? i : pool.length);
 }
 
 // A worker stuck in a non-terminating trial never messages, errors or exits, so
@@ -247,15 +278,21 @@ function retireWorker(entry) {
 // is the only thing that stops a CPU-bound thread — so the next request lands on
 // a healthy, respawned pool instead of hanging on the same stuck worker.
 //
-// Assumes one job in flight at a time — which SimClient guarantees by holding
-// its request lock across each call. If concurrent jobs ever shared workers,
-// retiring a stuck worker here would silently kill another job's shards (the
-// `retired` flag suppresses the exit handler), leaving that job to its own
-// deadline. Revisit before allowing concurrent simulate requests.
+// Concurrent jobs are expected, not excluded: SimClient's request lock holds
+// one job at a time except across a cancellation, where a shop forecast keeps
+// running in the sidecar while the combat forecast it yielded to dispatches.
+// What makes retiring a stuck worker here safe is lanes.mjs, not the lock —
+// foreground and background jobs run on disjoint worker positions, so a
+// worker this function retires and replaces can only belong to the job that
+// owns it. That guarantee holds only while the pool has more than one worker;
+// with a pool of one, lanes() clamps the reservation to zero and both lanes
+// share the single worker, so a stuck job there still costs whatever else is
+// in flight — there is no isolation left to lose.
 function onJobTimeout(jobId) {
     const job = inflight.get(jobId);
     if (!job) return;
     inflight.delete(jobId);
+    if (backgroundJobId === jobId) backgroundJobId = null;
     const merged = combine(Object.values(job.shards));
     if (merged.won + merged.tied + merged.lost > 0) {
         out({ id: job.id, result: present(merged) });
@@ -267,10 +304,36 @@ function onJobTimeout(jobId) {
     }
 }
 
-async function simulate(id, input, sims, workers, deadline) {
-    await poolReady();
+async function simulate(id, input, sims, workers, deadline, background, reserve) {
+    // Wait only on the lane this job will dispatch to — a foreground job has
+    // no business blocking on a background worker's card-DB rebuild after a
+    // retirement. lanes(pool, reserve) is recomputed against the *current*
+    // pool both before and after the wait: a retired worker is spliced out
+    // and its replacement spliced back in at the same index while we're
+    // awaiting, so caching the lane across the await would look at stale
+    // entries.
+    while (notReady(background ? lanes(pool, reserve).bg : lanes(pool, reserve).fg)) {
+        await new Promise((r) => setTimeout(r, 20));
+    }
+    if (background) {
+        // A prior background job that's still queued behind (or running on) a
+        // worker gets its bookkeeping dropped, not its worker killed: without
+        // this, an abandoned shop forecast's deadline can fire while it was
+        // never even dispatched (queued behind another abandoned one), and
+        // onJobTimeout retires a perfectly healthy worker for it. SimClient
+        // already ignores results for stale ids, so losing track of this job
+        // is safe — we just must not let its timer fire later.
+        const prior = backgroundJobId != null ? inflight.get(backgroundJobId) : null;
+        if (prior) {
+            clearTimeout(prior.timer);
+            inflight.delete(backgroundJobId);
+        }
+        backgroundJobId = null;
+    }
     const total = sims ?? 8000;
-    const usable = Math.max(1, Math.min(pool.length, workers || pool.length));
+    const split = lanes(pool, reserve);
+    const lane = background ? split.bg : split.fg;
+    const usable = Math.max(1, Math.min(lane.length, workers || lane.length));
     const shards = [];
     for (let i = 0; i < usable; i++) {
         // Spread the remainder so the shards differ by at most one trial.
@@ -281,12 +344,13 @@ async function simulate(id, input, sims, workers, deadline) {
         id, expected: usable, shards: {}, done: new Set(), lastPartial: 0,
         // The worker entry each shard went to, so the watchdog can kill exactly
         // the ones that never report back.
-        workers: pool.slice(0, usable), timer: null,
+        workers: lane.slice(0, usable), timer: null,
     };
     inflight.set(jobId, job);
+    if (background) backgroundJobId = jobId;
     if (deadline) job.timer = setTimeout(() => onJobTimeout(jobId), deadline);
     shards.forEach((count, i) => {
-        pool[i].worker.postMessage({ jobId, shard: i, input, sims: count });
+        lane[i].worker.postMessage({ jobId, shard: i, input, sims: count });
     });
 }
 
@@ -317,7 +381,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         // between poolReady() and dispatch, say) terminates the process, which
         // would take the sidecar down mid-game instead of failing one fight.
         else if (msg.op === 'simulate') {
-            simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline)
+            simulate(msg.id, msg.input, msg.sims, msg.workers, msg.deadline,
+                     msg.background, msg.reserve)
                 .catch((e) => out({ id: msg.id, error: String(e?.stack ?? e) }));
         }
         else out({ id: msg.id, error: `unknown op: ${msg.op}` });

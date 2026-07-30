@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from bgtracker.sim.cpu import spawn_preexec
+
 log = logging.getLogger(__name__)
 
 SIDECAR_DIR = Path(__file__).resolve().parent.parent.parent / "sidecar"
@@ -110,15 +112,43 @@ class SimClient:
         timeout: float = 6.0,
         sims: int = 8000,
         workers: int = 0,
+        cpu_policy: str = "auto",
+        shop_workers: int = 1,
     ):
         self.sidecar_dir = sidecar_dir
         self.timeout = timeout
         self.sims = sims
         # 0 leaves the choice to the sidecar's own default.
         self.workers = workers
+        self.cpu_policy = cpu_policy
+        # Workers the sidecar sets aside for background jobs. Read fresh per
+        # request, so it needs no respawn.
+        self.shop_workers = shop_workers
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._next_id = 0
+
+    @classmethod
+    def from_config(cls, cfg, **overrides) -> "SimClient":
+        """Build a client from the live `Config` rather than constructor
+        defaults.
+
+        Exists because `resim` and `doctor` used to hardcode `SimClient()`,
+        which always ran at the default `"auto"` CPU policy and default
+        worker count regardless of what the user had actually configured —
+        exactly the two knobs this plan's follow-up work needs to A/B and
+        re-bench. `**overrides` lets a caller still pin something explicitly
+        (`resim`'s `shop_workers=0`, since it never issues a background job).
+        """
+        kwargs = dict(
+            timeout=cfg.sim_timeout,
+            sims=cfg.sim_count,
+            workers=cfg.sim_workers,
+            cpu_policy=cfg.sim_cpu_policy,
+            shop_workers=cfg.sim_shop_workers,
+        )
+        kwargs.update(overrides)
+        return cls(**kwargs)
 
     async def _ensure_proc(self) -> asyncio.subprocess.Process:
         if self._proc is None or self._proc.returncode is not None:
@@ -132,6 +162,10 @@ class SimClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 env=env,
+                # Applied in the child between fork and exec, so every worker
+                # thread the sidecar creates — including ones retireWorker
+                # spawns mid-game — inherits it. None when the policy is off.
+                preexec_fn=spawn_preexec(self.cpu_policy),
             )
             ready = await asyncio.wait_for(self._proc.stdout.readline(), timeout=60)
             info = json.loads(ready)
@@ -165,12 +199,23 @@ class SimClient:
                     continue
                 return msg["result"]
 
-    async def simulate(self, battle_info: dict, on_partial=None, sims: int | None = None) -> SimResult:
+    async def simulate(
+        self,
+        battle_info: dict,
+        on_partial=None,
+        sims: int | None = None,
+        background: bool = False,
+    ) -> SimResult:
         """Run a combat.
 
         `on_partial`, if given, is called with a provisional SimResult each time
         the run tightens — a usable number lands in a fraction of the time the
         full run takes, which matters on the boards that take seconds.
+
+        `background` puts the job in the sidecar's reserved lane, at the end of
+        the worker pool. The shop forecast uses it: it is a guide, re-run
+        constantly, and it must not take the workers the real fight needs or
+        share one with it.
         """
         # Give the sidecar a duration budget below our own timeout so it
         # returns a partial-but-valid result instead of us abandoning it.
@@ -187,6 +232,8 @@ class SimClient:
                 "op": "simulate",
                 "input": battle_info,
                 "sims": sims or self.sims,
+                "background": background,
+                "reserve": self.shop_workers,
                 # A board can send the simulator into a non-terminating trial,
                 # hanging the worker with no message, error or exit. Give the
                 # sidecar a deadline just under our own readline timeout so it
@@ -207,32 +254,33 @@ class SimClient:
 
     # -- live reconfiguration -------------------------------------------
     def apply_config(self, cfg) -> None:
-        """Adopt trial count and timeout. Both are read fresh per `simulate()`,
-        so assignment is the entire mechanism — no restart, nothing in flight
-        disturbed."""
+        """Adopt trial count, timeout and lane reservation. All are read fresh
+        per `simulate()`, so assignment is the entire mechanism — no restart,
+        nothing in flight disturbed."""
         self.sims = cfg.sim_count
         self.timeout = cfg.sim_timeout
+        self.shop_workers = cfg.sim_shop_workers
 
-    async def reconfigure_workers(self, workers: int) -> bool:
-        """Restart the sidecar on a new worker count. Returns whether it moved.
+    async def reconfigure(self, workers: int, cpu_policy: str) -> bool:
+        """Restart the sidecar on new spawn-time settings. Returns whether it moved.
 
-        The worker count reaches the sidecar only as an environment variable at
-        spawn (`BGTRACKER_SIM_WORKERS`), so it genuinely cannot change without a
-        restart.
+        Both of these reach the sidecar only at spawn — the worker count as an
+        environment variable, the CPU policy as a `preexec_fn` — so they
+        genuinely cannot change without a restart.
 
         **The lock is the point.** `_request` holds `self._lock` across its
-        `readline()` await, so taking it here means a worker change queues
-        behind any combat forecast already in flight instead of killing the
-        process under it — which would raise "sidecar died mid-request" and
-        leave that fight with no odds at all. Respawning eagerly inside the
-        lock also pays the multi-second card-DB rebuild now, while the user is
-        looking at the settings window, rather than charging it to the next
-        combat's timeout.
+        `readline()` await, so taking it here means a change queues behind any
+        combat forecast already in flight instead of killing the process under
+        it — which would raise "sidecar died mid-request" and leave that fight
+        with no odds at all. Respawning eagerly inside the lock also pays the
+        multi-second card-DB rebuild now, while the user is looking at the
+        settings window, rather than charging it to the next combat's timeout.
         """
-        if workers == self.workers:
+        if workers == self.workers and cpu_policy == self.cpu_policy:
             return False
         async with self._lock:
             self.workers = workers
+            self.cpu_policy = cpu_policy
             await self._stop()
             await self._ensure_proc()
         return True

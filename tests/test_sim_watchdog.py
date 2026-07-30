@@ -37,7 +37,13 @@ def test_a_hanging_board_does_not_poison_later_requests():
     matters is that the pool heals, so the *next* board still gets real odds.
     """
     async def run():
-        sim = SimClient(timeout=3.0, workers=1)
+        # cpu_policy pinned "off": the 3s budget here is meant to measure the
+        # watchdog's healing, not the scheduler. After a worker is retired its
+        # replacement has to rebuild its own ~350MB card DB before it can
+        # answer, and at idle priority on an efficiency core that rebuild does
+        # not reliably fit inside the budget — it did at normal priority on a
+        # P-core. Pinning the policy off keeps this test about the watchdog.
+        sim = SimClient(timeout=3.0, workers=1, cpu_policy="off")
         try:
             assert await sim.ping()
             # Hangs a worker. However it resolves, it must not leave the pool stuck.

@@ -97,7 +97,11 @@ async def _check_sim(cfg):
     if not (SIDECAR_DIR / "node_modules").is_dir():
         yield ("bad", f"sidecar deps missing — run: cd {SIDECAR_DIR} && npm install")
         return
-    sim = SimClient(timeout=cfg.sim_timeout)
+    # from_config so the timing this reports reflects the user's own
+    # sim_cpu_policy/sim_workers — a bare SimClient(timeout=...) always ran
+    # under "auto", which misleads exactly the person bisecting a performance
+    # complaint against a policy they deliberately set to "off".
+    sim = SimClient.from_config(cfg)
     try:
         if await sim.ping():
             yield ("ok", "sidecar responds")
