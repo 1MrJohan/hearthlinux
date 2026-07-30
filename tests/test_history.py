@@ -378,21 +378,28 @@ def test_a_later_real_prediction_replaces_an_earlier_one(tmp_path):
     task exists to prevent, just pointing the other way."""
     db = HistoryDB(tmp_path / "h.db")
     game = db.start_game("2026-07-28T10:00:00")
-    snap = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 30))
-    db.record_combat(game, snap, SimResult(
+    snap1 = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 30, hero="HERO_01"))
+    snap2 = BoardSnapshot(turn=5, friendly=_board(1, 40), opponent=_board(2, 30, hero="HERO_02"))
+    db.record_combat(game, snap1, SimResult(
         won_percent=61, tied_percent=4, lost_percent=35,
         avg_damage_won=9, avg_damage_lost=7, sims_run=8000, sim_ms=412.0,
         lost_lethal_percent=3.0,
     ), "win")
-    db.record_combat(game, snap, SimResult(
+    db.record_combat(game, snap2, SimResult(
         won_percent=74, tied_percent=6, lost_percent=20,
         avg_damage_won=11, avg_damage_lost=5, sims_run=12000, sim_ms=530.0,
         lost_lethal_percent=1.0,
-    ), "win")
+    ), "loss")
 
+    # Every COALESCE-guarded column, not just three of them — a copy-paste
+    # reversal of any single guard (COALESCE(X, excluded.X) instead of
+    # COALESCE(excluded.X, X)) would freeze that one column at its first
+    # value forever and silently drop every later real one. The two writes
+    # above differ in each column below so a reversal anywhere is caught.
     row = db.conn.execute(
-        "SELECT predicted_win, sims_run, sim_ms FROM combats"
-        " WHERE game_id=? AND turn=5", (game,)
+        "SELECT predicted_win, predicted_tie, predicted_loss, sims_run, sim_ms,"
+        " predicted_lost_lethal, outcome, opponent_hero"
+        " FROM combats WHERE game_id=? AND turn=5", (game,)
     ).fetchone()
-    assert row == (74, 12000, 530.0)
+    assert row == (74, 6, 20, 12000, 530.0, 1.0, "loss", "HERO_02")
     db.close()

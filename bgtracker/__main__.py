@@ -31,10 +31,7 @@ log = logging.getLogger("bgtracker")
 
 
 async def start_sim(cfg) -> SimClient | None:
-    sim = SimClient(
-        timeout=cfg.sim_timeout, sims=cfg.sim_count, workers=cfg.sim_workers,
-        cpu_policy=cfg.sim_cpu_policy, shop_workers=cfg.sim_shop_workers,
-    )
+    sim = SimClient.from_config(cfg)
     if await sim.ping():
         status.sidecar_up = True
         status.sidecar_workers = cfg.sim_workers or None

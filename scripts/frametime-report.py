@@ -87,18 +87,18 @@ def report(frametimes_ms: list[float], discarded: int = 0) -> str:
     ordered = sorted(frametimes_ms)
     median = ordered[len(ordered) // 2]
     lines = [
-        f"{len(frametimes_ms)} frames\n"
-        f"  median    {median:7.2f} ms  ({1000 / median:5.1f} fps)\n"
-        f"  1% low    {low(frametimes_ms, 0.01):7.2f} ms\n"
-        f"  0.1% low  {low(frametimes_ms, 0.001):7.2f} ms\n"
-        f"  max       {ordered[-1]:7.2f} ms"
+        f"{len(frametimes_ms)} frames",
+        f"  median    {median:7.2f} ms  ({1000 / median:5.1f} fps)",
+        f"  1% low    {low(frametimes_ms, 0.01):7.2f} ms",
+        f"  0.1% low  {low(frametimes_ms, 0.001):7.2f} ms",
+        f"  max       {ordered[-1]:7.2f} ms",
     ]
     if discarded > 0:
         lines.append(
             f"  discarded  {discarded} frames over {_IMPLAUSIBLE_MS:.0f}ms "
             "(load screen or paused capture)"
         )
-    return "".join(lines)
+    return "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:

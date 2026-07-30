@@ -80,8 +80,8 @@ def efficiency_cpus(root: Path = SYSFS_CPU) -> frozenset[int] | None:
     return _from_types(root) or _from_max_freq(root)
 
 
-# nice(19) is the fallback for a kernel that refuses sched_setscheduler;
-# SCHED_IDLE ignores nice entirely, so on a working kernel it does nothing.
+# The nice fallback for a kernel that refuses sched_setscheduler; SCHED_IDLE
+# ignores nice entirely, so on a working kernel this does nothing.
 _NICE = 19
 
 
@@ -100,9 +100,18 @@ def spawn_preexec(policy: str = "auto", root: Path = SYSFS_CPU) -> Callable[[], 
     hung one. Setting the mask here is the only point that covers every thread,
     present and future, with no race and no walk of /proc/<pid>/task.
 
-    Safe because this process is deliberately single-threaded — threads in the
-    parent are `preexec_fn`'s documented hazard, and the three calls below are
-    thin syscall wrappers that allocate nothing.
+    Not literally hazard-free: `preexec_fn`'s documented risk is threads in the
+    parent, and this process does have some — asyncio's Unix child-watcher
+    machinery and GLib's worker thread are both runtime-owned, not code this
+    file wrote, and `os.sched_setaffinity` does allocate a `cpu_set_t` rather
+    than being a bare syscall. That is an accepted risk, not a solved one:
+    glibc's `pthread_atfork` handlers reinitialise malloc arenas in the child
+    and the exposed window is microseconds, which is why `preexec_fn` is still
+    the right mechanism here despite it. What keeps the risk this low is that
+    `apply()` stays three thin syscall wrappers guarded by their own
+    `try`/`except` — CLAUDE.md's no-threads rule keeps *our* code out of the
+    fork hazard, but it says nothing about what a future edit puts in this
+    function. Do not read "safe" as licence to make `apply()` heavier.
 
     **Why SCHED_IDLE and not merely nice.** The simulator already degrades
     gracefully under starvation: `maxAcceptableDuration` truncates the run and
@@ -132,7 +141,13 @@ def spawn_preexec(policy: str = "auto", root: Path = SYSFS_CPU) -> Callable[[], 
         except (OSError, ValueError, AttributeError):
             pass
         try:
-            os.nice(_NICE)
+            # setpriority takes an absolute value; os.nice(19) is a relative
+            # increment applied on top of whatever nice level the launching
+            # shell already sits at (measured 15, not 19, on the author's
+            # machine, whose shell starts at -4). Inert while SCHED_IDLE
+            # holds — SCHED_IDLE ignores nice entirely — but that is exactly
+            # the kernel where getting the fallback right matters.
+            os.setpriority(os.PRIO_PROCESS, 0, _NICE)
         except OSError:
             pass
 

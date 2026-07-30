@@ -128,6 +128,28 @@ class SimClient:
         self._lock = asyncio.Lock()
         self._next_id = 0
 
+    @classmethod
+    def from_config(cls, cfg, **overrides) -> "SimClient":
+        """Build a client from the live `Config` rather than constructor
+        defaults.
+
+        Exists because `resim` and `doctor` used to hardcode `SimClient()`,
+        which always ran at the default `"auto"` CPU policy and default
+        worker count regardless of what the user had actually configured —
+        exactly the two knobs this plan's follow-up work needs to A/B and
+        re-bench. `**overrides` lets a caller still pin something explicitly
+        (`resim`'s `shop_workers=0`, since it never issues a background job).
+        """
+        kwargs = dict(
+            timeout=cfg.sim_timeout,
+            sims=cfg.sim_count,
+            workers=cfg.sim_workers,
+            cpu_policy=cfg.sim_cpu_policy,
+            shop_workers=cfg.sim_shop_workers,
+        )
+        kwargs.update(overrides)
+        return cls(**kwargs)
+
     async def _ensure_proc(self) -> asyncio.subprocess.Process:
         if self._proc is None or self._proc.returncode is not None:
             env = None

@@ -12,8 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from bgtracker.sim.cpu import efficiency_cpus, spawn_preexec
 
 
@@ -95,13 +93,13 @@ def test_applies_affinity_scheduler_and_nice(tmp_path, monkeypatch):
     seen = {}
     monkeypatch.setattr(os, "sched_setaffinity", lambda pid, cpus: seen.update(affinity=(pid, set(cpus))))
     monkeypatch.setattr(os, "sched_setscheduler", lambda pid, policy, param: seen.update(policy=(pid, policy)))
-    monkeypatch.setattr(os, "nice", lambda inc: seen.update(nice=inc))
+    monkeypatch.setattr(os, "setpriority", lambda which, who, prio: seen.update(priority=(which, who, prio)))
 
     spawn_preexec("auto", tmp_path)()
 
     assert seen["affinity"] == (0, {2, 3})
     assert seen["policy"] == (0, os.SCHED_IDLE)
-    assert seen["nice"] == 19
+    assert seen["priority"] == (os.PRIO_PROCESS, 0, 19)
 
 
 def test_never_raises_when_the_kernel_refuses(tmp_path, monkeypatch):
@@ -119,7 +117,7 @@ def test_never_raises_when_the_kernel_refuses(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, "sched_setaffinity", boom)
     monkeypatch.setattr(os, "sched_setscheduler", boom)
-    monkeypatch.setattr(os, "nice", boom)
+    monkeypatch.setattr(os, "setpriority", boom)
 
     spawn_preexec("auto", tmp_path)()   # must not raise
 
@@ -134,13 +132,13 @@ def test_a_non_hybrid_machine_still_gets_the_scheduler_settings(tmp_path, monkey
     seen = {}
     monkeypatch.setattr(os, "sched_setaffinity", lambda *a: seen.update(affinity=True))
     monkeypatch.setattr(os, "sched_setscheduler", lambda pid, policy, param: seen.update(policy=policy))
-    monkeypatch.setattr(os, "nice", lambda inc: seen.update(nice=inc))
+    monkeypatch.setattr(os, "setpriority", lambda which, who, prio: seen.update(priority=prio))
 
     spawn_preexec("auto", tmp_path)()
 
     assert "affinity" not in seen, "nothing to pin to on a uniform CPU"
     assert seen["policy"] == os.SCHED_IDLE
-    assert seen["nice"] == 19
+    assert seen["priority"] == 19
 
 
 def test_it_really_works_on_this_kernel():
@@ -159,7 +157,8 @@ def test_it_really_works_on_this_kernel():
         "print(os.sched_getscheduler(0), len(os.sched_getaffinity(0)),"
         " len(efficiency_cpus() or []))"
     ) % str(repo_root)
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, out.stderr
     policy, affinity, efficiency = (int(n) for n in out.stdout.split())
     assert policy == os.SCHED_IDLE
     if efficiency:

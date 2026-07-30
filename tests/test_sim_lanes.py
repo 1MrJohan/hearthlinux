@@ -90,6 +90,29 @@ def test_a_foreground_retirement_does_not_move_the_lane_boundary():
     assert got["afterLanes"] == {"fg": ["new", "B", "C"], "bg": ["D"]}
 
 
+def _not_ready(lane):
+    """The sidecar's own lane-readiness predicate, against stand-in workers."""
+    code = (
+        f"import {{ notReady }} from {str(LANES)!r};"
+        f"console.log(JSON.stringify(notReady({json.dumps(lane)})));"
+    )
+    out = subprocess.run(["node", "--input-type=module", "-e", code],
+                         capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+def test_a_not_ready_background_worker_does_not_block_the_foreground_lane():
+    """simulate() used to await the whole pool before dispatching, so a
+    foreground (combat) job could block on a background (shop) worker's
+    card-DB rebuild after a retirement — a fight of record waiting on a
+    worker it will never use. The barrier must be scoped to the lane the job
+    actually dispatches to."""
+    fg_lane = [{"ready": True}, {"ready": True}, {"ready": True}]
+    bg_lane = [{"ready": False}]
+    assert _not_ready(fg_lane) is False
+    assert _not_ready(bg_lane) is True
+
+
 def test_a_background_job_pools_the_same_odds_as_a_foreground_one():
     """The lane must change which workers run the trials and nothing else.
 

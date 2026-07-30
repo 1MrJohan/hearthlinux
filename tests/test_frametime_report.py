@@ -94,6 +94,10 @@ def test_report_shows_discard_count_when_non_zero(mod):
     assert "discarded" in text
     assert "3 frames" in text
     assert "2000ms" in text
+    lines = text.splitlines()
+    discard_lines = [line for line in lines if "discarded" in line]
+    assert len(discard_lines) == 1, "the discard note must be its own line, not glued to max"
+    assert discard_lines[0].strip().startswith("discarded")
 
 
 def test_report_omits_discard_line_when_zero(mod):

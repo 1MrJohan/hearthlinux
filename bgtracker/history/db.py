@@ -271,6 +271,12 @@ class HistoryDB:
         # placement gets the same treatment for the same reason: GameEnd is
         # deferred until a placement tag appears, but finalize() can flush one
         # carrying None, which would blank a real result.
+        #
+        # ended_at (COALESCE keeps the first) and placement (COALESCE prefers
+        # the new) point in opposite directions on purpose — the first true end
+        # time is the honest one, but the first placement seen can be a None
+        # finalize() flushed before the real tag landed. Do not "tidy" these to
+        # match each other.
         self.conn.execute(
             "UPDATE games SET ended_at = COALESCE(ended_at, ?),"
             " placement = COALESCE(?, placement), final_turn = ?"

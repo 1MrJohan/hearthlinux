@@ -23,6 +23,17 @@ export function lanes(pool, reserve) {
     return { fg: pool.slice(0, n - r), bg: r ? pool.slice(n - r) : pool.slice(0) };
 }
 
+// Whether a lane still has an un-ready worker in it. simulate()'s readiness
+// barrier used to await the whole pool (`poolReady()`), which meant a
+// foreground job could block on a background worker's card-DB rebuild after
+// a retirement — a CombatStart landing during that rebuild has no business
+// waiting on a worker it will never dispatch to. Scoping the wait to the
+// lane the job will actually use fixes that at the source; this is the pure
+// predicate so it can be tested without spawning real workers.
+export function notReady(lane) {
+    return lane.some((w) => !w.ready);
+}
+
 // The pool-position mutation server.mjs's retireWorker/spawnWorker pair
 // perform: remove `entry` and reinsert `replacement` at the vacated index
 // (not the tail), so lanes() keeps splitting the pool in the same place

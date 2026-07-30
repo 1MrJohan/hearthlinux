@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bgtracker.data import cards
+from bgtracker.config import load_config
 from bgtracker.history.db import DB_FILE, HistoryDB, board_from_json
+from bgtracker.settings import sanitize
 from bgtracker.sim.client import SimClient
 from bgtracker.sim.mapper import to_battle_info
 from bgtracker.state.game import BoardSnapshot
@@ -69,10 +71,16 @@ async def resim(path: Path = DB_FILE, limit: int | None = None) -> str:
     if not stored:
         return "no recorded combats with stored boards"
 
+    # Read the live config so resim benches the sim_workers/sim_cpu_policy the
+    # user actually has set, not the constructor defaults — otherwise this
+    # tool can never see the throughput of anything but "auto" at 4 workers,
+    # which defeats its purpose as the bench for tuning both.
+    #
     # shop_workers=0: resim issues no background job, and it is the throughput
     # bench sim_workers gets tuned from — reserving a worker it never uses
     # would silently bench the pool this plan configures as n-1, not n.
-    sim = SimClient(shop_workers=0)
+    cfg = sanitize(load_config())
+    sim = SimClient.from_config(cfg, shop_workers=0)
     if not await sim.ping():
         await sim.close()
         return "combat simulator unavailable (node/sidecar missing?)"
