@@ -103,7 +103,13 @@ function spawnWorker(index) {
     worker.on('exit', (code) => {
         if (!entry.retired && code !== 0) failAllFor(entry, `worker exited with code ${code}`);
     });
-    pool.push(entry);
+    // Inserted at `index` rather than pushed, so a mid-pool replacement (from
+    // retireWorker, below) lands where the retired worker sat instead of at
+    // the tail — pool *positions* are what lanes() splits on, so a replacement
+    // that landed at the end would silently move the fg/bg boundary. The
+    // initial construction loop calls this with 0..n-1 in order, where
+    // splice(index, 0, entry) and push() are equivalent.
+    pool.splice(index, 0, entry);
     return entry;
 }
 
@@ -219,6 +225,12 @@ function maybeEmitPartial(job) {
     }
 }
 
+// Known remaining hole: this fails EVERY inflight job, not just the one on
+// `entry`. The lane split only closes the silent terminate()+`retired` path a
+// stuck-worker retirement takes above — a genuine worker error or non-zero
+// exit still takes down a concurrent job on the other lane with an explicit
+// error, regardless of lane. Narrowing this needs a worker-crash test first;
+// left as-is deliberately.
 function failAllFor(entry, message) {
     for (const [jobId, job] of [...inflight]) {
         clearTimeout(job.timer);
@@ -238,7 +250,11 @@ function retireWorker(entry) {
     const i = pool.indexOf(entry);
     if (i >= 0) pool.splice(i, 1);
     entry.worker.terminate();
-    if (pool.length < workerCount) spawnWorker(pool.length);
+    // Reinsert the replacement at the vacated index, not the tail. Appending
+    // would shift every worker after i left by one, moving the fg/bg lane
+    // boundary out from under any job already dispatched against it — see the
+    // comment on spawnWorker.
+    if (pool.length < workerCount) spawnWorker(i >= 0 ? i : pool.length);
 }
 
 // A worker stuck in a non-terminating trial never messages, errors or exits, so
@@ -248,11 +264,16 @@ function retireWorker(entry) {
 // is the only thing that stops a CPU-bound thread — so the next request lands on
 // a healthy, respawned pool instead of hanging on the same stuck worker.
 //
-// Assumes one job in flight at a time — which SimClient guarantees by holding
-// its request lock across each call. If concurrent jobs ever shared workers,
-// retiring a stuck worker here would silently kill another job's shards (the
-// `retired` flag suppresses the exit handler), leaving that job to its own
-// deadline. Revisit before allowing concurrent simulate requests.
+// Concurrent jobs are expected, not excluded: SimClient's request lock holds
+// one job at a time except across a cancellation, where a shop forecast keeps
+// running in the sidecar while the combat forecast it yielded to dispatches.
+// What makes retiring a stuck worker here safe is lanes.mjs, not the lock —
+// foreground and background jobs run on disjoint worker positions, so a
+// worker this function retires and replaces can only belong to the job that
+// owns it. That guarantee holds only while the pool has more than one worker;
+// with a pool of one, lanes() clamps the reservation to zero and both lanes
+// share the single worker, so a stuck job there still costs whatever else is
+// in flight — there is no isolation left to lose.
 function onJobTimeout(jobId) {
     const job = inflight.get(jobId);
     if (!job) return;

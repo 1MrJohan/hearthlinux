@@ -22,3 +22,16 @@ export function lanes(pool, reserve) {
     const r = Math.max(0, Math.min(reserve | 0, n - 1));
     return { fg: pool.slice(0, n - r), bg: r ? pool.slice(n - r) : pool.slice(0) };
 }
+
+// The pool-position mutation server.mjs's retireWorker/spawnWorker pair
+// perform: remove `entry` and reinsert `replacement` at the vacated index
+// (not the tail), so lanes() keeps splitting the pool in the same place
+// across a retirement. Exported so the invariant can be tested without
+// duplicating the rule, and without spawning a real worker pool.
+export function retireAndReplace(pool, entry, replacement) {
+    const i = pool.indexOf(entry);
+    const next = pool.slice();
+    if (i >= 0) next.splice(i, 1);
+    next.splice(i >= 0 ? i : next.length, 0, replacement);
+    return next;
+}

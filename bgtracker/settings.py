@@ -186,7 +186,8 @@ SETTINGS: tuple[Setting, ...] = (
         "re-run every time you buy, sell or reposition. Giving it its own "
         "worker keeps it from taking the whole pool the real combat forecast "
         "needs, at the cost of it firming up more slowly. 0 shares the pool, "
-        "which is the older behaviour.",
+        "which is the older behaviour. With sim_workers=1 the reservation is "
+        "always clamped to 0: the real fight keeps the only worker there is.",
         channel=SIM, minimum=0, maximum=4, step=1,
     ),
 

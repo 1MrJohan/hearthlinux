@@ -69,7 +69,10 @@ async def resim(path: Path = DB_FILE, limit: int | None = None) -> str:
     if not stored:
         return "no recorded combats with stored boards"
 
-    sim = SimClient()
+    # shop_workers=0: resim issues no background job, and it is the throughput
+    # bench sim_workers gets tuned from — reserving a worker it never uses
+    # would silently bench the pool this plan configures as n-1, not n.
+    sim = SimClient(shop_workers=0)
     if not await sim.ping():
         await sim.close()
         return "combat simulator unavailable (node/sidecar missing?)"

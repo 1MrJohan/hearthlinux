@@ -15,7 +15,9 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not i
 
 def test_winning_board_wins():
     async def run():
-        sim = SimClient(sims=2000)
+        # shop_workers=0: this test issues no background job, so a nonzero
+        # reservation would just take a worker away from it for nothing.
+        sim = SimClient(sims=2000, shop_workers=0)
         try:
             assert await sim.ping()
             # our lone 2/3 trades into a 1/7 taunt and dies first -> guaranteed loss
@@ -35,7 +37,10 @@ def test_sharding_across_workers_does_not_change_the_answer():
     exactly as heavily as one that finished, quietly biasing the result.
     """
     async def run(workers):
-        sim = SimClient(sims=2000, workers=workers)
+        # shop_workers=0 so the requested `workers` count is the whole
+        # foreground lane, not the pool minus a background reservation this
+        # test never uses.
+        sim = SimClient(sims=2000, workers=workers, shop_workers=0)
         try:
             result = await sim.simulate(to_battle_info(snapshot_from_synthetic()))
             return result.lost_percent, result.sims_run
@@ -52,7 +57,7 @@ def test_partial_results_only_ever_grow():
     final, would mean shard bookkeeping is double-counting.
     """
     async def run():
-        sim = SimClient(sims=40000, timeout=60.0, workers=2)
+        sim = SimClient(sims=40000, timeout=60.0, workers=2, shop_workers=0)
         seen: list[int] = []
         try:
             final = await sim.simulate(

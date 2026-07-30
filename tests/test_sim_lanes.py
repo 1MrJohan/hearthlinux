@@ -63,6 +63,33 @@ def test_reserving_everything_still_leaves_the_foreground_a_worker():
     assert _lanes(4, 9)["fg"] == [0]
 
 
+def test_a_foreground_retirement_does_not_move_the_lane_boundary():
+    """server.mjs's retireWorker removes the retired entry and reinserts its
+    replacement at the vacated index, not the tail — see lanes.mjs's
+    retireAndReplace. Appending instead would shift every later worker left,
+    handing a background job's worker to the foreground lane mid-flight: the
+    exact silent-shard-loss window this task exists to close.
+
+    Modelled with identity-tagged objects rather than a real pool, and driven
+    through the sidecar's own retireAndReplace rather than a copy of it here.
+    """
+    code = (
+        f"import {{ lanes, retireAndReplace }} from {str(LANES)!r};"
+        "const pool = ['A', 'B', 'C', 'D'];"
+        "const before = lanes(pool, 1);"
+        "const after = retireAndReplace(pool, 'A', 'new');"
+        "console.log(JSON.stringify({ before, after, afterLanes: lanes(after, 1) }));"
+    )
+    out = subprocess.run(["node", "--input-type=module", "-e", code],
+                         capture_output=True, text=True, check=True)
+    got = json.loads(out.stdout)
+    assert got["before"] == {"fg": ["A", "B", "C"], "bg": ["D"]}
+    # D held the background lane before the retirement and must still hold it
+    # after — the replacement lands where A was, not appended past D.
+    assert got["after"] == ["new", "B", "C", "D"]
+    assert got["afterLanes"] == {"fg": ["new", "B", "C"], "bg": ["D"]}
+
+
 def test_a_background_job_pools_the_same_odds_as_a_foreground_one():
     """The lane must change which workers run the trials and nothing else.
 

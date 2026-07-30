@@ -53,7 +53,8 @@
 # run every time you buy, sell or reposition. Giving it its own worker keeps
 # it from taking the whole pool the real combat forecast needs, at the cost
 # of it firming up more slowly. 0 shares the pool, which is the older
-# behaviour.
+# behaviour. With sim_workers=1 the reservation is always clamped to 0: the
+# real fight keeps the only worker there is.
 # sim_shop_workers = 1
 
 # ---- Game & Logs -----------------------------------------------------------
