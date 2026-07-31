@@ -249,7 +249,14 @@ it now looks at all four fields instead of three.
 `BUFF_COLOURS` changes:
 
 - `"Spell"` → `"Spell Power"` (same hex, `#a97fd0`, key renamed to match).
-- `"Pirate"` removed — no reader emits that label anymore.
+- `"Pirate"` stays, unchanged. It looks removable — the played-buff counter
+  that used it is gone from `_BUFF_TAGS` — but `_SHOP_BUFFS["BG_ShopBuff_Pirate"]`
+  is a second, independent "Pirate" (a tavern shop buff, not a played counter)
+  that the panel's own filtering never shows but `read_shop_buffs` can still
+  emit. `test_every_buff_label_the_reader_can_emit_has_a_colour` checks the
+  reader's full emission surface, not what the panel chooses to display, so
+  removing this key would fail that test the moment the dict comprehension
+  ran, regardless of what's on screen.
 - `"Undead"` kept as-is (`#b9b3a0`) — originally added for the shop-buff-group
   Undead tribe, which no longer surfaces (shop is Elemental-only now); reused
   for the new board-buff Undead entry. Same visual identity, different tag
