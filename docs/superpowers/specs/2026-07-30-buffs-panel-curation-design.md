@@ -166,9 +166,10 @@ class Buffs:
 
     entries: (label, atk, health) board-buff counters — Blood Gem, Spell
              Power, Undead, Beetle Army — already baked into the board.
-    shop:    (label, atk, health) tavern shop buffs, currently Elemental only
-             — a minion in Bob's tavern is already carrying this, a buying
-             decision, invisible to combat.
+    shop:    (label, atk, health) tavern shop buffs — every tribe the reader
+             recognizes, unfiltered. A minion in Bob's tavern is already
+             carrying this, a buying decision, invisible to combat. The panel
+             only draws the Elemental row out of this; see rendering below.
     gold_next_turn: net gold banked (negative if overdrawn), 0 if neither.
     free_rerolls:   free rerolls available this turn.
     """
@@ -186,7 +187,7 @@ def maybe_emit_buffs(self):
     if fid is None:
         return
     entries = read_buffs(self.game, fid).entries + read_played_buffs(self.game, fid)
-    shop = tuple(b for b in read_shop_buffs(self.game, fid) if b[0] == "Elemental")
+    shop = read_shop_buffs(self.game, fid)
     gold_next_turn = read_gold_next_turn(self.game, fid)
     free_rerolls = read_free_rerolls(self.game, fid)
     state = (entries, shop, gold_next_turn, free_rerolls)
@@ -197,7 +198,15 @@ def maybe_emit_buffs(self):
 ```
 
 Same trigger, same rate, same dedup-by-equality as today — only the tuple
-being compared grows.
+being compared grows. `shop` is deliberately *not* filtered here. Filtering in
+the exporter would mean `ev.Buffs.shop` — the same field the 2026-07-24 spec
+built to be a faithful readout of every active tavern tribe buff — silently
+stops being that the moment this feature lands, and
+`test_every_tribe_that_can_buff_the_tavern_is_recognised` (which checks
+exactly that, through the emitted event) would break for a reason that has
+nothing to do with what it tests. The curated-to-Elemental decision is what
+the *panel* shows, not what the game state *is*, so it belongs in the render
+layer — see below.
 
 `OverlayState.buffs` becomes a 4-tuple
 (`tuple[tuple, tuple, int, int] = ((), (), 0, 0)`); `overlay/app.py`'s
@@ -224,11 +233,20 @@ new shape.
 
 `set_buffs(entries, shop, gold_next_turn, free_rerolls)` appends board-buff
 chips for `entries` (unchanged `_buff_chip`, no special-casing for Undead's
-always-zero health side — `+N/+0` is accurate and consistent), then, only if
-`shop` is non-empty, the existing `"In Bob's Tavern"` heading and its chip(s),
-then, only if `gold_next_turn` or `free_rerolls` is nonzero, a new
-`"This Turn"` heading (built with the existing `_buff_group` helper — no new
-widget) followed by two more `_buff_chip` calls:
+always-zero health side — `+N/+0` is accurate and consistent). `shop` arrives
+carrying every tribe the reader found — the curation to Elemental-only happens
+here, at the last mile, by filtering to the one row the panel wants before
+building anything:
+
+```python
+shop = tuple(b for b in shop if b[0] == "Elemental")
+```
+
+Then, only if that filtered `shop` is non-empty, the existing
+`"In Bob's Tavern"` heading and its chip; then, only if `gold_next_turn` or
+`free_rerolls` is nonzero, a new `"This Turn"` heading (built with the
+existing `_buff_group` helper — no new widget) followed by two more
+`_buff_chip` calls:
 
 ```python
 if gold_next_turn or free_rerolls:
@@ -286,9 +304,12 @@ Mirroring the 2026-07-24 spec's own test shape:
   the renamed/added `BUFF_COLOURS` keys.
 - `test_overlay_state.py`: a `Buffs` event carrying the new fields reaches
   `set_buffs`; an unchanged tuple does not re-render.
-- `test_shop_buffs.py`, `test_overlay_buffs_panel.py`, `test_tailer.py`:
-  updated for the trimmed `entries`/`shop` shape and the removed `spells`
-  field.
+- `test_shop_buffs.py` needs no changes — `ev.Buffs.shop` stays the full,
+  unfiltered readout it already tests, per the plumbing section above.
+- `test_overlay_buffs_panel.py`: rewritten for the new `set_buffs` signature
+  (`entries, shop, gold_next_turn, free_rerolls`), plus new cases for the
+  Elemental-only filter (a non-Elemental tribe in `shop` renders no heading)
+  and the new "This Turn" group (gold alone, rerolls alone, both, neither).
 - `overlay/demo.py`'s seeded `Buffs` event gains Undead, Beetle Army,
   `gold_next_turn`, and `free_rerolls` sample values so `--overlay --demo`
   renders every new row in one pass.
