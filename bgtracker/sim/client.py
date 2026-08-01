@@ -129,6 +129,11 @@ class SimClient:
         self._proc: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._next_id = 0
+        # The pinned @firestone-hs/simulate-bgs-battle version, from the ready
+        # line. The pin is load-bearing for accuracy (card behaviour is frozen
+        # in it), so doctor and the diagnostics bundle surface it rather than
+        # throwing it away after the log line.
+        self.sidecar_version: str | None = None
 
     @classmethod
     def from_config(cls, cfg, **overrides) -> "SimClient":
@@ -166,11 +171,13 @@ class SimClient:
                 env=env,
                 # Applied in the child between fork and exec, so every worker
                 # thread the sidecar creates — including ones retireWorker
-                # spawns mid-game — inherits it. None when the policy is off.
+                # spawns mid-game — inherits it. Always set: even with the CPU
+                # policy off it installs PR_SET_PDEATHSIG.
                 preexec_fn=spawn_preexec(self.cpu_policy),
             )
             ready = await asyncio.wait_for(self._proc.stdout.readline(), timeout=60)
             info = json.loads(ready)
+            self.sidecar_version = info.get("simulator")
             log.info(
                 "simulator sidecar ready (v%s, %s worker(s))",
                 info.get("simulator"), info.get("workers", 1),

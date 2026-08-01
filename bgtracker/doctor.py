@@ -73,6 +73,35 @@ def _check_log_config(hs_dir):
         yield ("ok", f"log.config good: {target}")
 
 
+def _check_client_config(hs_dir):
+    """The other half of the logging config, and the sneakier failure.
+
+    The client silently STOPS ALL LOGGING once a log file hits its size cap
+    (~10MB) — fatal for long BG sessions, and exactly the "logging just
+    stopped mid-session" symptom this tool exists to diagnose. discovery
+    writes `FileSizeLimit.Int=-1` into client.config to prevent it; this
+    verifies the uncap actually landed (a game patch can rewrite the file).
+    """
+    yield ("head", "client config (log size cap):")
+    target = hs_dir / "client.config"
+    if not target.is_file():
+        yield ("bad", f"client.config missing at {target} — logging stops at the "
+                      "~10MB cap mid-session; run `python -m bgtracker` once to write it")
+        return
+    text = target.read_text()
+    values = {}
+    for line in text.splitlines():
+        key, sep, value = line.strip().partition("=")
+        if sep:
+            values[key.strip()] = value.strip()
+    if values.get("FileSizeLimit.Int") == "-1":
+        yield ("ok", f"log size uncapped: {target}")
+    else:
+        yield ("bad", f"client.config at {target}: FileSizeLimit.Int is "
+                      f"{values.get('FileSizeLimit.Int', 'unset')}, want -1 — logging "
+                      "silently stops at the size cap; run `python -m bgtracker` once")
+
+
 def _check_sessions(hs_dir):
     yield ("head", "log sessions:")
     session = newest_session_dir(hs_dir / "Logs")
@@ -105,6 +134,11 @@ async def _check_sim(cfg):
     try:
         if await sim.ping():
             yield ("ok", "sidecar responds")
+            # The pin decides how new cards *behave* in combat, so a stale one
+            # after an HS patch is an accuracy bug — worth a line here.
+            if sim.sidecar_version:
+                yield ("info", f"simulate-bgs-battle {sim.sidecar_version} (pinned; "
+                               "bump + resim after a mechanics patch)")
         else:
             yield ("bad", "sidecar did not respond to ping")
     finally:
@@ -158,6 +192,8 @@ async def checks(cfg: Config | None = None):
         yield record
     if hs_dir is not None:
         for record in _check_log_config(hs_dir):
+            yield record
+        for record in _check_client_config(hs_dir):
             yield record
         for record in _check_sessions(hs_dir):
             yield record

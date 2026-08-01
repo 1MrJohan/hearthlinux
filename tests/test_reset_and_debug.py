@@ -261,3 +261,25 @@ def test_verbose_is_a_floor_the_setting_cannot_undercut(monkeypatch):
     monkeypatch.setattr(logging_setup, "_verbose", True)
     # -v on the command line must not be silently overridden by a quiet config.
     assert logging_setup.level_for(Config(log_level="warning")) == logging.DEBUG
+
+
+# -- the client.config check -------------------------------------------
+def test_doctor_flags_a_missing_client_config(tmp_path):
+    """The client silently STOPS ALL LOGGING once a log file hits its size
+    cap — the exact symptom doctor exists to diagnose, and client.config is
+    where discovery uncaps it. A missing or capped file must be a [!!]."""
+    records = list(doctor._check_client_config(tmp_path))
+    assert any(kind == "bad" for kind, _ in records), records
+
+
+def test_doctor_flags_a_client_config_without_the_uncap(tmp_path):
+    (tmp_path / "client.config").write_text("[Log]\r\nFileSizeLimit.Int=10485760\r\n")
+    records = list(doctor._check_client_config(tmp_path))
+    assert any(kind == "bad" and "FileSizeLimit" in text for kind, text in records), records
+
+
+def test_doctor_accepts_an_uncapped_client_config(tmp_path):
+    (tmp_path / "client.config").write_text("[Log]\r\nFileSizeLimit.Int=-1\r\n")
+    records = list(doctor._check_client_config(tmp_path))
+    assert any(kind == "ok" for kind, _ in records), records
+    assert not any(kind == "bad" for kind, _ in records), records
