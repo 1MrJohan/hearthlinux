@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import urllib.request
 from pathlib import Path
 
@@ -36,28 +37,58 @@ _KINDS = {
     "render": (CARD_DIR, ".png"),
 }
 _UA = {"User-Agent": "hs-bg-tracker/0.1 (personal Linux BG tracker)"}
+
+# How long a failed fetch is remembered before being retried. Deliberately
+# time-bounded rather than permanent: a timeout or DNS blip must not read the
+# same as a genuine 404 forever. A card that misses on both counts costs one
+# retry per window, which is cheap next to caching a bad miss for the rest of
+# the process's life.
+_RETRY_AFTER = 60.0  # seconds
+
 # Keyed by full destination path, not bare filename: crops and renders share
 # card-id filenames, and a failed crop must not poison the render lookup.
-_failed: set[Path] = set()
+# Value is the monotonic timestamp of the failure.
+_failed: dict[Path, float] = {}
+
+# In-flight downloads keyed by destination path, so two callers wanting the
+# same card_id/kind at once (e.g. the same minion on our board and in
+# opponent memory) share one download instead of racing two writes to the
+# same file.
+_inflight: dict[Path, asyncio.Future] = {}
+
+# Magic bytes for the two formats this module ever writes. A response that
+# matches neither is treated as a miss rather than cached — guards against a
+# CDN edge case serving an HTML error page with a 200 status.
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _looks_like_image(data: bytes) -> bool:
+    return data.startswith(_PNG_MAGIC) or data.startswith(_JPEG_MAGIC)
 
 
 def _fetch_first(urls: list[str], dest: Path) -> Path | None:
     """Download the first URL that succeeds into dest (cached by dest path)."""
     if dest.is_file():
         return dest
-    if dest in _failed:
+    failed_at = _failed.get(dest)
+    if failed_at is not None and time.monotonic() - failed_at < _RETRY_AFTER:
         return None
     for url in urls:
         try:
             req = urllib.request.Request(url, headers=_UA)
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = resp.read()
+            if not _looks_like_image(data):
+                log.debug("art fetch non-image response %s", url)
+                continue
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)  # format detected by content, not extension
+            dest.write_bytes(data)
+            _failed.pop(dest, None)
             return dest
         except Exception as exc:
             log.debug("art fetch miss %s: %s", url, exc)
-    _failed.add(dest)
+    _failed[dest] = time.monotonic()
     return None
 
 
@@ -97,7 +128,15 @@ async def fetch_art(card_id: str, kind: str = "crop") -> Path | None:
     if cached:
         return cached
     dest = art_path(card_id, kind)
+    existing = _inflight.get(dest)
+    if existing is not None:
+        return await existing
     urls = _urls(card_id, kind)
-    return await asyncio.get_running_loop().run_in_executor(
+    future = asyncio.get_running_loop().run_in_executor(
         None, _fetch_first, urls, dest
     )
+    _inflight[dest] = future
+    try:
+        return await future
+    finally:
+        _inflight.pop(dest, None)
