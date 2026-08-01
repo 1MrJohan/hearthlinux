@@ -129,6 +129,21 @@ def _report(results: list[Row]) -> str:
         moved = [r for r in scored if r.drift >= 1.0]
         mean_drift = sum(r.drift for r in scored) / len(scored)
         lines.append(f"  mean drift {mean_drift:.2f} points; {len(moved)} moved by >=1 point")
+        # Brier direction is the accept/reject rule for a sim or mapper change
+        # (see CLAUDE.md): a bump that moves predictions *toward* actual
+        # outcomes lowers it, however large the drift. Only decided fights can
+        # score a win probability — a tie confirms neither number.
+        decided = [r for r in scored if r.outcome in ("win", "loss")]
+        if decided:
+            def brier(key):
+                return sum(
+                    (getattr(r, key) / 100.0 - (1.0 if r.outcome == "win" else 0.0)) ** 2
+                    for r in decided
+                ) / len(decided)
+            lines.append(
+                f"  Brier then {brier('then'):.3f} -> now {brier('now'):.3f}"
+                f" over {len(decided)} decided combats (lower is better)"
+            )
         thin = [r for r in scored if 0 < r.sims_run < 4000]
         if thin:
             # A truncated run is a noisy number, not a wrong one — worth knowing

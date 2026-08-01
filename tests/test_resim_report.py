@@ -31,3 +31,38 @@ def test_truncated_runs_are_still_called_out():
     # The existing accuracy guard must survive the addition.
     text = _report([_row(50, 51, 100.0, sims=1200)])
     assert "under 4000 trials" in text
+
+
+def test_brier_then_vs_now_over_decided_combats():
+    """CLAUDE.md's accept/reject rule is Brier *direction*, not mean drift —
+    so the report must print both numbers instead of leaving the reviewer to
+    compute them by hand from a table that only shows the worst 25 rows."""
+    rows = [
+        Row(turn=5, opponent_hero="H", outcome="win", then=80.0, now=90.0),
+        Row(turn=6, opponent_hero="H", outcome="loss", then=40.0, now=20.0),
+    ]
+    text = _report(rows)
+    # then: ((0.8-1)^2 + (0.4-0)^2) / 2 = 0.100
+    # now:  ((0.9-1)^2 + (0.2-0)^2) / 2 = 0.025
+    assert "Brier then 0.100" in text, text
+    assert "now 0.025" in text, text
+    assert "2 decided" in text, text
+
+
+def test_ties_and_unscored_rows_are_excluded_from_brier():
+    """A tie can't score a win probability either way, and a row with no
+    'now' has nothing to compare — neither may dilute the number."""
+    rows = [
+        Row(turn=5, opponent_hero="H", outcome="win", then=100.0, now=100.0),
+        Row(turn=6, opponent_hero="H", outcome="tie", then=50.0, now=50.0),
+        Row(turn=7, opponent_hero="H", outcome=None, then=50.0, now=50.0),
+        Row(turn=8, opponent_hero="H", outcome="win", then=60.0, now=None),
+    ]
+    text = _report(rows)
+    assert "Brier then 0.000" in text, text
+    assert "1 decided" in text, text
+
+
+def test_no_brier_line_when_nothing_is_decided():
+    text = _report([Row(turn=5, opponent_hero="H", outcome="tie", then=50.0, now=50.0)])
+    assert "Brier" not in text, text
