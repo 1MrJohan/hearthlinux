@@ -17,6 +17,10 @@ def _entity(minion: Minion, friendly: bool) -> dict:
         "cardId": minion.card_id or "",
         "attack": minion.attack,
         "health": minion.health,
+        # Read directly by effects (Captain Sanders' `e.tavernTier <= 6`,
+        # avenge summons scaling) with no card-DB fallback in the simulator —
+        # absent, those comparisons are silently false, not approximate.
+        "tavernTier": minion.tier,
         "taunt": minion.taunt,
         "divineShield": minion.divine_shield,
         "poisonous": minion.poisonous,

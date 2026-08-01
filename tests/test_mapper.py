@@ -130,3 +130,13 @@ def test_trinket_shop_placeholders_are_not_equipment():
     # Hidden opponent cards sit in PLAY carrying no id; the placeholder match
     # must not crash on None the way a bare regex .match(None) would.
     assert not _is_trinket(FakeCard(None, CardType.MINION))
+
+
+def test_minion_tavern_tier_is_sent():
+    """Several combat effects key on a minion's tier (Captain Sanders filters
+    on `e.tavernTier <= 6`, avenge summons scale by it). The simulator reads
+    the field directly with no card-DB fallback, so omitting it makes those
+    comparisons silently false rather than approximate."""
+    info = to_battle_info(snapshot_from_synthetic())
+    [mine] = info["playerBoard"]["board"]
+    assert mine["tavernTier"] == 1
