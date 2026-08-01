@@ -310,7 +310,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="bgtracker")
     parser.add_argument(
         "command", nargs="?",
-        choices=["run", "stats", "doctor", "mmr", "resim", "settings", "history"],
+        choices=["run", "stats", "doctor", "diagnostics", "mmr", "resim", "settings", "history"],
         default="run",
     )
     parser.add_argument("value", nargs="?", type=int,
@@ -361,6 +361,13 @@ def main() -> None:
             from bgtracker.doctor import run as doctor_run
 
             doctor_run()
+        elif args.command == "diagnostics":
+            # Also reachable from the settings window — but the population the
+            # bundle exists for is a user whose overlay won't start, who can't
+            # open that window at all.
+            from bgtracker import diagnostics
+
+            print(asyncio.run(diagnostics.bundle(settings.cfg)))
         elif args.command == "settings":
             run_settings_window(settings)
         elif args.command == "history":
