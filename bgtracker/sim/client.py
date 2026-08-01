@@ -1,7 +1,9 @@
 """Asyncio client for the Node combat-simulator sidecar.
 
 JSON-lines over stdio; the sidecar is supervised (respawned on crash) and
-killed with the parent. One in-flight request at a time is all BG needs.
+dies with the parent — via `close()` when the tracker unwinds, and via
+PR_SET_PDEATHSIG (set in the spawn `preexec_fn`, see sim/cpu.py) when it
+does not. One in-flight request at a time is all BG needs.
 """
 
 from __future__ import annotations

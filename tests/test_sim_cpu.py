@@ -76,10 +76,41 @@ def test_an_empty_cpulist_falls_through_to_frequencies(tmp_path):
     assert efficiency_cpus(tmp_path) == frozenset({2, 3})
 
 
-def test_policy_off_returns_nothing_to_apply():
-    """None is a valid preexec_fn, so the caller passes it through either way
-    rather than branching at the spawn."""
-    assert spawn_preexec("off") is None
+def test_policy_off_still_sets_pdeathsig_but_no_scheduling(monkeypatch):
+    """Orphan prevention is not a scheduling opinion: whatever the CPU policy,
+    a sidecar must not outlive its tracker. Policy off skips only the
+    affinity/scheduler/nice trio."""
+    seen = {}
+    monkeypatch.setattr(os, "sched_setaffinity", lambda *a: seen.update(affinity=True))
+    monkeypatch.setattr(os, "sched_setscheduler", lambda *a: seen.update(policy=True))
+    monkeypatch.setattr(os, "setpriority", lambda *a: seen.update(priority=True))
+
+    apply = spawn_preexec("off")
+    assert apply is not None
+    apply()
+    assert seen == {}
+
+
+def test_pdeathsig_is_delivered_out_of_process():
+    """The child asks the kernel what its parent-death signal is after the
+    applier ran — PR_GET_PDEATHSIG is the only honest assertion here, since
+    actually killing a parent mid-test is a race by construction."""
+    import signal
+
+    repo_root = Path(__file__).resolve().parent.parent
+    code = (
+        "import ctypes, sys;"
+        "sys.path.insert(0, %r);"
+        "from bgtracker.sim.cpu import spawn_preexec;"
+        "spawn_preexec('off')();"
+        "libc = ctypes.CDLL('libc.so.6', use_errno=True);"
+        "sig = ctypes.c_int();"
+        "libc.prctl(2, ctypes.byref(sig), 0, 0, 0);"   # PR_GET_PDEATHSIG
+        "print(sig.value)"
+    ) % str(repo_root)
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == str(int(signal.SIGTERM))
 
 
 def test_applies_affinity_scheduler_and_nice(tmp_path, monkeypatch):

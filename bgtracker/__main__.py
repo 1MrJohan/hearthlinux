@@ -336,6 +336,19 @@ def main() -> None:
 
     if not args.no_names:
         cards.load()
+
+    # Both routine shutdowns are SIGTERM (steam-launch.sh when the game exits,
+    # --replace killing the old instance). Python's default SIGTERM action
+    # terminates without unwinding, so the `finally: await sim.close()` paths
+    # never ran and the sidecar was orphaned on every restart. Routing it
+    # through KeyboardInterrupt makes SIGTERM shut down exactly like Ctrl-C;
+    # PR_SET_PDEATHSIG in sim/cpu.py remains the backstop for SIGKILL.
+    import signal
+
+    def _term(_sig, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _term)
     try:
         if args.command == "mmr":
             if args.value is None:

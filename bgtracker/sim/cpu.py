@@ -8,8 +8,10 @@ is therefore the whole job of this module.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import os
+import signal
 from collections.abc import Callable
 from pathlib import Path
 
@@ -84,13 +86,25 @@ def efficiency_cpus(root: Path = SYSFS_CPU) -> frozenset[int] | None:
 # ignores nice entirely, so on a working kernel this does nothing.
 _NICE = 19
 
+# prctl(2) constant; asks the kernel to deliver this signal to the child when
+# its parent thread dies. Not in the os module on any Python we support.
+_PR_SET_PDEATHSIG = 1
 
-def spawn_preexec(policy: str = "auto", root: Path = SYSFS_CPU) -> Callable[[], None] | None:
-    """A `preexec_fn` that makes the sidecar defer to whatever else is running.
 
-    Returns None when the policy is off, which `create_subprocess_exec` accepts
-    as "no preexec" — so the caller passes the result straight through instead
-    of branching at the spawn.
+def spawn_preexec(policy: str = "auto", root: Path = SYSFS_CPU) -> Callable[[], None]:
+    """A `preexec_fn` that makes the sidecar defer to whatever else is running
+    — and die with the tracker rather than outliving it.
+
+    Always returns an applier, whatever the policy: the parent-death signal is
+    not a scheduling opinion. Both routine shutdown paths are SIGTERM
+    (`steam-launch.sh` when Hearthstone exits, `--replace` killing the old
+    instance), which terminates Python without unwinding, so the
+    `finally: await sim.close()` never runs and a node parent plus its ~350MB
+    workers used to survive every restart. PR_SET_PDEATHSIG makes the kernel
+    deliver SIGTERM to the sidecar when the tracker dies, however it dies.
+    The known gap: the flag is cleared if this child ever forks-and-parents
+    its own daemon (node does not), and a parent that dies in the microseconds
+    between fork and prctl leaves one orphan — a race, not a leak pattern.
 
     **Why before exec rather than on the running process.** Affinity and
     scheduling policy are per-*thread* on Linux and inherited at thread
@@ -119,18 +133,32 @@ def spawn_preexec(policy: str = "auto", root: Path = SYSFS_CPU) -> Callable[[], 
     sample size — a wider `margin`, recorded in `sims_run` — never correctness.
     That is what licenses the aggressive setting.
     """
-    if policy != "auto":
-        return None
-    cpus = efficiency_cpus(root)
-    if cpus:
-        log.info("simulator pinned to %d efficiency cores at idle priority", len(cpus))
-    else:
-        log.info("simulator at idle priority (no efficiency cores to pin to)")
+    scheduling = policy == "auto"
+    cpus = efficiency_cpus(root) if scheduling else None
+    if scheduling:
+        if cpus:
+            log.info("simulator pinned to %d efficiency cores at idle priority", len(cpus))
+        else:
+            log.info("simulator at idle priority (no efficiency cores to pin to)")
+    # The CDLL load happens here in the parent — loading a shared object is
+    # exactly the kind of allocation-heavy work the fork hazard forbids in
+    # apply(); only the bare prctl call crosses the fork.
+    try:
+        _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    except OSError:
+        _libc = None
 
     def apply() -> None:
         # Nothing here may raise: an exception inside a preexec_fn surfaces in
         # the parent as a SubprocessError and would take the sidecar down.
         # Failing to lower our own priority is not a reason to have no odds.
+        if _libc is not None:
+            try:
+                _libc.prctl(_PR_SET_PDEATHSIG, int(signal.SIGTERM), 0, 0, 0)
+            except Exception:
+                pass
+        if not scheduling:
+            return
         if cpus:
             try:
                 os.sched_setaffinity(0, cpus)
