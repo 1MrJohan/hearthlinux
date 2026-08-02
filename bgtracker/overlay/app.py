@@ -361,11 +361,25 @@ class OverlayApp:
 
     def run_with(self, coro: Coroutine) -> None:
         """Run the GTK app and the given coroutine on one shared loop."""
+        import signal
+
+        from gi.repository import GLib
+
         policy = GLibEventLoopPolicy()
         asyncio.set_event_loop_policy(policy)
         loop = policy.get_event_loop()
         task = loop.create_task(coro)
         task.add_done_callback(self._on_task_done)
+        # __main__'s SIGTERM->KeyboardInterrupt handler covers the headless
+        # asyncio.run() paths but not this one: while app.run blocks inside
+        # GLib's C main loop, an exception raised by a Python signal handler
+        # cannot unwind through it and is silently swallowed. steam-launch and
+        # --replace both stop the tracker with SIGTERM, so without a GLib-level
+        # handler the overlay — the mode steam-launch actually runs — ignores
+        # its own shutdown signal (observed live: two SIGTERMs, still running).
+        GLib.unix_signal_add(
+            GLib.PRIORITY_HIGH, signal.SIGTERM, lambda: (self.app.quit(), False)[1]
+        )
         try:
             self.app.run(None)
         finally:
