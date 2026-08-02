@@ -122,13 +122,13 @@ class GameSummary:
 
 
 # Player-wide "tavern buff" counters that accumulate across a game, stored as
-# tags on the Player entity. Each: (label, attack-tag, health-tag). Undead has
-# no equivalent player counter (tracked per-minion), so it isn't here.
+# dedicated tags on the Player entity. Each: (label, attack-tag, health-tag).
+# Curated to what the Buffs panel shows — Pirate and the played-Elemental
+# counter used to be here too; see
+# docs/superpowers/specs/2026-07-30-buffs-panel-curation-design.md.
 _BUFF_TAGS = [
     ("Blood Gem", GameTag.BACON_BLOODGEMBUFFATKVALUE, GameTag.BACON_BLOODGEMBUFFHEALTHVALUE),
-    ("Elemental", GameTag.BACON_ELEMENTAL_BUFFATKVALUE, GameTag.BACON_ELEMENTAL_BUFFHEALTHVALUE),
-    ("Pirate", GameTag.BACON_PIRATE_BUFFATKVALUE, GameTag.BACON_PIRATE_BUFFHEALTHVALUE),
-    ("Spell", GameTag.TAVERN_SPELL_ATTACK_INCREASE, GameTag.TAVERN_SPELL_HEALTH_INCREASE),
+    ("Spell Power", GameTag.TAVERN_SPELL_ATTACK_INCREASE, GameTag.TAVERN_SPELL_HEALTH_INCREASE),
 ]
 
 
@@ -186,17 +186,21 @@ _SHOP_BUFFS = {
 }
 
 
-def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
-    """Friendly tavern-wide buffs, as (label, attack, health).
+def _read_script_buffs(
+    game: Game, player_id: int, mapping: dict[str, str]
+) -> tuple[tuple[str, int, int], ...]:
+    """Read (label, attack, health) off player-owned script-data enchantments.
 
-    Declared order, not discovery order, so a row keeps its place in the panel
-    as its value climbs.
+    Shared shape behind both the tavern shop buffs and the played board-wide
+    buffs (Undead, Beetle Army): one enchantment per source, attached to the
+    player, holding a running total in TAG_SCRIPT_DATA_NUM_1/2. `mapping` is
+    the only thing that differs between callers.
     """
     found: dict[str, tuple[int, int]] = {}
     for e in game.entities:
         if (
             isinstance(e, Card)
-            and e.card_id in _SHOP_BUFFS
+            and e.card_id in mapping
             and tag(e, GameTag.CONTROLLER) == player_id
             and tag(e, GameTag.ZONE) == Zone.PLAY
         ):
@@ -206,38 +210,58 @@ def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], .
                 found[e.card_id] = (atk, hp)
     return tuple(
         (label, *found[card_id])
-        for card_id, label in _SHOP_BUFFS.items()
+        for card_id, label in mapping.items()
         if card_id in found
     )
 
 
-# Persistent tavern SPELLS the player holds (Easterly Winds and other pool
-# spells). They aren't counters — they buff shop minions / the board on
-# triggers — but are worth surfacing as active effects. Classified by the
-# stable `isBattlegroundsPoolSpell` card flag, since the game morphs their
-# runtime CARDTYPE (SPELL<->TRINKET) and that type is also polluted with
-# cosmetic "Portraits" and the discover pool.
-# SETASIDE/PLAY hold persistent tavern effects; HAND is excluded so a one-shot
-# spell mid-cast doesn't flicker into the list.
-_HELD_ZONES = (Zone.PLAY, Zone.SETASIDE)
+def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
+    """Friendly tavern-wide buffs, as (label, attack, health).
+
+    Declared order, not discovery order, so a row keeps its place in the panel
+    as its value climbs.
+    """
+    return _read_script_buffs(game, player_id, _SHOP_BUFFS)
 
 
-def read_active_spells(game: Game, player_id: int) -> tuple[str, ...]:
-    """Friendly-held tavern spells, deduped by card id."""
-    pool = cards.pool_spell_ids()
-    if not pool:
-        return ()
-    out: list[str] = []
+# Buffs that accumulate on the board itself, in the same per-player
+# TAG_SCRIPT_DATA_NUM_1/2 enchantment shape read_shop_buffs already reads — a
+# different quantity from the tavern buffs above (already baked into your
+# minions, not a purchasing decision) but mechanically the same read.
+#
+# Undead only ever sets NUM_1: the card text is "Give Attack to Undead", so
+# health stays 0 rather than absent. Beetle Army sets both.
+_PLAYED_SCRIPT_BUFFS = {
+    "BG25_011pe": "Undead",
+    "BG31_808pe": "Beetle Army",
+}
+
+
+def read_played_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
+    """Friendly played board-wide buffs not covered by a dedicated GameTag."""
+    return _read_script_buffs(game, player_id, _PLAYED_SCRIPT_BUFFS)
+
+
+def read_gold_next_turn(game: Game, player_id: int) -> int:
+    """Net gold banked for next turn; negative if overdrawn."""
+    player = next((p for p in game.players if p.player_id == player_id), None)
+    if player is None:
+        return 0
+    return (tag(player, GameTag.BACON_PLAYER_EXTRA_GOLD_NEXT_TURN)
+            - tag(player, GameTag.BACON_PLAYER_OVERDRAWN_GOLD_NEXT_TURN))
+
+
+def read_free_rerolls(game: Game, player_id: int) -> int:
+    """Free rerolls available right now, mirrored onto the reroll button itself."""
     for e in game.entities:
         if (
             isinstance(e, Card)
-            and e.card_id in pool
+            and e.card_id == "Bacon_Free_Refresh_Player_Ench"
             and tag(e, GameTag.CONTROLLER) == player_id
-            and tag(e, GameTag.ZONE) in _HELD_ZONES
-            and e.card_id not in out
+            and tag(e, GameTag.ZONE) == Zone.PLAY
         ):
-            out.append(e.card_id)
-    return tuple(out)
+            return tag(e, GameTag.BACON_FREE_REFRESH_COUNT)
+    return 0
 
 
 # When an odd number of players remain, somebody is paired against a "ghost" —

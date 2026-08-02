@@ -23,7 +23,6 @@ gi.require_version("Gtk4LayerShell", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
 
 from bgtracker.config import Config, update_config_values  # noqa: E402
-from bgtracker.data import cards  # noqa: E402
 
 from . import theme  # noqa: E402
 from .hud import HudPanel  # noqa: E402
@@ -465,24 +464,36 @@ class OverlayWindow(Gtk.Window):
     def set_result(self, outcome: str | None, damage: int = 0) -> None:
         self.hud.set_result(outcome, damage)
 
-    def set_buffs(self, entries, spells=(), shop=()) -> None:
-        """Played buffs and held spells, then tavern-wide buffs under a heading.
+    def set_buffs(self, entries, shop=(), gold_next_turn=0, free_rerolls=0) -> None:
+        """Board buffs, then the Elemental tavern buff, then turn economy.
 
-        `shop` is a different quantity from `entries`: those are already on the
-        board, these are what a minion in Bob's tavern is carrying before you
-        buy it. In one flat list the two read as a single stacking number.
+        `shop` arrives carrying every tribe the reader recognises; the panel
+        only ever draws the Elemental row out of it, because a minion sitting
+        in Bob's tavern is a different quantity from one already on your
+        board — flattened into one list the two read as a single stacking
+        number.
         """
         for row in self._buff_rows:
             self.buffs.remove(row)
         self._buff_rows.clear()
         for label, atk, hp in entries:
             self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
-        for card_id in spells:
-            self._buff_rows.append(self._spell_chip(cards.name(card_id)))
+        shop = tuple(b for b in shop if b[0] == "Elemental")
         if shop:
             self._buff_rows.append(self._buff_group("In Bob's Tavern"))
             for label, atk, hp in shop:
                 self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
+        if gold_next_turn or free_rerolls:
+            self._buff_rows.append(self._buff_group("This Turn"))
+            if gold_next_turn:
+                sign = "+" if gold_next_turn > 0 else ""
+                self._buff_rows.append(
+                    self._buff_chip("Gold Next Turn", f"{sign}{gold_next_turn}")
+                )
+            if free_rerolls:
+                self._buff_rows.append(
+                    self._buff_chip("Free Reroll", f"{free_rerolls} available")
+                )
         for row in self._buff_rows:
             self.buffs.append(row)
         self._set_content("buffs", bool(self._buff_rows))
@@ -507,12 +518,6 @@ class OverlayWindow(Gtk.Window):
         row.append(name)
         row.append(amount)
         return row
-
-    def _spell_chip(self, name: str) -> Gtk.Widget:
-        label = Gtk.Label(label=f"✦ {name}", xalign=0)
-        label.add_css_class("spell")
-        label.set_wrap(True)
-        return label
 
     def set_board(self, title: str, subtitle: str = "", board=None) -> None:
         self.board.show_board(title, subtitle, board)

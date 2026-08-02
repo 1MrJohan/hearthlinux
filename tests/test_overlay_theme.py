@@ -126,7 +126,11 @@ def test_every_buff_label_the_reader_can_emit_has_a_colour():
     Tribes rotate, so the shop-buff table gains entries over time; without this
     a new one looks fine in code review and blank on screen.
     """
-    from bgtracker.state.game import _BUFF_TAGS, _SHOP_BUFFS
+    from bgtracker.state.game import _BUFF_TAGS, _PLAYED_SCRIPT_BUFFS, _SHOP_BUFFS
 
-    labels = {label for label, *_ in _BUFF_TAGS} | set(_SHOP_BUFFS.values())
+    labels = (
+        {label for label, *_ in _BUFF_TAGS}
+        | set(_SHOP_BUFFS.values())
+        | set(_PLAYED_SCRIPT_BUFFS.values())
+    )
     assert labels <= set(theme.BUFF_COLOURS)

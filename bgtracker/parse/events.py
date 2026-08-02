@@ -135,18 +135,21 @@ class GameEnd:
 
 @dataclass(frozen=True)
 class Buffs:
-    """Friendly player's tavern buffs and held tavern spells/trinkets.
+    """Friendly player's curated buffs and turn economy.
 
-    entries: (label, atk, health) accumulating counters, applied when a minion
-             is played and so already baked into the board.
-    spells:  card ids of persistent tavern spells/trinkets held.
-    shop:    (label, atk, health) buffs a minion already carries while it sits
-             in Bob's tavern — a buying decision, invisible to combat.
+    entries: (label, atk, health) board-buff counters — Blood Gem, Spell
+             Power, Undead, Beetle Army — already baked into the board.
+    shop:    (label, atk, health) tavern shop buffs — every tribe the reader
+             recognizes, unfiltered. The panel draws only the Elemental row
+             out of this; see overlay/window.py::set_buffs.
+    gold_next_turn: net gold banked for next turn; negative if overdrawn.
+    free_rerolls:   free rerolls available this turn.
     """
 
     entries: tuple[tuple[str, int, int], ...]
-    spells: tuple[str, ...] = ()
     shop: tuple[tuple[str, int, int], ...] = ()
+    gold_next_turn: int = 0
+    free_rerolls: int = 0
 
 
 Event = (
