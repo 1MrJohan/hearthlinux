@@ -186,17 +186,21 @@ _SHOP_BUFFS = {
 }
 
 
-def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
-    """Friendly tavern-wide buffs, as (label, attack, health).
+def _read_script_buffs(
+    game: Game, player_id: int, mapping: dict[str, str]
+) -> tuple[tuple[str, int, int], ...]:
+    """Read (label, attack, health) off player-owned script-data enchantments.
 
-    Declared order, not discovery order, so a row keeps its place in the panel
-    as its value climbs.
+    Shared shape behind both the tavern shop buffs and the played board-wide
+    buffs (Undead, Beetle Army): one enchantment per source, attached to the
+    player, holding a running total in TAG_SCRIPT_DATA_NUM_1/2. `mapping` is
+    the only thing that differs between callers.
     """
     found: dict[str, tuple[int, int]] = {}
     for e in game.entities:
         if (
             isinstance(e, Card)
-            and e.card_id in _SHOP_BUFFS
+            and e.card_id in mapping
             and tag(e, GameTag.CONTROLLER) == player_id
             and tag(e, GameTag.ZONE) == Zone.PLAY
         ):
@@ -206,9 +210,18 @@ def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], .
                 found[e.card_id] = (atk, hp)
     return tuple(
         (label, *found[card_id])
-        for card_id, label in _SHOP_BUFFS.items()
+        for card_id, label in mapping.items()
         if card_id in found
     )
+
+
+def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
+    """Friendly tavern-wide buffs, as (label, attack, health).
+
+    Declared order, not discovery order, so a row keeps its place in the panel
+    as its value climbs.
+    """
+    return _read_script_buffs(game, player_id, _SHOP_BUFFS)
 
 
 # Persistent tavern SPELLS the player holds (Easterly Winds and other pool
