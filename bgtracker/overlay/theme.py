@@ -81,7 +81,7 @@ BUFF_COLOURS = {
     "Blood Gem": "#d0555f",
     "Elemental": "#3fb0c9",
     "Pirate": "#c9a13f",
-    "Spell": "#a97fd0",
+    "Spell Power": "#a97fd0",
     "Beast": "#8fae54",
     "Demon": "#b45fa8",
     "Dragon": "#d1743f",

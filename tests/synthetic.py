@@ -6,6 +6,9 @@ logging is enabled in-game; this keeps the pipeline testable before then.
 
 from __future__ import annotations
 
+from bgtracker.parse import events as ev
+from bgtracker.parse.exporter import LiveGameProcessor
+
 PREFIX = "D 00:00:{sec:02d}.0000000 GameState.DebugPrintPower() - "
 
 
@@ -66,3 +69,37 @@ def minimal_bg_game() -> LogBuilder:
     b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 3)
     b.tag_change("GameEntity", "STATE", "COMPLETE")
     return b
+
+
+def recruit_phase_game() -> LogBuilder:
+    """A bare two-player recruit phase: heroes in play, friendly player
+    established via a revealed hand card. Callers add whatever entities or
+    tag changes they need to test."""
+    b = LogBuilder()
+    b.add("CREATE_GAME")
+    b.add("GameEntity EntityID=1", indent=1)
+    b.add("tag=TURN value=1", indent=2)
+    b.add("Player EntityID=2 PlayerID=1 GameAccountId=[hi=1 lo=1]", indent=1)
+    b.add("Player EntityID=3 PlayerID=2 GameAccountId=[hi=1 lo=2]", indent=1)
+    b.entity(4, "TB_BaconShop_HERO_11", CARDTYPE="HERO", ZONE="PLAY", CONTROLLER=1,
+             HEALTH=40, PLAYER_TECH_LEVEL=2)
+    b.entity(5, "TB_BaconShop_HERO_22", CARDTYPE="HERO", ZONE="PLAY", CONTROLLER=2,
+             HEALTH=30, PLAYER_TECH_LEVEL=1)
+    # revealed card in OUR hand -> friendly-player detection says player 1
+    b.entity(6, "BG_EX1_506", CARDTYPE="MINION", ZONE="HAND", CONTROLLER=1)
+    return b
+
+
+def feed_buffs(builder: LogBuilder) -> list:
+    """Feed the log, with a trailing packet so the last one is exported.
+
+    A packet is only exported once something follows it — the tailer has to
+    assume a final line may still be half-written.
+    """
+    builder.tag_change("GameEntity", "TURN", 2)
+    return LiveGameProcessor().feed(builder.lines)
+
+
+def buffs_from(builder: LogBuilder) -> ev.Buffs | None:
+    emitted = [e for e in feed_buffs(builder) if isinstance(e, ev.Buffs)]
+    return emitted[-1] if emitted else None

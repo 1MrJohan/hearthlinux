@@ -122,13 +122,13 @@ class GameSummary:
 
 
 # Player-wide "tavern buff" counters that accumulate across a game, stored as
-# tags on the Player entity. Each: (label, attack-tag, health-tag). Undead has
-# no equivalent player counter (tracked per-minion), so it isn't here.
+# dedicated tags on the Player entity. Each: (label, attack-tag, health-tag).
+# Curated to what the Buffs panel shows — Pirate and the played-Elemental
+# counter used to be here too; see
+# docs/superpowers/specs/2026-07-30-buffs-panel-curation-design.md.
 _BUFF_TAGS = [
     ("Blood Gem", GameTag.BACON_BLOODGEMBUFFATKVALUE, GameTag.BACON_BLOODGEMBUFFHEALTHVALUE),
-    ("Elemental", GameTag.BACON_ELEMENTAL_BUFFATKVALUE, GameTag.BACON_ELEMENTAL_BUFFHEALTHVALUE),
-    ("Pirate", GameTag.BACON_PIRATE_BUFFATKVALUE, GameTag.BACON_PIRATE_BUFFHEALTHVALUE),
-    ("Spell", GameTag.TAVERN_SPELL_ATTACK_INCREASE, GameTag.TAVERN_SPELL_HEALTH_INCREASE),
+    ("Spell Power", GameTag.TAVERN_SPELL_ATTACK_INCREASE, GameTag.TAVERN_SPELL_HEALTH_INCREASE),
 ]
 
 
