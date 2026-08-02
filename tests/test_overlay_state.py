@@ -148,7 +148,15 @@ def test_shop_buffs_reach_the_panel_alongside_the_played_buffs():
         ev.Buffs(entries=(("Blood Gem", 2, 2),), shop=(("Elemental", 27, 27),)),
         None,
     )
-    assert win.last("set_buffs") == ((("Blood Gem", 2, 2),), (), (("Elemental", 27, 27),))
+    assert win.last("set_buffs") == (
+        (("Blood Gem", 2, 2),), (("Elemental", 27, 27),), 0, 0,
+    )
+
+
+def test_gold_and_rerolls_reach_the_panel():
+    app, win = _app()
+    app.on_event(ev.Buffs(entries=(), gold_next_turn=2, free_rerolls=1), None)
+    assert win.last("set_buffs") == ((), (), 2, 1)
 
 
 def test_the_banked_result_is_not_in_state_until_shop_ready():

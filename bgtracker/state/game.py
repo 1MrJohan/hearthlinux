@@ -264,35 +264,6 @@ def read_free_rerolls(game: Game, player_id: int) -> int:
     return 0
 
 
-# Persistent tavern SPELLS the player holds (Easterly Winds and other pool
-# spells). They aren't counters — they buff shop minions / the board on
-# triggers — but are worth surfacing as active effects. Classified by the
-# stable `isBattlegroundsPoolSpell` card flag, since the game morphs their
-# runtime CARDTYPE (SPELL<->TRINKET) and that type is also polluted with
-# cosmetic "Portraits" and the discover pool.
-# SETASIDE/PLAY hold persistent tavern effects; HAND is excluded so a one-shot
-# spell mid-cast doesn't flicker into the list.
-_HELD_ZONES = (Zone.PLAY, Zone.SETASIDE)
-
-
-def read_active_spells(game: Game, player_id: int) -> tuple[str, ...]:
-    """Friendly-held tavern spells, deduped by card id."""
-    pool = cards.pool_spell_ids()
-    if not pool:
-        return ()
-    out: list[str] = []
-    for e in game.entities:
-        if (
-            isinstance(e, Card)
-            and e.card_id in pool
-            and tag(e, GameTag.CONTROLLER) == player_id
-            and tag(e, GameTag.ZONE) in _HELD_ZONES
-            and e.card_id not in out
-        ):
-            out.append(e.card_id)
-    return tuple(out)
-
-
 # When an odd number of players remain, somebody is paired against a "ghost" —
 # a copy of an eliminated player's board, fronted by Kel'Thuzad.
 #
