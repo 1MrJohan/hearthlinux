@@ -59,3 +59,28 @@ def test_a_zero_valued_played_script_buff_makes_no_entry():
              CONTROLLER=1, ATTACHED=2)
     buffs = buffs_from(b)
     assert buffs is None or buffs.entries == ()
+
+
+def test_gold_banked_for_next_turn_is_read():
+    b = recruit_phase_game()
+    b.tag_change(2, "BACON_PLAYER_EXTRA_GOLD_NEXT_TURN", 2)
+    assert buffs_from(b).gold_next_turn == 2
+
+
+def test_overdrawn_gold_next_turn_reads_negative():
+    b = recruit_phase_game()
+    b.tag_change(2, "BACON_PLAYER_OVERDRAWN_GOLD_NEXT_TURN", 1)
+    assert buffs_from(b).gold_next_turn == -1
+
+
+def test_extra_and_overdrawn_gold_next_turn_net_together():
+    b = recruit_phase_game()
+    b.tag_change(2, "BACON_PLAYER_EXTRA_GOLD_NEXT_TURN", 3)
+    b.tag_change(2, "BACON_PLAYER_OVERDRAWN_GOLD_NEXT_TURN", 1)
+    assert buffs_from(b).gold_next_turn == 2
+
+
+def test_no_gold_next_turn_tag_reads_zero():
+    b = recruit_phase_game()
+    buffs = buffs_from(b)
+    assert buffs is None or buffs.gold_next_turn == 0

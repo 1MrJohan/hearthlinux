@@ -242,6 +242,15 @@ def read_played_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int],
     return _read_script_buffs(game, player_id, _PLAYED_SCRIPT_BUFFS)
 
 
+def read_gold_next_turn(game: Game, player_id: int) -> int:
+    """Net gold banked for next turn; negative if overdrawn."""
+    player = next((p for p in game.players if p.player_id == player_id), None)
+    if player is None:
+        return 0
+    return (tag(player, GameTag.BACON_PLAYER_EXTRA_GOLD_NEXT_TURN)
+            - tag(player, GameTag.BACON_PLAYER_OVERDRAWN_GOLD_NEXT_TURN))
+
+
 # Persistent tavern SPELLS the player holds (Easterly Winds and other pool
 # spells). They aren't counters — they buff shop minions / the board on
 # triggers — but are worth surfacing as active effects. Classified by the
