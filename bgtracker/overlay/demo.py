@@ -104,11 +104,21 @@ async def run(overlay, interval: float = 4.0) -> None:
         won_percent=41, tied_percent=12, lost_percent=47,
         avg_damage_won=9, avg_damage_lost=11, sims_run=2000,
     )
-    buffs = ev.Buffs(entries=(("Blood Gem", 2, 2), ("Elemental", 4, 3)),
-                     spells=("BG28_800", "BG28_168"),  # Careful Investment, Shiny Ring
-                     # A Nomi board: the tavern-wide group, big enough to show
-                     # the two-digit layout the real thing reaches by turn 9.
-                     shop=(("All minions", 1, 1), ("Elemental", 27, 27)))
+    buffs = ev.Buffs(
+        entries=(
+            ("Blood Gem", 2, 2),
+            ("Spell Power", 1, 1),
+            ("Undead", 4, 0),
+            ("Beetle Army", 12, 8),
+        ),
+        # A Nomi board, big enough to show the two-digit layout the real thing
+        # reaches by turn 9. "All minions" is here on purpose — it proves the
+        # panel curates shop buffs down to just Elemental even with a second
+        # tribe active.
+        shop=(("All minions", 1, 1), ("Elemental", 27, 27)),
+        gold_next_turn=2,
+        free_rerolls=1,
+    )
 
     # (event, prediction, dwell) — dwell is how long the resulting state stays
     # on screen. Each phase gets a full interval so the flip between Hero
