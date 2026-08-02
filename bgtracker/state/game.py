@@ -224,6 +224,24 @@ def read_shop_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], .
     return _read_script_buffs(game, player_id, _SHOP_BUFFS)
 
 
+# Buffs that accumulate on the board itself, in the same per-player
+# TAG_SCRIPT_DATA_NUM_1/2 enchantment shape read_shop_buffs already reads — a
+# different quantity from the tavern buffs above (already baked into your
+# minions, not a purchasing decision) but mechanically the same read.
+#
+# Undead only ever sets NUM_1: the card text is "Give Attack to Undead", so
+# health stays 0 rather than absent. Beetle Army sets both.
+_PLAYED_SCRIPT_BUFFS = {
+    "BG25_011pe": "Undead",
+    "BG31_808pe": "Beetle Army",
+}
+
+
+def read_played_buffs(game: Game, player_id: int) -> tuple[tuple[str, int, int], ...]:
+    """Friendly played board-wide buffs not covered by a dedicated GameTag."""
+    return _read_script_buffs(game, player_id, _PLAYED_SCRIPT_BUFFS)
+
+
 # Persistent tavern SPELLS the player holds (Easterly Winds and other pool
 # spells). They aren't counters — they buff shop minions / the board on
 # triggers — but are worth surfacing as active effects. Classified by the

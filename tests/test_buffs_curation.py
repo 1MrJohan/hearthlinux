@@ -27,3 +27,35 @@ def test_pirate_and_played_elemental_no_longer_produce_entries():
     b.tag_change(2, "BACON_ELEMENTAL_BUFFHEALTHVALUE", 2)
     buffs = buffs_from(b)
     assert buffs is None or buffs.entries == ()
+
+
+def test_undead_bonus_attack_is_read_as_a_played_buff():
+    b = recruit_phase_game()
+    b.entity(20, "BG25_011pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=1, ATTACHED=2, TAG_SCRIPT_DATA_NUM_1=4)
+    assert buffs_from(b).entries == (("Undead", 4, 0),)
+
+
+def test_beetle_army_is_read_as_a_played_buff():
+    b = recruit_phase_game()
+    b.entity(20, "BG31_808pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=1, ATTACHED=2, TAG_SCRIPT_DATA_NUM_1=12,
+             TAG_SCRIPT_DATA_NUM_2=8)
+    assert buffs_from(b).entries == (("Beetle Army", 12, 8),)
+
+
+def test_another_controllers_played_script_buff_is_not_ours():
+    b = recruit_phase_game()
+    b.entity(20, "BG25_011pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=2, ATTACHED=3, TAG_SCRIPT_DATA_NUM_1=4)
+    buffs = buffs_from(b)
+    assert buffs is None or buffs.entries == ()
+
+
+def test_a_zero_valued_played_script_buff_makes_no_entry():
+    """The enchantment is created before the first trigger sets its value."""
+    b = recruit_phase_game()
+    b.entity(20, "BG31_808pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=1, ATTACHED=2)
+    buffs = buffs_from(b)
+    assert buffs is None or buffs.entries == ()

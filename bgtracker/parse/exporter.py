@@ -28,6 +28,7 @@ from bgtracker.state.game import (
     project_player_board,
     read_active_spells,
     read_buffs,
+    read_played_buffs,
     read_shop_buffs,
     tag,
 )
@@ -170,7 +171,7 @@ class BGExporter(EntityTreeExporter):
         fid = self.friendly_player_id()
         if fid is None:
             return
-        entries = read_buffs(self.game, fid).entries
+        entries = read_buffs(self.game, fid).entries + read_played_buffs(self.game, fid)
         spells = read_active_spells(self.game, fid)
         shop = read_shop_buffs(self.game, fid)
         if (entries, spells, shop) != self._buffs:
