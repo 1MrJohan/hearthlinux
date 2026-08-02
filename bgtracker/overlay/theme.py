@@ -58,7 +58,6 @@ RULE = "rgba(212,175,55,.28)"
 WIN = "#7fca57"
 TIE = "#e6b846"
 LOSS = "#e37a5c"
-SPELL = "#8fd0e6"
 
 # Keyword pip colours, keyed by the letters Minion.flags emits. "G" (golden)
 # is deliberately absent — it is the tile border treatment, not a pip.
@@ -72,11 +71,15 @@ PIP_COLOURS = {
     "S": "#c2cad6",   # Stealth
 }
 
-# Tavern-buff dot colours, keyed by the labels in state.game._BUFF_TAGS and
-# _SHOP_BUFFS. The design handoff defines no tribe palette — its only
-# tribe-adjacent colours are the keyword pips — so the shop-buff tribes below
-# extend these four in the same muted jewel-tone register rather than opening a
-# second palette. Elemental and Pirate are shared by both tables.
+# Tavern-buff dot colours, keyed by the labels in state.game._BUFF_TAGS,
+# _SHOP_BUFFS, and _PLAYED_SCRIPT_BUFFS, plus the two turn-economy rows that
+# have no reader table at all (their labels are literals in window.py's
+# set_buffs). The design handoff defines no tribe palette — its only
+# tribe-adjacent colours are the keyword pips — so these extend the original
+# four buff dots in the same muted jewel-tone register rather than opening a
+# second palette. Elemental and Pirate are shared by more than one table.
+# "Undead" and "Pirate" each cover two different underlying readers (a played
+# buff and a tavern-shop buff) that happen to share a label and a colour.
 BUFF_COLOURS = {
     "Blood Gem": "#d0555f",
     "Elemental": "#3fb0c9",
@@ -92,6 +95,9 @@ BUFF_COLOURS = {
     "Undead": "#b9b3a0",
     "All minions": "#e0cfa4",
     "Multi-tribe": "#a9b4c0",
+    "Beetle Army": "#b07a3f",
+    "Gold Next Turn": "#f4d47a",
+    "Free Reroll": "#5fa3d0",
 }
 
 # The prototype stage every design token was drawn against. It is a full
@@ -406,7 +412,6 @@ $buff_rules
     font-size: ${f12_5}px;
     color: $gold;
 }
-.spell { color: $spell; font-weight: 600; font-size: ${f12_5}px; }
 
 /* ---- scout popout notch ------------------------------------------ */
 .notch { color: rgba(30,20,11,.95); font-size: ${f16}px; }
@@ -685,7 +690,7 @@ def stylesheet(scale: float = 1.0) -> str:
     return _CSS.substitute(
         panel_bg=PANEL_BG, panel_border=PANEL_BORDER, rail_bg=RAIL_BG,
         ink=INK, dim=DIM, gold=GOLD, rule=RULE,
-        win=WIN, tie=TIE, loss=LOSS, spell=SPELL,
+        win=WIN, tie=TIE, loss=LOSS,
         display=DISPLAY, body=BODY,
         pip_rules=pip_rules, buff_rules=buff_rules,
         **dims,
