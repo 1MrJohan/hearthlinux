@@ -251,6 +251,19 @@ def read_gold_next_turn(game: Game, player_id: int) -> int:
             - tag(player, GameTag.BACON_PLAYER_OVERDRAWN_GOLD_NEXT_TURN))
 
 
+def read_free_rerolls(game: Game, player_id: int) -> int:
+    """Free rerolls available right now, mirrored onto the reroll button itself."""
+    for e in game.entities:
+        if (
+            isinstance(e, Card)
+            and e.card_id == "Bacon_Free_Refresh_Player_Ench"
+            and tag(e, GameTag.CONTROLLER) == player_id
+            and tag(e, GameTag.ZONE) == Zone.PLAY
+        ):
+            return tag(e, GameTag.BACON_FREE_REFRESH_COUNT)
+    return 0
+
+
 # Persistent tavern SPELLS the player holds (Easterly Winds and other pool
 # spells). They aren't counters — they buff shop minions / the board on
 # triggers — but are worth surfacing as active effects. Classified by the

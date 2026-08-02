@@ -84,3 +84,24 @@ def test_no_gold_next_turn_tag_reads_zero():
     b = recruit_phase_game()
     buffs = buffs_from(b)
     assert buffs is None or buffs.gold_next_turn == 0
+
+
+def test_free_rerolls_available_this_turn_are_read():
+    b = recruit_phase_game()
+    b.entity(20, "Bacon_Free_Refresh_Player_Ench", CARDTYPE="ENCHANTMENT",
+             ZONE="PLAY", CONTROLLER=1, ATTACHED=2, BACON_FREE_REFRESH_COUNT=1)
+    assert buffs_from(b).free_rerolls == 1
+
+
+def test_another_controllers_free_reroll_enchantment_is_not_ours():
+    b = recruit_phase_game()
+    b.entity(20, "Bacon_Free_Refresh_Player_Ench", CARDTYPE="ENCHANTMENT",
+             ZONE="PLAY", CONTROLLER=2, ATTACHED=3, BACON_FREE_REFRESH_COUNT=1)
+    buffs = buffs_from(b)
+    assert buffs is None or buffs.free_rerolls == 0
+
+
+def test_no_free_reroll_enchantment_reads_zero():
+    b = recruit_phase_game()
+    buffs = buffs_from(b)
+    assert buffs is None or buffs.free_rerolls == 0

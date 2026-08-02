@@ -143,12 +143,14 @@ class Buffs:
     shop:    (label, atk, health) buffs a minion already carries while it sits
              in Bob's tavern — a buying decision, invisible to combat.
     gold_next_turn: net gold banked for next turn; negative if overdrawn.
+    free_rerolls:   free rerolls available this turn.
     """
 
     entries: tuple[tuple[str, int, int], ...]
     spells: tuple[str, ...] = ()
     shop: tuple[tuple[str, int, int], ...] = ()
     gold_next_turn: int = 0
+    free_rerolls: int = 0
 
 
 Event = (
