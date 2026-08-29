@@ -422,6 +422,16 @@ tends to reintroduce a fixed bug.
   than the outcome, because scoring only the legible ones would bias the table toward losses.
 - **Placement tags land a few packets *after* the `STATE = COMPLETE`** tag, so `GameEnd`
   is deferred until one appears (or flushed by `finalize()`).
+- **An unknown `GameTag` silently drops the whole log line.** hslog resolves tags through
+  the `hearthstone` package's `GameTag` enum and raises `NoSuchEnum` on anything it does
+  not know; `exporter.feed` catches per line, so a patch that ships new tags costs those
+  `TAG_CHANGE`s with nothing visible but log noise. 9.20.6 choked on ten of the current
+  set's tags — `DARK_GIFT_ENTITY`, `BACON_DARK_GIFTS_ACTIVE`,
+  `BACON_RALLY_CANT_BE_ARTIFICIALLY_TRIGGERED` and `BACON_IN_COMBAT_PHASE` among the
+  gameplay-bearing ones — for 3084 dropped lines across two session logs. `hearthstone`
+  is therefore a **direct** dependency with a floor, not a transitive detail: hslog
+  requires it unpinned, so an existing venv satisfies it forever and never upgrades.
+  After a patch, grep the tracker log for `parser choked` before trusting a snapshot.
 - **A fresh `LogParser` per `CREATE_GAME`.** A session log holds many games and hslog's
   player registry corrupts the entity tree when battletags reappear with new player ids.
 - **Tavern shop buffs are enchantments, not counters, and both ways of reading them the
