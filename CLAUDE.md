@@ -506,6 +506,15 @@ Two operational gotchas for `resim`, both learned the hard way:
   Mean drift alone is not the test; direction is. (The 1.1.721→1.1.724 bump moved a mean
   ~2.5 points but *lowered* Brier 0.152→0.138 over 124 decided combats — an accuracy gain,
   so it stuck. A bump that raises Brier is a regression to reject, however small the drift.)
+  **Judge the direction on a wide corpus.** `resim 150` cannot resolve a move this
+  small: over ~117 decided combats the paired-difference SE is ~0.004, so four boards
+  swing Brier further than the change being measured. The 1.1.732→1.1.747 bump read as
+  a clear regression at 150 (0.058→0.064, and every version from 734 up scored in the
+  same band with no dose-response — the signature of a few boards, not a systematic
+  shift) and was flat at 800 (0.053→0.053 over 553 decided). What makes the wide run
+  trustworthy is that replaying the *same* package reproduces its own stored predictions
+  to three decimals, so the noise floor is visible rather than assumed. Accept/reject on
+  `resim 800`; the short runs are for throughput.
 
 Read the calibration table with two things in mind:
 
