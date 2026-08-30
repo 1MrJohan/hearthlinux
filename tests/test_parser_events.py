@@ -169,8 +169,26 @@ def test_standings_carry_rail_fields():
     assert entry.place == 3
     assert entry.hero_card_id == "TB_BaconShop_HERO_11"
     assert entry.health == 40 and entry.total_health == 40
+    assert entry.tier == 2
     assert entry.you is True      # the synthetic game is played from our seat
     assert entry.dead is False
+
+
+def test_missing_tavern_tier_stays_unknown():
+    lines = [
+        line for line in minimal_bg_game().lines
+        if "tag=PLAYER_TECH_LEVEL value=2" not in line
+    ]
+    _, events = feed_all(lines)
+    assert _last_standings(events)[3].tier is None
+
+
+def test_out_of_range_tavern_tier_stays_unknown():
+    game = minimal_bg_game()
+    game.tag_change(4, "PLAYER_TECH_LEVEL", 7)
+    game.tag_change("GameEntity", "TURN", 4)  # export the preceding packet
+    _, events = feed_all(game.lines)
+    assert _last_standings(events)[3].tier is None
 
 
 def _last_standings(events) -> dict[int, ev.Standing]:
@@ -263,6 +281,23 @@ def test_hero_hp_change_refreshes_standings():
     exporter.maybe_emit_standings()
 
     assert exporter._standings[0].health == before - 7
+
+
+def test_tavern_tier_change_refreshes_standings():
+    """An upgrade does not necessarily move HP or placement, so its own tag
+    change must refresh the rail rather than waiting for an unrelated event."""
+    game = minimal_bg_game()
+    proc = LiveGameProcessor()
+    proc.feed(game.lines)
+    assert proc.current_exporter._standings[0].tier == 2
+
+    start = len(game.lines)
+    game.tag_change(4, "PLAYER_TECH_LEVEL", 3)
+    game.tag_change("GameEntity", "TURN", 4)  # export the preceding packet
+    events = proc.feed(game.lines[start:])
+
+    [standings] = [event for event in events if isinstance(event, ev.Standings)]
+    assert standings.places[0].tier == 3
 
 
 def test_two_games_in_one_batch():

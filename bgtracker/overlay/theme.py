@@ -385,6 +385,16 @@ $pip_rules
 .rail-hp.you  { color: $gold; }
 .rail-hp.dead { color: #c07a7a; text-decoration-line: line-through; }
 
+.rail-tier {
+    font-family: $display;
+    font-size: ${f10_5}px;
+    font-weight: 700;
+    color: $dim;
+    letter-spacing: ${ls0_5}px;
+}
+.rail-tier.you  { color: $gold; opacity: 0.7; }
+.rail-tier.dead { opacity: 0.55; }
+
 /* ---- tavern buffs ------------------------------------------------ */
 .buff-dot {
     min-width: ${dot}px;

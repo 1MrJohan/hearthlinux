@@ -41,8 +41,9 @@ BOB_HERO_ID = "TB_BaconShopBob"
 SHOP = 1
 COMBAT = 2
 
-# Hero tags that move a player's leaderboard HP.
+# Hero tags that move a player's leaderboard display.
 _HERO_HP_TAGS = frozenset({GameTag.HEALTH, GameTag.DAMAGE, GameTag.ARMOR})
+_HERO_STANDING_TAGS = _HERO_HP_TAGS | {GameTag.ZONE, GameTag.PLAYER_TECH_LEVEL}
 
 # Tags that can change what the friendly board looks like during the shop —
 # buying, selling, repositioning, and every buff that lands on a minion.
@@ -66,6 +67,17 @@ _ANIMATION_SHOP = re.compile(
     r"PowerTaskList\.DebugPrintPower\(\).*"
     r"TAG_CHANGE Entity=GameEntity tag=BOARD_VISUAL_STATE value=1"
 )
+
+
+def _tavern_tier(hero: Card) -> int | None:
+    """Observed Battlegrounds tavern tier, or unknown when the tag is absent.
+
+    A missing tag is not evidence for tier 1 during mid-session catch-up, and
+    accepting an out-of-range value would put a plausible-looking lie on all
+    eight leaderboard rows.
+    """
+    tier = tag(hero, GameTag.PLAYER_TECH_LEVEL, None)
+    return tier if isinstance(tier, int) and 1 <= tier <= 6 else None
 
 
 class BGExporter(EntityTreeExporter):
@@ -233,7 +245,7 @@ class BGExporter(EntityTreeExporter):
             self._standings_dirty = True
             if self._ended:
                 self._maybe_emit_end()
-        elif gametag in _HERO_HP_TAGS and getattr(entity, "type", None) == CardType.HERO:
+        elif gametag in _HERO_STANDING_TAGS and getattr(entity, "type", None) == CardType.HERO:
             # The rail shows live HP, which changes far more often than a
             # player's place. maybe_emit_standings() dedupes, so flagging on
             # every hero HP tick costs nothing but keeps the numbers current.
@@ -293,6 +305,7 @@ class BGExporter(EntityTreeExporter):
                     hero_card_id=entity.card_id,
                     health=health,
                     armor=tag(entity, GameTag.ARMOR),
+                    tier=_tavern_tier(entity),
                     dead=dead,
                     you=bool(friendly) and tag(entity, GameTag.CONTROLLER) == friendly,
                 )

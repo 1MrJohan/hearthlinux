@@ -23,14 +23,14 @@ from bgtracker.state.opponents import OpponentMemory
 
 # Hero art ids verified against the HearthstoneJSON CDN in the handoff.
 HEROES = [
-    (1, "TB_BaconShop_HERO_34", 56, False, False),   # Patchwerk
-    (2, "TB_BaconShop_HERO_52", 41, False, False),   # Deathwing
-    (3, "TB_BaconShop_HERO_43", 18, False, True),    # Dinotamer Brann — you
-    (4, "TB_BaconShop_HERO_94", 27, False, False),   # Tickatus
-    (5, "TB_BaconShop_HERO_16", 22, False, False),   # A. F. Kay
-    (6, "TB_BaconShop_HERO_56", 15, False, False),   # Alexstrasza
-    (7, "TB_BaconShop_HERO_23", 9, False, False),    # Shudderwock
-    (8, "TB_BaconShop_HERO_67", 0, True, False),     # Captain Hooktusk — out
+    (1, "TB_BaconShop_HERO_34", 56, 5, False, False),    # Patchwerk
+    (2, "TB_BaconShop_HERO_52", 41, 5, False, False),    # Deathwing
+    (3, "TB_BaconShop_HERO_43", 18, 4, False, True),     # Dinotamer Brann — you
+    (4, "TB_BaconShop_HERO_94", 27, 5, False, False),    # Tickatus
+    (5, "TB_BaconShop_HERO_16", 22, 4, False, False),    # A. F. Kay
+    (6, "TB_BaconShop_HERO_56", 15, 6, False, False),    # Alexstrasza
+    (7, "TB_BaconShop_HERO_23", 9, None, False, False),  # Shudderwock — unknown
+    (8, "TB_BaconShop_HERO_67", 0, 4, True, False),      # Captain Hooktusk — out
 ]
 
 # (card_id, attack, health, keyword flags, golden)
@@ -74,8 +74,8 @@ def _board(hero_card_id: str, health: int, tier: int, spec, player_id: int = 1) 
 def _standings() -> ev.Standings:
     return ev.Standings(places=tuple(
         ev.Standing(place=place, player_id=place, hero_card_id=card_id,
-                    health=hp, dead=dead, you=you)
-        for place, card_id, hp, dead, you in HEROES
+                    health=hp, tier=tier, dead=dead, you=you)
+        for place, card_id, hp, tier, dead, you in HEROES
     ))
 
 

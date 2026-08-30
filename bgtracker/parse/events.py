@@ -113,6 +113,7 @@ class Standing:
     hero_card_id: str | None
     health: int = 0
     armor: int = 0
+    tier: int | None = None
     dead: bool = False
     you: bool = False
 

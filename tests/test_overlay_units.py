@@ -10,7 +10,9 @@ gi = pytest.importorskip("gi")
 gi.require_version("Gtk", "4.0")
 
 from bgtracker.overlay.hud import bar_widths  # noqa: E402
+from bgtracker.overlay.rail import status_labels  # noqa: E402
 from bgtracker.overlay.widgets import pip_classes  # noqa: E402
+from bgtracker.parse.events import Standing  # noqa: E402
 
 
 # -- odds bar ----------------------------------------------------------
@@ -72,3 +74,21 @@ def test_unknown_letters_are_ignored():
 
 def test_windfury_variants_collapse_to_one_pip():
     assert pip_classes(_minion(windfury=True, mega_windfury=True).flags) == ["pip-w"]
+
+
+# -- leaderboard status -----------------------------------------------
+def test_rail_status_shows_numeric_health_and_tier_for_the_player():
+    standing = Standing(
+        place=3, player_id=1, hero_card_id="HERO", health=18,
+        tier=3, you=True,
+    )
+    assert status_labels(standing) == ("18", "T3")
+
+
+@pytest.mark.parametrize("tier", [None, 0, 7])
+def test_rail_status_labels_missing_or_invalid_tier_as_unknown(tier):
+    standing = Standing(
+        place=1, player_id=2, hero_card_id="HERO", health=25, armor=5,
+        tier=tier,
+    )
+    assert status_labels(standing) == ("30", "T—")

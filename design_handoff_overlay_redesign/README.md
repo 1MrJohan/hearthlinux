@@ -35,14 +35,14 @@ in GTK these become CSS classes on the existing panels.
 | Turn medallion | **new** — add a label; feed from the turn number already in status |
 | Odds bar | **new** — replaces/augments the `.odds` markup label |
 | Minion tile | `MinionCard` in `overlay/widgets.py` (currently full-card `Gtk.Picture`) |
-| Enemy / next / hover boards | `BoardPanel` in `overlay/widgets.py` |
+| Enemy / hover boards | `BoardPanel` in `overlay/widgets.py` |
 | Leaderboard rail + hero orbs | **new panel** — see `hover.py` for the portrait-hover hookup that already exists |
 | Edit / Lock layout | `_make_panel`, `_on_lock`, `.editing`, `.grip`, `.lockbtn` (keep as-is) |
 | Card/hero art | `data/art.py` — `RENDER_URL`, `ARTCROP_URL`, `TILE_URL` already defined |
 
 **Keep unchanged:** layer-shell setup, `Gtk.Fixed` absolute positioning, drag
-gestures, input-region click-through, config persistence, and the entire
-`set_*` update API. This is a **view/CSS** change, not a logic change.
+gestures, input-region click-through, and config persistence. This is a
+**view/CSS** change, not a logic change.
 
 ---
 
@@ -109,7 +109,9 @@ Width ~300px. Structure top→bottom:
 3. **Body row (combat/shop):**
    - **Turn medallion** — 58px circle, `radial-gradient(circle at 50% 34%, #2a1d10, #120c06)`,
      `2px solid #d4af37`, big Cinzel 800 `#f4d47a` number, tiny `TURN` caption.
-     In combat it gently pulses (box-shadow 10px→20px gold, 2.4s ease-in-out).
+     In combat it carries a static 14px gold glow. The original 2.4s pulse was
+     removed after runtime review so the transparent overlay can sleep between
+     events instead of repainting throughout every fight.
    - **Odds block** — three centered columns `WIN / TIE / LOSS` (Cinzel 800,
      colored per token, 21px) with tiny dim captions, then a **9px bar** split
      win/tie/loss using the bar gradients, `1px` gold-ish border, inset shadow.
@@ -141,7 +143,10 @@ radius 11). 8 rows, each:
   + gold glow for YOU. Dead = grayscale + 50% opacity.
 - **Rank badge** — small pill bottom-left of the orb, Cinzel 800; gold gradient
   for YOU, else dark `rgba(12,8,4,.92)` with cream text.
-- **HP** — right-aligned, Cinzel-ish; gold for YOU, red strike-through if dead.
+- **Status stack** — right-aligned effective HP over compact tavern tier (`T1`–`T6`;
+  `T—` when the tag is unknown). HP is gold for YOU and red strike-through if
+  dead; tier is muted and only dimmed on elimination. The gold orb/rank treatment
+  identifies YOU, so that row keeps its numeric HP.
 Hovering a row opens the scout popout (#5). The pointer→row hookup already
 exists for the in-game leaderboard in `overlay/hover.py`.
 
@@ -149,7 +154,10 @@ exists for the in-game leaderboard in `overlay/hover.py`.
 Anchored right of the rail, with a small left-pointing notch. Header: hero orb
 (art) + hero name (Cinzel gold) + dim status (`last seen · turn 6` /
 `not scouted yet` / `eliminated`). Body: that player's last-seen board as
-minion tiles. Maps to `set_hover_board(title, board)` / `clear_hover_board`.
+minion tiles. The upcoming opponent adds a `next opponent` status and the live
+shop forecast beneath the tiles. There is no dedicated next-opponent panel; the
+board and forecast stay hidden until that player's row is hovered. Maps to
+`set_hover_board(...)` / `clear_hover_board`.
 
 ---
 
@@ -212,9 +220,9 @@ Notes for GTK4 specifics:
   `border-radius` and `overflow: hidden` (GTK4 clips rounded).
 - The bar is two/three `Gtk.Box`es in a horizontal `Gtk.Box`, widths set from
   the odds (`hexpand` with fixed fractions, or `set_size_request`).
-- Pulse on the medallion: a CSS `@keyframes`-style animation isn't available;
-  use a short `GLib.timeout`/`Gtk.CssProvider` swap, or just a static gold glow
-  border if you want to skip animation.
+- Keep the medallion's combat glow static. A timer or CSS animation keeps the
+  layer-shell surface repainting for the whole fight and is deliberately not
+  part of the GTK implementation.
 
 ---
 
@@ -246,8 +254,9 @@ Scavenging Hyena, `LOE_050` Cave Hydra.
 - **Edit / Lock layout:** unchanged. Grips (`⠿ Title`) show in edit mode,
   dashed border via `.editing`, drag saves `pos_{name}_x/y`, the gold Lock
   button flips `overlay_edit` off live (`_on_lock`).
-- **Panel visibility:** unchanged (`_set_content` — HUD always on; board/buffs/
-  hover/next show when they have content or in edit mode).
+- **Panel visibility:** `_set_content` keeps the HUD always on; board/buffs/rail
+  show when they have content or in edit mode. The scout popout appears only
+  during hover (or as an empty movable frame in edit mode).
 
 ## Files in this bundle
 - `BG Overlay Redesign.dc.html` — the main prototype (all panels, 3 skins, phase/panel/edit switches).
