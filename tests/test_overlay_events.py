@@ -6,11 +6,14 @@ listener logic under test runs.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from bgtracker.parse import events as ev
 from bgtracker.sim.client import SimResult
 from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard
+from bgtracker.state.opponents import OpponentMemory
 
 gi = pytest.importorskip("gi")
 gi.require_version("Gtk", "4.0")
@@ -37,10 +40,11 @@ class RecordingWindow:
         return None
 
 
-def _board(hp: int = 20, tier: int = 3) -> PlayerBoard:
+def _board(hp: int = 20, tier: int = 3, player_id: int = 1) -> PlayerBoard:
     return PlayerBoard(
-        player_id=1, bg_player_id=1, hero_card_id="TB_BaconShop_HERO_34",
-        hero_entity_id=1, health=hp, armor=0, tier=tier,
+        player_id=player_id, bg_player_id=player_id,
+        hero_card_id="TB_BaconShop_HERO_34",
+        hero_entity_id=player_id, health=hp, armor=0, tier=tier,
         minions=(Minion(entity_id=2, card_id="CS2_065", position=1, attack=1, health=3),),
     )
 
@@ -59,6 +63,25 @@ def _app() -> tuple[OverlayApp, RecordingWindow]:
 ODDS = SimResult(won_percent=63, tied_percent=9, lost_percent=28,
                  avg_damage_won=14, avg_damage_lost=9)
 SNAPSHOT = BoardSnapshot(turn=7, friendly=_board(18), opponent=_board(27, 5))
+
+
+def _prepare_opponent_hover(app: OverlayApp) -> PlayerBoard:
+    board = _board(27, 5, player_id=4)
+    memory = OpponentMemory()
+    memory.record(6, board)
+    app.pipeline = SimpleNamespace(memory=memory)
+    app.on_event(ev.Standings(places=(
+        ev.Standing(
+            place=1, player_id=4, hero_card_id="TB_BaconShop_HERO_34",
+            health=27,
+        ),
+        ev.Standing(
+            place=2, player_id=5, hero_card_id="TB_BaconShop_HERO_52",
+            health=24,
+        ),
+    )), None)
+    app.on_event(ev.NextOpponent(player_id=4), None)
+    return board
 
 
 def test_phase_title_flips_across_a_whole_game():
@@ -230,26 +253,83 @@ def test_the_shop_forecast_says_how_stale_its_board_is():
     """The opponent keeps buying after you last saw them, so the number is a
     guess and has to admit it."""
     app, win = _app()
+    board = _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
     app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
-    text = win.last("set_next_forecast")[0]
+    shown = win.last("set_hover_board")
+    assert shown[2] == board
+    assert "next opponent" in shown[1]
+    text = shown[5]
     assert "63" in text and "28" in text
     assert "2 turns old" in text
 
 
 def test_a_board_seen_this_turn_is_not_called_stale():
     app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
     app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=8, turn=8), ODDS)
-    assert "current" in win.last("set_next_forecast")[0]
+    assert "current" in win.last("set_hover_board")[5]
+
+
+def test_next_opponent_stays_hidden_until_hovered():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    assert app.state.next_forecast is not None
+    assert win.last("set_hover_board") is None
+
+
+def test_another_opponents_hover_never_shows_the_next_forecast():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    app._on_hover_slot(1)
+    shown = win.last("set_hover_board")
+    assert "next opponent" not in shown[1]
+    assert shown[5] is None
+
+
+def test_leaving_an_opponent_clears_the_hover_popout():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    assert win.last("set_hover_board") is not None
+    app._on_hover_slot(None)
+    assert win.last("clear_hover_board") == ()
 
 
 def test_a_new_opponent_drops_the_previous_forecast():
     """Odds for the player you are no longer facing are worse than none."""
     app, win = _app()
-    app.pipeline = None
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
     app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
-    assert win.last("set_next_forecast")[0] is not None
+    assert win.last("set_hover_board")[5] is not None
     app.on_event(ev.NextOpponent(player_id=5), None)
-    assert win.last("set_next_forecast") == (None,)
+    assert app.state.next_forecast is None
+    shown = win.last("set_hover_board")
+    assert "next opponent" not in shown[1]
+    assert shown[5] is None
+
+
+def test_an_unavailable_shop_forecast_replaces_stale_odds():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    event = ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8)
+    app.on_event(event, ODDS)
+    app.on_event(event, None)
+    assert win.last("set_hover_board")[5] == "Odds unavailable for this board"
+
+
+def test_a_friendly_board_change_hides_odds_while_they_recalculate():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    app.on_event(ev.ShopBoard(board=SNAPSHOT.friendly, turn=8), None)
+    assert win.last("set_hover_board")[5] is None
 
 
 def test_shop_ready_outside_combat_is_ignored():

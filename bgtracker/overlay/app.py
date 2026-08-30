@@ -95,13 +95,31 @@ class OverlayApp:
         st = self.state
         standings = st.standings
         # Slot i is leaderboard position i+1; match by place, not list index.
-        entry = next((e for e in standings if e.place == (slot + 1)), None) if slot is not None else None
+        entry = (
+            next((e for e in standings if e.place == (slot + 1)), None)
+            if slot is not None else None
+        )
         st.hot_place = entry.place if entry else None
         if entry is None:
             if slot is not None:
-                log.debug("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, standings)
+                log.debug(
+                    "hover-lookup: slot %s -> no standings entry (standings=%s)",
+                    slot, standings,
+                )
+        self._refresh_hover_board()
+        self._queue_flush()
+
+    def _refresh_hover_board(self) -> None:
+        """Rebuild the scout popout from retained hover and opponent state.
+
+        Pointer callbacks only fire when the hovered slot changes. Events can
+        change the player, remembered board, or forecast under a stationary
+        pointer, so those event handlers call this helper too.
+        """
+        st = self.state
+        entry = next((e for e in st.standings if e.place == st.hot_place), None)
+        if entry is None:
             st.hover_board = None
-            self._queue_flush()
             return
         seen = self.pipeline.memory.last_seen(entry.player_id) if self.pipeline else None
         # DEBUG, not INFO: this fires on every pointer move across the rail, and
@@ -109,26 +127,28 @@ class OverlayApp:
         # nothing. `hover_debug` already advertises itself as what turns slot
         # logging on, and the log level is what does that.
         log.debug(
-            "hover-lookup: slot %s -> place %s %s pid=%s seen=%s",
-            slot, entry.place, entry.hero_card_id, entry.player_id,
+            "hover-lookup: place %s %s pid=%s seen=%s",
+            entry.place, entry.hero_card_id, entry.player_id,
             f"turn {seen.turn}" if seen else None,
         )
+        is_next = entry.player_id == st.next_opponent_id
         if entry.dead:
-            status = "eliminated"
+            detail = "eliminated"
         elif seen:
-            status = f"last seen · turn {seen.turn}"
+            detail = f"last seen · turn {seen.turn}"
         elif entry.you:
-            status = "this is you"
+            detail = "this is you"
         else:
-            status = "not scouted yet"
+            detail = "not scouted yet"
+        status = f"next opponent · {detail}" if is_next else detail
         st.hover_board = BoardView(
             f"#{entry.place} {cards.name(entry.hero_card_id)}",
             status,
             seen.board if seen else None,
             hero_card_id=entry.hero_card_id,
             dead=entry.dead,
+            forecast=st.next_forecast if is_next else None,
         )
-        self._queue_flush()
 
     def _on_activate(self, app):
         from . import theme
@@ -255,6 +275,7 @@ class OverlayApp:
                 self._current_turn = s.turn
                 self._enter_combat(st, s)
                 self._set_forecast(st, prediction)
+                self._refresh_hover_board()
             case ev.CombatStart(snapshot=s):
                 self._in_combat = True
                 self._current_turn = s.turn
@@ -264,10 +285,12 @@ class OverlayApp:
                 else:
                     self._clear_forecast(st)
                     st.status = "Odds unavailable for this combat"
+                self._refresh_hover_board()
             case ev.Buffs(entries=e, shop=shop, gold_next_turn=g, free_rerolls=fr):
                 st.buffs = (e, shop, g, fr)
             case ev.Standings(places=places):
                 st.standings = places
+                self._refresh_hover_board()
             case ev.CombatEnd(snapshot=s):
                 # The engine has resolved the fight, but the client is still
                 # animating it for another 20-45s. Bank the post-combat state
@@ -298,29 +321,40 @@ class OverlayApp:
                 # a fresh forecast arrives. Deliberately not gated on the
                 # pipeline: stale odds must go regardless of whether the
                 # opponent-memory lookup below can run.
+                st.next_opponent_id = pid
                 st.next_forecast = None
-                seen = self.pipeline.memory.last_seen(pid) if self.pipeline else None
-                if seen and seen.board:
-                    st.next_board = BoardView(
-                        "Next Opponent", f"last seen · turn {seen.turn}", seen.board
-                    )
-                else:
-                    st.next_board = BoardView("Next Opponent", "not scouted yet", None)
+                self._refresh_hover_board()
             case ev.ShopBoard():
                 # The number belongs to the exact friendly board submitted to
                 # the simulator. Hide it during debounce/recalculation after a
                 # buy, sell or reposition instead of captioning the new board
                 # with the old board's probability.
                 st.next_forecast = None
-            case ev.ShopForecast(seen_turn=seen_turn, turn=turn) if prediction is not None:
-                age = turn - seen_turn
-                staleness = "current" if age <= 0 else f"{age} turn{'s' if age > 1 else ''} old"
-                st.next_forecast = (
-                    f"{prediction.won_percent:.0f} / {prediction.tied_percent:.0f}"
-                    f" / {prediction.lost_percent:.0f}  ·  {staleness}"
-                )
-            case ev.ShopForecast() if prediction is None:
-                st.next_forecast = "Odds unavailable for this board"
+                self._refresh_hover_board()
+            case ev.ShopForecast(opponent_id=pid, seen_turn=seen_turn, turn=turn) \
+                    if prediction is not None:
+                # The derived event belongs to the pipeline's current opponent.
+                # Accept it when restoring state before NextOpponent has been
+                # seen, but never attach a late result to a newer opponent.
+                if st.next_opponent_id is None:
+                    st.next_opponent_id = pid
+                if pid == st.next_opponent_id:
+                    age = turn - seen_turn
+                    staleness = (
+                        "current" if age <= 0
+                        else f"{age} turn{'s' if age > 1 else ''} old"
+                    )
+                    st.next_forecast = (
+                        f"{prediction.won_percent:.0f} / {prediction.tied_percent:.0f}"
+                        f" / {prediction.lost_percent:.0f}  ·  {staleness}"
+                    )
+                    self._refresh_hover_board()
+            case ev.ShopForecast(opponent_id=pid) if prediction is None:
+                if st.next_opponent_id is None:
+                    st.next_opponent_id = pid
+                if pid == st.next_opponent_id:
+                    st.next_forecast = "Odds unavailable for this board"
+                    self._refresh_hover_board()
             case ev.GameEnd(placement=p):
                 self._in_combat = False
                 self._current_turn = None
@@ -328,9 +362,6 @@ class OverlayApp:
                 self._clear_to_idle(st)
                 st.phase = ("Game Over", f"finished #{p}" if p else "")
                 st.status = f"Finished #{p}" if p else "Game over"
-                # A finished game also drops any open scout popout; a live one
-                # never does, so this is not part of the shared idle reset.
-                st.hover_board = None
         self._queue_flush()
 
     @staticmethod

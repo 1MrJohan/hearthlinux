@@ -75,9 +75,10 @@ def test_render_emits_everything_when_the_window_is_new():
     for name in (
         "set_phase", "set_status", "set_turn", "set_combat", "set_odds",
         "set_damage", "set_lethal", "set_result", "set_forecast_live",
-        "set_next_forecast", "set_standings", "set_buffs", "set_hot_place",
+        "set_standings", "set_buffs", "set_hot_place",
     ):
         assert name in win.names(), f"{name} was never pushed to a fresh window"
+    assert not any("next" in name for name in win.names())
 
 
 def test_render_emits_nothing_when_nothing_changed():
@@ -127,6 +128,18 @@ def test_a_cleared_board_calls_clear_not_set():
     state.board = None
     render(win, state, previous=before)
     assert win.names() == ["clear_board"]
+
+
+def test_a_hovered_forecast_is_rendered_with_the_board_it_belongs_to():
+    win = RecordingWindow()
+    view = BoardView(
+        "#1 Patchwerk", "next opponent · last seen · turn 6", SNAPSHOT.opponent,
+        hero_card_id="TB_BaconShop_HERO_34", forecast="63 / 9 / 28 · 2 turns old",
+    )
+    render(win, OverlayState(hover_board=view), previous=None)
+    assert win.last("set_hover_board") == (
+        view.title, view.subtitle, view.board, view.hero_card_id, False, view.forecast,
+    )
 
 
 def test_odds_are_pushed_before_damage():

@@ -32,6 +32,7 @@ class BoardView:
     board: object = None
     hero_card_id: str | None = None
     dead: bool = False
+    forecast: str | None = None
 
 
 @dataclass
@@ -55,7 +56,7 @@ class OverlayState:
     # HudPanel comes up expanded; only ShopReady collapses it.
     forecast_live: bool = True
     board: BoardView | None = None
-    next_board: BoardView | None = None
+    next_opponent_id: int | None = None
     next_forecast: str | None = None
     hover_board: BoardView | None = None
     standings: tuple = ()
@@ -71,7 +72,14 @@ def _render_board(setter, clearer, view: BoardView | None, *, orb: bool = False)
     if view is None:
         clearer()
     elif orb:
-        setter(view.title, view.subtitle, view.board, view.hero_card_id, view.dead)
+        setter(
+            view.title,
+            view.subtitle,
+            view.board,
+            view.hero_card_id,
+            view.dead,
+            view.forecast,
+        )
     else:
         setter(view.title, view.subtitle, view.board)
 
@@ -108,10 +116,6 @@ def render(window, state: OverlayState, previous: OverlayState | None = None) ->
         window.set_forecast_live(state.forecast_live)
     if changed("board"):
         _render_board(window.set_board, window.clear_board, state.board)
-    if changed("next_board"):
-        _render_board(window.set_next_board, window.clear_next_board, state.next_board)
-    if changed("next_forecast"):
-        window.set_next_forecast(state.next_forecast)
     if changed("hover_board"):
         _render_board(
             window.set_hover_board, window.clear_hover_board, state.hover_board, orb=True

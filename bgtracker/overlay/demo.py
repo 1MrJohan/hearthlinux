@@ -80,12 +80,12 @@ def _standings() -> ev.Standings:
 
 
 async def run(overlay, interval: float = 4.0) -> None:
-    """Loop the three game phases forever, `interval` seconds apart."""
+    """Loop the game phases and forecast-availability states forever."""
     you = _board("TB_BaconShop_HERO_43", 18, 3, MECHS, player_id=1)
     enemy = _board("TB_BaconShop_HERO_94", 27, 5, DEMONS, player_id=2)
-    # The next-opponent panel and the scout popout both read the pipeline's
-    # opponent memory. Without one the demo can only ever render the
-    # "not scouted yet" state, which is the least interesting of them.
+    # The hover-only next-opponent popout reads the pipeline's opponent memory.
+    # Without one the demo can only render "not scouted yet" when that row is
+    # hovered, which is the least interesting state.
     memory = OpponentMemory()
     memory.record(6, _board("TB_BaconShop_HERO_94", 27, 5, DEMONS, player_id=4))
     overlay.pipeline = SimpleNamespace(memory=memory)
