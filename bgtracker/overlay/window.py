@@ -43,12 +43,14 @@ class OverlayWindow(Gtk.Window):
         cfg: Config | None = None,
         on_settings=None,
         on_edit=None,
+        on_mmr=None,
     ):
         super().__init__(application=application)
         self.cfg = cfg = cfg or Config()
         self.edit = bool(cfg.overlay_edit)
         self._on_settings = on_settings
         self._on_edit = on_edit
+        self._on_mmr = on_mmr
         # The transparent-window rule is scoped to this class so it cannot leak
         # onto the settings window, which shares the display-wide provider.
         self.add_css_class("bg-overlay")
@@ -157,6 +159,19 @@ class OverlayWindow(Gtk.Window):
             self.gear_btn.connect("clicked", lambda _b: self._on_settings())
             self.canvas.put(self.gear_btn, 0, 0)
 
+        # -- MMR nudge: the second (and only other) clickable patch ---------
+        # Hidden until a game ends. It is a hole in click-through exactly as
+        # long as it is on screen, which is why nothing else raises it.
+        self.mmr_btn: Gtk.Button | None = None
+        self._mmr_pos = (0, 0)
+        if on_mmr is not None:
+            self.mmr_btn = Gtk.Button(label="⊕ Record MMR")
+            self.mmr_btn.add_css_class("mmrbtn")
+            self.mmr_btn.set_tooltip_text("Record your rating in match history")
+            self.mmr_btn.set_visible(False)
+            self.mmr_btn.connect("clicked", lambda _b: self._on_mmr())
+            self.canvas.put(self.mmr_btn, 0, 0)
+
         # hud always shows; the rest only when they have something (or edit)
         self._set_content("hud", True)
         for name in ("board", "hover", "buffs", "rail"):
@@ -184,7 +199,7 @@ class OverlayWindow(Gtk.Window):
         for name in self._panels:
             self._clamp_panel(name)
         self._centre_lock_button()
-        self._place_gear()
+        self._place_chrome()
         return self._apply_input_region()
 
     def _centre_lock_button(self) -> bool:
@@ -198,6 +213,35 @@ class OverlayWindow(Gtk.Window):
         )
         self.canvas.move(self.lock_btn, *self._lock_pos)
         return False
+
+    def _place_chrome(self) -> None:
+        """Re-park the two free-floating buttons after anything moves the HUD."""
+        self._place_gear()
+        self._place_mmr()
+
+    def _place_mmr(self) -> None:
+        """Park the MMR nudge just below the HUD's bottom-right corner.
+
+        The gear owns the space above; this takes below, for the same reason —
+        empty space beside the panel the user positioned, never over its own
+        content. Placed even while hidden, so it is already in the right spot
+        the moment a game ends.
+        """
+        if self.mmr_btn is None:
+            return
+        _, nudge = self.mmr_btn.get_preferred_size()
+        _, hud = self._panels["hud"].get_preferred_size()
+        hx, hy = self._pos["hud"]
+        x = max(0, min(self._mon_w - nudge.width, hx + hud.width - nudge.width))
+        y = max(0, min(self._mon_h - nudge.height,
+                       hy + hud.height + int(6 * self.scale)))
+        if (x, y) != self._mmr_pos:
+            self._mmr_pos = (x, y)
+            self.canvas.move(self.mmr_btn, x, y)
+            # Same trap as the gear: a move that skipped this would leave the
+            # clickable patch behind at the old spot, invisible and swallowing
+            # clicks meant for the game.
+            self._apply_input_region()
 
     def _place_gear(self) -> None:
         """Park the gear just above the HUD's top-right corner.
@@ -291,7 +335,7 @@ class OverlayWindow(Gtk.Window):
         self.cfg.extra[f"pos_{name}_x"] = x
         self.cfg.extra[f"pos_{name}_y"] = y
         update_config_values({f"pos_{name}_x": x, f"pos_{name}_y": y})
-        self._place_gear()
+        self._place_chrome()
 
     def set_edit(self, edit: bool) -> None:
         """Enter or leave layout mode without a restart."""
@@ -331,16 +375,25 @@ class OverlayWindow(Gtk.Window):
         x, y = self._gear_pos
         return (x, y, max(nat.width, 1), max(nat.height, 1))
 
+    def _mmr_rect(self) -> tuple[int, int, int, int] | None:
+        if self.mmr_btn is None or not self.mmr_btn.get_visible():
+            return None
+        _, nat = self.mmr_btn.get_preferred_size()
+        x, y = self._mmr_pos
+        return (x, y, max(nat.width, 1), max(nat.height, 1))
+
     def _input_rects(self) -> list[tuple[int, int, int, int]]:
         """Every rect that accepts a click instead of passing it to the game.
 
-        Locked, that is the gear and nothing else. Each rect here is a hole in
-        the click-through guarantee that keeps Hearthstone's own
+        Locked, that is the gear, plus the MMR nudge for the couple of minutes
+        it is up after a game ends. Each rect here is a hole in the
+        click-through guarantee that keeps Hearthstone's own
         board-preview-on-hover working, so the list stays as short as it can be.
         """
         gear = self._gear_rect()
+        nudge = self._mmr_rect()
         if not self.edit:
-            return [gear] if gear else []
+            return [r for r in (gear, nudge) if r]
         items = [(self._pos[n][0], self._pos[n][1], w)
                  for n, w in self._panels.items() if w.get_visible()]
         if self.lock_btn is not None:
@@ -355,8 +408,9 @@ class OverlayWindow(Gtk.Window):
             height = max(nat.height, GRAB_MIN_H)
             rects.append((int(x - pad), int(y - pad),
                           int(width + 2 * pad), int(height + 2 * pad)))
-        if gear:
-            rects.append(gear)
+        for rect in (gear, nudge):
+            if rect:
+                rects.append(rect)
         return rects
 
     def _apply_input_region(self, *_):
@@ -383,7 +437,7 @@ class OverlayWindow(Gtk.Window):
         self._panels[name].set_visible(self.edit or has_content)
         self._clamp_panel(name)
         if name == "hud":
-            self._place_gear()
+            self._place_chrome()
         if self.edit:
             self._apply_input_region()
 
@@ -432,6 +486,20 @@ class OverlayWindow(Gtk.Window):
 
     def set_forecast_live(self, live: bool) -> None:
         self.hud.set_forecast_live(live)
+
+    def set_mmr_prompt(self, showing: bool) -> None:
+        """Raise or drop the end-of-game "Record MMR" nudge.
+
+        Toggling it re-uploads the input region: while it is up the overlay
+        swallows clicks over those pixels, and while it is not it must hand
+        them straight back to the game.
+        """
+        if self.mmr_btn is None or self.mmr_btn.get_visible() == showing:
+            return
+        self.mmr_btn.set_visible(showing)
+        if showing:
+            self._place_mmr()
+        self._apply_input_region()
 
     # -- update API (call from the GLib/asyncio loop) -------------------
     def set_phase(self, title: str, meta: str = "") -> None:

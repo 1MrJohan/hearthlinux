@@ -62,6 +62,9 @@ class OverlayState:
     standings: tuple = ()
     buffs: tuple[tuple, tuple, int, int] = ((), (), 0, 0)
     hot_place: int | None = None
+    # The end-of-game "Record MMR" nudge. Lives here rather than in the widget
+    # so an overlay_scale rebuild does not silently drop it.
+    mmr_prompt: bool = False
 
     def snapshot(self) -> OverlayState:
         """A shallow copy, for recording what the window was last told."""
@@ -126,6 +129,8 @@ def render(window, state: OverlayState, previous: OverlayState | None = None) ->
         window.set_buffs(*state.buffs)
     if changed("hot_place"):
         window.set_hot_place(state.hot_place)
+    if changed("mmr_prompt"):
+        window.set_mmr_prompt(state.mmr_prompt)
 
 
 __all__ = ["BoardView", "OverlayState", "render"]

@@ -49,11 +49,16 @@ def _board(hp: int = 20, tier: int = 3, player_id: int = 1) -> PlayerBoard:
     )
 
 
-def _app() -> tuple[OverlayApp, RecordingWindow]:
+def _app(mmr_prompt: bool = True) -> tuple[OverlayApp, RecordingWindow]:
+    from bgtracker.config import Config
+
     app = OverlayApp.__new__(OverlayApp)
     window = RecordingWindow()
     app.window = window
     app.pipeline = None
+    # The end-of-game handler consults the live Config, which the real
+    # SettingsService owns and hands to everything downstream unchanged.
+    app.settings = SimpleNamespace(cfg=Config(mmr_prompt=mmr_prompt))
     # What the real constructor does: an empty display, and a record of what
     # the window has been told so far so `render` can emit only differences.
     app.reset_state()
@@ -447,3 +452,56 @@ def test_game_end_clears_the_forecast():
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     app.on_event(ev.GameEnd(placement=3), None)
     assert win.last("set_odds") == (None, None, None)
+
+
+# -- the end-of-game MMR nudge -----------------------------------------
+# Ratings are the one thing the log never carries, so the readings are only
+# ever as complete as the player remembers to type in. The nudge asks at the
+# one moment the number is on screen — and because it is a hole in the
+# overlay's click-through guarantee for as long as it is up, when it comes
+# down matters as much as when it goes up.
+def test_a_finished_game_asks_for_a_rating():
+    app, win = _app()
+    app.on_event(ev.GameEnd(placement=3), None)
+    assert win.last("set_mmr_prompt") == (True,)
+
+
+def test_a_game_that_ended_without_a_placement_still_asks():
+    """`finalize()` flushes a GameEnd carrying None when the placement tags
+    never arrived. The game is still over, and the rating still moved."""
+    app, win = _app()
+    app.on_event(ev.GameEnd(placement=None), None)
+    assert win.last("set_mmr_prompt") == (True,)
+
+
+def test_the_next_game_takes_the_nudge_down():
+    """Also what keeps catch-up quiet: a replayed GameEnd raises it, and every
+    catch-up game but the last is followed by a GameStart."""
+    app, win = _app()
+    app.on_event(ev.GameEnd(placement=3), None)
+    app.on_event(ev.GameStart(), None)
+    assert win.last("set_mmr_prompt") == (False,)
+
+
+def test_the_nudge_times_out():
+    app, win = _app()
+    app.on_event(ev.GameEnd(placement=3), None)
+    app._mmr_timed_out()
+    assert win.last("set_mmr_prompt") == (False,)
+    assert app.state.mmr_prompt is False
+
+
+def test_the_setting_suppresses_the_nudge_entirely():
+    app, win = _app(mmr_prompt=False)
+    app.on_event(ev.GameEnd(placement=3), None)
+    assert win.last("set_mmr_prompt") is None
+    assert app.state.mmr_prompt is False
+
+
+def test_turning_the_setting_off_takes_a_visible_nudge_down():
+    """Every setting applies live; this one would otherwise wait for a game."""
+    app, win = _app()
+    app.on_event(ev.GameEnd(placement=3), None)
+    app.settings.cfg.mmr_prompt = False
+    app._apply_overlay({"mmr_prompt"})
+    assert win.last("set_mmr_prompt") == (False,)
