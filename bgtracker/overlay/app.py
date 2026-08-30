@@ -26,6 +26,11 @@ from .window import OverlayWindow  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+# How long the end-of-game MMR nudge stays up. It is a hole in the overlay's
+# click-through guarantee for exactly as long as it is visible, so an ignored
+# one must not sit over the game's menus for the rest of the session.
+MMR_PROMPT_SECONDS = 120
+
 
 def _hero_meta(board) -> str:
     """`18 HP · Tavern 3` — the dim line beside the phase title."""
@@ -49,6 +54,7 @@ class OverlayApp:
     _in_combat = False
     _shop_meta = ""
     _shop_result: tuple[str | None, int] = (None, 0)
+    _mmr_source: int | None = None
 
     def __init__(self, settings=None):
         from gi.repository import Gio
@@ -172,6 +178,7 @@ class OverlayApp:
             application=self.app, cfg=cfg,
             on_settings=self.open_settings,
             on_edit=lambda value: self.settings.set("overlay_edit", value),
+            on_mmr=self.open_history,
         )
         self.window.present()
         if old is not None:
@@ -221,6 +228,10 @@ class OverlayApp:
         self._build_hover()
 
     def _apply_overlay(self, keys) -> None:
+        # Turning the nudge off has to take a visible one down with it, or this
+        # would be the one setting in the window that waits for the next game.
+        if "mmr_prompt" in keys and not self.settings.cfg.mmr_prompt:
+            self._hide_mmr_prompt()
         if "overlay_edit" in keys and self.window is not None:
             self.window.set_edit(self.settings.cfg.overlay_edit)
             # Layout mode changes the hover column from click-through boxes to
@@ -249,6 +260,51 @@ class OverlayApp:
         reset_history = self.pipeline.reset_history if self.pipeline else None
         SettingsWindow.open(self.app, self.settings, on_reset_history=reset_history)
 
+    def open_history(self) -> None:
+        """The nudge's destination: match history, rating box focused."""
+        from .history_window import HistoryWindow
+
+        # Down before the window is up: the nudge has done its job, and leaving
+        # it behind would keep a rect of the overlay swallowing clicks.
+        self._hide_mmr_prompt()
+        HistoryWindow.open(self.app, focus_rating=True)
+
+    # -- the end-of-game MMR nudge ---------------------------------------
+    def _show_mmr_prompt(self) -> None:
+        if not self.settings.cfg.mmr_prompt:
+            return
+        self.state.mmr_prompt = True
+        self._arm_mmr_timeout()
+
+    def _hide_mmr_prompt(self) -> None:
+        self._cancel_mmr_timeout()
+        if self.state.mmr_prompt:
+            self.state.mmr_prompt = False
+            self._queue_flush()
+
+    def _arm_mmr_timeout(self) -> None:
+        self._cancel_mmr_timeout()
+        try:
+            from gi.repository import GLib
+        except ImportError:      # tests without a GTK stack
+            return
+        self._mmr_source = GLib.timeout_add_seconds(
+            MMR_PROMPT_SECONDS, self._mmr_timed_out
+        )
+
+    def _cancel_mmr_timeout(self) -> None:
+        if self._mmr_source is not None:
+            from gi.repository import GLib
+
+            GLib.source_remove(self._mmr_source)
+            self._mmr_source = None
+
+    def _mmr_timed_out(self) -> bool:
+        self._mmr_source = None
+        self.state.mmr_prompt = False
+        self._queue_flush()
+        return False
+
     # Pipeline listener -------------------------------------------------
     def on_event(self, event: ev.Event, prediction: SimResult | None) -> None:
         # State updates must happen even before the window exists — events
@@ -256,6 +312,7 @@ class OverlayApp:
         st = self.state
         match event:
             case ev.GameStart():
+                self._hide_mmr_prompt()
                 self._in_combat = False
                 self._current_turn = None
                 self._shop_result = (None, 0)
@@ -362,6 +419,9 @@ class OverlayApp:
                 self._clear_to_idle(st)
                 st.phase = ("Game Over", f"finished #{p}" if p else "")
                 st.status = f"Finished #{p}" if p else "Game over"
+                # Placement-agnostic: `finalize()` can flush a GameEnd with
+                # none, and a finished game is worth a rating either way.
+                self._show_mmr_prompt()
         self._queue_flush()
 
     @staticmethod
@@ -381,9 +441,11 @@ class OverlayApp:
         st.result = (None, 0)
         st.forecast_live = True
         st.board = None
-        st.next_board = None
+        st.next_opponent_id = None
+        st.next_forecast = None
         st.standings = ()
         st.buffs = ((), (), 0, 0)
+        st.hover_board = None
 
     @staticmethod
     def _enter_combat(st, snapshot) -> None:

@@ -86,13 +86,20 @@ class HistoryWindow(Gtk.ApplicationWindow):
     _current: HistoryWindow | None = None
 
     @classmethod
-    def open(cls, app) -> HistoryWindow:
-        if cls._current is not None:
-            cls._current.present()
-            return cls._current
-        window = cls(app)
-        cls._current = window
+    def open(cls, app, focus_rating: bool = False) -> HistoryWindow:
+        """Raise the window, building it if this is the first call.
+
+        `focus_rating` puts the caret in the rating box: the overlay's
+        end-of-game nudge exists to collect one number, and the layer-shell
+        overlay cannot take the keystroke itself, so this window has to be
+        ready to type into the moment it appears.
+        """
+        window = cls._current
+        if window is None:
+            window = cls._current = cls(app)
         window.present()
+        if focus_rating:
+            window._rating_entry.grab_focus()
         return window
 
     def __init__(self, application):

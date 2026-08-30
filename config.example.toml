@@ -25,6 +25,12 @@
 # keeps working alongside it.
 # hover_strips = true
 
+# A small 'Record MMR' button appears under the HUD when a game ends and
+# opens the match-history window with the rating box focused. Ratings are
+# never in the log, so they are only ever as complete as you type them in.
+# It disappears by itself after two minutes.
+# mmr_prompt = true
+
 # ---- Simulator -------------------------------------------------------------
 
 # More trials narrow the confidence interval, but at 8000 the 95% margin is

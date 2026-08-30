@@ -141,6 +141,15 @@ SETTINGS: tuple[Setting, ...] = (
         "game's own preview keeps working alongside it.",
         channel=HOVER,
     ),
+    Setting(
+        "mmr_prompt", "overlay", "bool", True,
+        "Ask for your MMR after a game",
+        "A small 'Record MMR' button appears under the HUD when a game ends "
+        "and opens the match-history window with the rating box focused. "
+        "Ratings are never in the log, so they are only ever as complete as "
+        "you type them in. It disappears by itself after two minutes.",
+        channel=OVERLAY,
+    ),
 
     # -- simulator ------------------------------------------------------
     Setting(

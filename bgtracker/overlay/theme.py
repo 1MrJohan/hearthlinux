@@ -384,7 +384,6 @@ $pip_rules
 }
 .rail-hp.you  { color: $gold; }
 .rail-hp.dead { color: #c07a7a; text-decoration-line: line-through; }
-
 .rail-tier {
     font-family: $display;
     font-size: ${f10_5}px;
@@ -447,6 +446,27 @@ $buff_rules
     opacity: 0.45;
 }
 .gearbtn:hover {
+    opacity: 1;
+    color: $gold;
+    border: ${b1}px solid $gold;
+    box-shadow: 0 0 ${p10}px rgba(244,212,122,.55);
+}
+/* The end-of-game MMR nudge. Same quiet-until-hovered treatment as the gear —
+   it is the other rect that swallows a click on a locked overlay — but it
+   carries words, so it is a pill rather than a disc. */
+.mmrbtn {
+    background-image: radial-gradient(circle at 50% 38%, rgba(58,42,26,.92), rgba(18,12,6,.94));
+    border: ${b1}px solid rgba(212,175,55,.45);
+    border-radius: ${r9}px;
+    padding: ${p4}px ${p10}px;
+    color: rgba(244,212,122,.72);
+    font-family: $body;
+    font-size: ${f11}px;
+    font-weight: 700;
+    letter-spacing: ${ls0_5}px;
+    opacity: 0.75;
+}
+.mmrbtn:hover {
     opacity: 1;
     color: $gold;
     border: ${b1}px solid $gold;

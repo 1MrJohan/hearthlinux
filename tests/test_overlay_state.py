@@ -55,9 +55,14 @@ def _board(hp: int = 20, tier: int = 3) -> PlayerBoard:
 
 
 def _app() -> tuple[OverlayApp, RecordingWindow]:
+    from types import SimpleNamespace
+
+    from bgtracker.config import Config
+
     app = OverlayApp.__new__(OverlayApp)
     app.window = RecordingWindow()
     app.pipeline = None
+    app.settings = SimpleNamespace(cfg=Config())
     app.reset_state()
     return app, app.window
 
@@ -75,7 +80,7 @@ def test_render_emits_everything_when_the_window_is_new():
     for name in (
         "set_phase", "set_status", "set_turn", "set_combat", "set_odds",
         "set_damage", "set_lethal", "set_result", "set_forecast_live",
-        "set_standings", "set_buffs", "set_hot_place",
+        "set_standings", "set_buffs", "set_hot_place", "set_mmr_prompt",
     ):
         assert name in win.names(), f"{name} was never pushed to a fresh window"
     assert not any("next" in name for name in win.names())
@@ -236,6 +241,21 @@ def test_a_rebuilt_window_is_repainted_from_state():
     assert "set_board" not in replacement.names()
 
 
+def test_a_rebuild_keeps_the_mmr_nudge_up():
+    """The nudge is state, not a widget flag: an overlay_scale change while it
+    is up rebuilds the window, and dropping it there would quietly lose the one
+    reading nothing else in the tracker can reconstruct."""
+    app, _ = _app()
+    app.on_event(ev.GameEnd(placement=3), None)
+
+    replacement = RecordingWindow()
+    app.window = replacement
+    app._rendered = None
+    app._flush()
+
+    assert replacement.last("set_mmr_prompt") == (True,)
+
+
 def test_a_rebuild_mid_recruit_phase_keeps_the_result_on_screen():
     app, _ = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
@@ -252,6 +272,46 @@ def test_a_rebuild_mid_recruit_phase_keeps_the_result_on_screen():
     assert replacement.last("set_odds") == (63, 9, 28)
     assert replacement.last("set_phase")[0] == "Recruit Phase"
     assert replacement.last("clear_board") == ()
+
+
+def test_new_combat_is_live_after_shop_even_when_the_window_is_rebuilt():
+    app, _ = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.ShopReady(), None)
+    assert app.state.forecast_live is False
+
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    assert app.state.forecast_live is True
+
+    replacement = RecordingWindow()
+    app.window = replacement
+    app._rendered = None
+    app._flush()
+    assert replacement.last("set_forecast_live") == (True,)
+
+
+def test_game_boundary_drops_retained_next_opponent_odds():
+    app, _ = _app()
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    assert app.state.next_forecast is not None
+    app.on_event(ev.GameStart(), None)
+    assert app.state.next_forecast is None
+    assert app.state.next_opponent_id is None
+
+
+def test_a_rebuild_restores_an_open_next_opponent_popout():
+    app, _ = _app()
+    app.state.hover_board = BoardView(
+        "#1 Patchwerk", "next opponent · last seen · turn 6", SNAPSHOT.opponent,
+        hero_card_id="TB_BaconShop_HERO_34", forecast="63 / 9 / 28 · 2 turns old",
+    )
+
+    replacement = RecordingWindow()
+    app.window = replacement
+    app._rendered = None
+    app._flush()
+
+    assert replacement.last("set_hover_board")[-1] == "63 / 9 / 28 · 2 turns old"
 
 
 def test_events_arriving_before_the_window_exists_are_not_lost():

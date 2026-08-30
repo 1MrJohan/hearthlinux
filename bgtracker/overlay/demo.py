@@ -145,6 +145,10 @@ async def run(overlay, interval: float = 4.0) -> None:
         # becomes an unavailable label instead of resurrecting stale odds.
         (ev.ShopBoard(board=you, turn=8), None, 0.0),
         (ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), None, interval),
+        # Game over, which is what raises the "Record MMR" nudge under the HUD
+        # — the one overlay state a real game only produces once every 20
+        # minutes, and the second rect that ever swallows a click.
+        (ev.GameEnd(placement=3), None, interval),
     ]
 
     for event, prediction, dwell in itertools.cycle(script):
