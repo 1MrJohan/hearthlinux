@@ -69,6 +69,10 @@ class OverlayApp:
         self.window: OverlayWindow | None = None
         self.hover = None
         self.pipeline = None  # set by the caller for opponent-memory lookups
+        # Event bursts update retained state synchronously but need only one
+        # GTK diff on the next idle turn.  Bare __new__ test instances omit
+        # this flag and retain immediate rendering.
+        self._defer_flush = True
         self.reset_state()
         self.app.connect("activate", self._on_activate)
 
@@ -80,6 +84,7 @@ class OverlayApp:
         """
         self.state = OverlayState()
         self._rendered: OverlayState | None = OverlayState()
+        self._flush_source: int | None = None
 
     def _on_hover_slot(self, slot: int | None) -> None:
         st = self.state
@@ -91,7 +96,7 @@ class OverlayApp:
             if slot is not None:
                 log.debug("hover-lookup: slot %s -> no standings entry (standings=%s)", slot, standings)
             st.hover_board = None
-            self._flush()
+            self._queue_flush()
             return
         seen = self.pipeline.memory.last_seen(entry.player_id) if self.pipeline else None
         # DEBUG, not INFO: this fires on every pointer move across the rail, and
@@ -118,7 +123,7 @@ class OverlayApp:
             hero_card_id=entry.hero_card_id,
             dead=entry.dead,
         )
-        self._flush()
+        self._queue_flush()
 
     def _on_activate(self, app):
         from . import theme
@@ -305,7 +310,7 @@ class OverlayApp:
                 # A finished game also drops any open scout popout; a live one
                 # never does, so this is not part of the shared idle reset.
                 st.hover_board = None
-        self._flush()
+        self._queue_flush()
 
     @staticmethod
     def _clear_forecast(st) -> None:
@@ -358,6 +363,22 @@ class OverlayApp:
             return
         render(win, self.state, self._rendered)
         self._rendered = self.state.snapshot()
+
+    def _queue_flush(self) -> None:
+        """Render once after a synchronous event burst has settled."""
+        if not getattr(self, "_defer_flush", False):
+            self._flush()
+            return
+        if self.window is None or self._flush_source is not None:
+            return
+        from gi.repository import GLib
+
+        self._flush_source = GLib.idle_add(self._flush_idle)
+
+    def _flush_idle(self) -> bool:
+        self._flush_source = None
+        self._flush()
+        return False
 
     def run_with(self, coro: Coroutine) -> None:
         """Run the GTK app and the given coroutine on one shared loop."""

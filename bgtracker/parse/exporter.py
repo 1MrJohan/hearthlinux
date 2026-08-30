@@ -183,12 +183,16 @@ class BGExporter(EntityTreeExporter):
                                  gold_next_turn=gold_next_turn, free_rerolls=free_rerolls))
 
     def maybe_emit_hero(self):
+        # A BG player picks one real hero per game.  Once it is known, scanning
+        # every entity after every later packet can never change the event.
+        if self._hero_emitted is not None:
+            return
         hero = self.friendly_hero()
         if hero is None or not hero.card_id:
             return
         # Placeholder hero entities (e.g. BaconPHhero) sit in play until the
-        # pick resolves; wait for the real one, and re-emit on change.
-        if "PH" in hero.card_id or hero.card_id == self._hero_emitted:
+        # pick resolves; wait for the real one.
+        if "PH" in hero.card_id:
             return
         self._hero_emitted = hero.card_id
         self._emit(ev.HeroPicked(card_id=hero.card_id))
@@ -234,6 +238,16 @@ class BGExporter(EntityTreeExporter):
             # player's place. maybe_emit_standings() dedupes, so flagging on
             # every hero HP tick costs nothing but keeps the numbers current.
             self._standings_dirty = True
+            # Projection is coalesced to the end of the input batch, but death
+            # is an observed transition rather than just final display state.
+            # A Kel'Thuzad ghost can restore this entity's HP later in the same
+            # batch, so latch it at the packet where it becomes visible.
+            player_id = tag(entity, GameTag.PLAYER_ID)
+            health = tag(entity, GameTag.HEALTH) - tag(entity, GameTag.DAMAGE)
+            if player_id and (
+                health <= 0 or tag(entity, GameTag.ZONE) == Zone.GRAVEYARD
+            ):
+                self._dead_player_ids.add(player_id)
 
         # Deliberately outside the chain above: HEALTH already belongs to the
         # hero branch, and a minion buff must still flag the board as stale.
@@ -390,6 +404,7 @@ class LiveGameProcessor:
 
     def _advance(self, track: _GameTrack):
         packets = track.tree.packets
+        advanced = False
         while track.cursor < len(packets):
             packet = packets[track.cursor]
             if not self._is_complete(packet, is_last=track.cursor == len(packets) - 1):
@@ -399,6 +414,7 @@ class LiveGameProcessor:
             except Exception:
                 log.exception("export failed for packet %r", type(packet).__name__)
             track.cursor += 1
+            advanced = True
             if not track.started and track.exporter.game is not None:
                 track.started = True
                 game_type = self.parser.game_meta.get("GameType")
@@ -410,11 +426,16 @@ class LiveGameProcessor:
                     )
                 )
             if track.started:
+                # Hero identity must be caught while the real hero is in play;
+                # combat snapshots must stay on their authoritative packet
+                # boundary.  The retained display projections below are safe
+                # to coalesce to the final state of this input batch.
                 track.exporter.maybe_emit_hero()
                 track.exporter.maybe_emit_combat()
-                track.exporter.maybe_emit_standings()
-                track.exporter.maybe_emit_buffs()
-                track.exporter.maybe_emit_shop_board()
+        if track.started and advanced:
+            track.exporter.maybe_emit_standings()
+            track.exporter.maybe_emit_buffs()
+            track.exporter.maybe_emit_shop_board()
 
     @staticmethod
     def _is_complete(packet, is_last: bool) -> bool:

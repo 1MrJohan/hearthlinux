@@ -72,12 +72,13 @@ poll talks to XWayland) plus the `gtk4-layer-shell` `LD_PRELOAD`. A child of
 the game launch inherits all of that; a user unit does not.
 
 Restarting is cheap and safe mid-game: the tailer reads each session log from
-the top, so a fresh tracker replays the whole session (~3s for an 86MB log)
-and rebuilds the current game's state. You never need to quit Hearthstone or
-wait for a match to end. Launches are NON_UNIQUE so a stale instance can't
-swallow a new one — which also means an old process keeps running the code it
-started with, so `--replace` (or the startup warning naming the old pid) is
-how you make sure you're looking at your latest changes.
+the top in small, cooperative slices and rebuilds the current game's state
+without re-simulating old combats. A measured 163MB session catches up in about
+4.5s while yielding to the overlay between slices. You never need to quit
+Hearthstone or wait for a match to end. Launches are NON_UNIQUE so a stale
+instance can't swallow a new one — which also means an old process keeps
+running the code it started with, so `--replace` (or the startup warning naming
+the old pid) is how you make sure you're looking at your latest changes.
 
 Overlay smoke test (run before first `--overlay`, see checklist inside):
 

@@ -35,9 +35,29 @@ class Tailer:
         self.path = path
         self._offset = 0
         self._buffer = b""
+        try:
+            # Bytes already present belong to catch-up.  Keep the boundary
+            # stable while the file grows so a bounded drain never mixes old
+            # and live input in one batch.
+            self._catchup_end = path.stat().st_size
+        except FileNotFoundError:
+            self._catchup_end = 0
+        self.last_read_historical = False
+        self.catchup_completed = False
+        self.backlogged = False
 
-    def read_new_lines(self) -> list[str]:
-        """Synchronously read any complete new lines since the last call."""
+    def read_new_lines(self, max_bytes: int | None = None) -> list[str]:
+        """Synchronously read complete new lines since the last call.
+
+        `max_bytes` bounds one main-loop turn without changing the default API
+        for replay/tests.  Per-read flags tell the live loop whether the slice
+        is historical, completed catch-up, or left more bytes ready to drain.
+        """
+        if max_bytes is not None and max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self.last_read_historical = False
+        self.catchup_completed = False
+        self.backlogged = False
         try:
             size = self.path.stat().st_size
         except FileNotFoundError:
@@ -45,12 +65,25 @@ class Tailer:
         if size < self._offset:  # truncated / rewritten
             self._offset = 0
             self._buffer = b""
+            # Everything currently present was written before we noticed the
+            # rewrite.  Treat it like startup catch-up so duplicate combats do
+            # not become live simulations.
+            self._catchup_end = size
         if size == self._offset:
             return []
+
+        start = self._offset
+        historical = start < self._catchup_end
+        end = min(size, self._catchup_end) if historical else size
+        if max_bytes is not None:
+            end = min(end, start + max_bytes)
         with self.path.open("rb") as f:
-            f.seek(self._offset)
-            chunk = f.read(size - self._offset)
-        self._offset = size
+            f.seek(start)
+            chunk = f.read(end - start)
+        self._offset = end
+        self.last_read_historical = historical
+        self.catchup_completed = historical and end >= self._catchup_end
+        self.backlogged = end < size
         data = self._buffer + chunk
         *complete, self._buffer = data.split(b"\n")
         return [line.decode("utf-8", errors="replace").rstrip("\r") for line in complete]

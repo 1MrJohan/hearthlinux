@@ -31,6 +31,62 @@ def test_crlf(tmp_path):
     assert Tailer(f).read_new_lines() == ["line"]
 
 
+def test_bounded_reads_preserve_lines_and_the_historical_boundary(tmp_path):
+    """A large existing log is catch-up until the original EOF, even when
+    drained over several reads that split in the middle of a line."""
+    f = tmp_path / "Power.log"
+    f.write_bytes(b"one\ntwo\nthree\n")
+    tailer = Tailer(f)
+
+    assert tailer.read_new_lines(max_bytes=5) == ["one"]
+    assert tailer.last_read_historical is True
+    assert tailer.catchup_completed is False
+    assert tailer.backlogged is True
+
+    assert tailer.read_new_lines(max_bytes=5) == ["two"]
+    assert tailer.last_read_historical is True
+    assert tailer.catchup_completed is False
+    assert tailer.backlogged is True
+
+    assert tailer.read_new_lines(max_bytes=5) == ["three"]
+    assert tailer.last_read_historical is True
+    assert tailer.catchup_completed is True
+    assert tailer.backlogged is False
+
+    with f.open("ab") as fh:
+        fh.write(b"live\n")
+    assert tailer.read_new_lines(max_bytes=5) == ["live"]
+    assert tailer.last_read_historical is False
+    assert tailer.catchup_completed is False
+
+
+def test_a_file_created_after_the_tailer_is_live(tmp_path):
+    """An empty first drain must not make the game's first later lines old."""
+    f = tmp_path / "Power.log"
+    tailer = Tailer(f)
+    assert tailer.read_new_lines(max_bytes=5) == []
+
+    f.write_bytes(b"live\n")
+    assert tailer.read_new_lines(max_bytes=5) == ["live"]
+    assert tailer.last_read_historical is False
+    assert tailer.catchup_completed is False
+
+
+def test_a_truncated_log_is_rebuilt_as_history(tmp_path):
+    """Re-reading a rewritten log must not simulate its old combats again."""
+    f = tmp_path / "Power.log"
+    f.write_bytes(b"old one\nold two\n")
+    tailer = Tailer(f)
+    assert tailer.read_new_lines() == ["old one", "old two"]
+    assert tailer.catchup_completed is True
+
+    f.write_bytes(b"new\n")
+    assert tailer.read_new_lines() == ["new"]
+    assert tailer.last_read_historical is True
+    assert tailer.catchup_completed is True
+    assert tailer.backlogged is False
+
+
 def test_poll_backs_off_once_the_log_goes_quiet():
     """`poll_idle` has to actually reach the sleep.
 

@@ -447,20 +447,22 @@ tends to reintroduce a fixed bug.
 - **Hero powers are deliberately NOT sent to the simulator.** The sim needs per-power
   `info` state; sending a bare id (info=0) makes it misapply even non-combat powers —
   verified swinging a 16% combat to 0%. `globalInfo` is safe and *is* sent.
-- **Restarting mid-game is safe and cheap — but only because catch-up does not
-  simulate.** The tailer reads each session log from the top, so a fresh tracker replays
-  the whole session (~3s for an 86MB log) and rebuilds current state. History rows are
-  deduped by `log_id` (the game-start timestamp). That first drain is passed
-  `historical=True`, which makes `Pipeline._simulate` return immediately: before that,
-  every past combat in the log cost a full 8000-trial run, serialized, while the player
-  was in a game. "The first read of a session" is exactly the right definition of
-  catch-up — a fresh `Tailer` reads from offset 0, so everything already in the file is
-  history and everything after is live, including the case where `Power.log` did not
-  exist yet. The flag therefore clears **unconditionally** after the first drain;
-  guarding it on the read being non-empty would misclassify a live game's first lines as
-  history and cost that game its odds. Opponent memory is still recorded during catch-up
-  (the scout popout and shop forecast are built from it) — only the odds are skipped, so
-  restarting *into* a live combat loses that one fight's forecast until `ShopReady`.
+- **Restarting mid-game is safe and bounded — but only because catch-up does not
+  simulate.** A fresh `Tailer` records the file size already present as a stable
+  historical high-water mark, then drains toward it in 256 KiB slices with a 1ms
+  event-loop yield between ready slices. Everything below that mark is history and
+  everything appended after it is live; if `Power.log` did not exist (or was empty) at
+  construction, the mark is zero and the game's first later lines are correctly live.
+  A truncation establishes a new historical mark so rewritten combats are not simulated
+  again. `Pipeline._simulate` returns immediately for every historical slice: before
+  that, every past combat cost a full 8000-trial run, serialized, while the player was
+  in a game. Historical slices still rebuild opponent memory and the current shop state,
+  but suppress intermediate shop simulations; reaching the mark schedules at most one
+  forecast from the final state, and only if catch-up ended in the shop. History rows
+  remain deduped by `log_id` (the game-start timestamp). Measured on a 163MB / 1.19M-line
+  session, bounded catch-up took 4.55s with cooperative yields and peaked at 122 MiB RSS,
+  down from 7.10s and 627 MiB. Restarting *into* a live combat still loses that one
+  fight's forecast until `ShopReady`.
 - Instances are deliberately **NON_UNIQUE** so a stale process can't swallow a new
   launch — which also means an old process keeps running the code it started with. Use
   `--replace` when testing changes.
