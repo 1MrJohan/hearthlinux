@@ -117,11 +117,9 @@ class OverlayWindow(Gtk.Window):
         self._make_panel("buffs", "Buffs", [buffs_title, self.buffs], width=theme.BUFFS_W)
         self._buff_rows: list[Gtk.Widget] = []
 
-        # -- next-opponent panel: last-seen board as minion tiles -----------
-        self.next_board = BoardPanel(scale=scale)
-        self._make_panel("next", "Next opponent", [self.next_board])
-
         # -- scout popout: last-seen board of a leaderboard portrait --------
+        # The upcoming opponent and its shop forecast use this same popout;
+        # there is no second, permanently visible copy of that board.
         self.hover_board = BoardPanel(show_orb=True, scale=scale)
         notch = Gtk.Label(label="◀")
         notch.add_css_class("notch")
@@ -137,7 +135,6 @@ class OverlayWindow(Gtk.Window):
         defaults = {
             "hud": (self._mon_w - int(400 * scale), int(40)),
             "board": (self._mon_w // 2 - int(320 * scale), int(12 * scale)),
-            "next": (self._mon_w - int(400 * scale), int(360 * scale)),
             "hover": (int(self._mon_w * 0.13), int(self._mon_h * 0.30)),
             "buffs": (int(self._mon_w * 0.34), int(40)),
             "rail": (int(12 * scale), int(self._mon_h * 0.08)),
@@ -162,7 +159,7 @@ class OverlayWindow(Gtk.Window):
 
         # hud always shows; the rest only when they have something (or edit)
         self._set_content("hud", True)
-        for name in ("board", "next", "hover", "buffs", "rail"):
+        for name in ("board", "hover", "buffs", "rail"):
             self._set_content(name, False)
 
         if self.edit:
@@ -527,20 +524,11 @@ class OverlayWindow(Gtk.Window):
         self.board.clear()
         self._set_content("board", False)
 
-    def set_next_board(self, title: str, subtitle: str = "", board=None) -> None:
-        self.next_board.show_board(title, subtitle, board)
-        self._set_content("next", True)
-
-    def clear_next_board(self) -> None:
-        self.next_board.clear()
-        self._set_content("next", False)
-
-    def set_next_forecast(self, text: str | None) -> None:
-        self.next_board.set_odds(text)
-
     def set_hover_board(self, title: str, subtitle: str = "", board=None,
-                        hero_card_id: str | None = None, dead: bool = False) -> None:
+                        hero_card_id: str | None = None, dead: bool = False,
+                        forecast: str | None = None) -> None:
         self.hover_board.show_board(title, subtitle, board, hero_card_id, dead)
+        self.hover_board.set_odds(forecast)
         self._set_content("hover", True)
 
     def clear_hover_board(self) -> None:

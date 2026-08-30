@@ -124,7 +124,10 @@ Hearthstone (Wine/Proton) → Power.log → tailer → hslog exporter → typed 
   state, and sending a bare id makes it misapply even non-combat powers
   (verified swinging a 16% combat to 0%). If a visible hero power or card has
   a current-combat effect the pinned package cannot represent, odds are shown
-  as unavailable instead of as a confidently wrong number. `bgtracker stats` prints a
+  as unavailable instead of as a confidently wrong number. Next-opponent odds
+  are also cleared as soon as your board changes and replaced with an explicit
+  unavailable label if recalculation is blocked, so a Firestone update cannot
+  leave a previous board's number attached to the current one. `bgtracker stats` prints a
   calibration table (predicted vs actual win rate per bucket) — that table is
   the evidence for what to map next, and `bgtracker resim` replays stored
   combats through the current mapper to show what a change moved.
@@ -134,10 +137,11 @@ Hearthstone (Wine/Proton) → Power.log → tailer → hslog exporter → typed 
 ### Overlay
 
 The overlay uses the "Dark Oak" skin (see `design_handoff_overlay_redesign/`):
-a HUD with turn medallion and win/tie/loss bar, tavern buffs, a next-opponent
-panel carrying live recruit-phase odds against that player's last-seen board,
-and a leaderboard rail of hero portraits whose rows open a scout popout on
-hover. Reviewing a board is the scout popout's job — an enemy-board panel
+a HUD with turn medallion and win/tie/loss bar, tavern buffs, and a leaderboard
+rail of hero portraits. Its rows open a scout popout on hover; the upcoming
+opponent's popout also carries live recruit-phase odds against their last-seen
+board and stays hidden until that opponent is hovered. Reviewing a board is the
+scout popout's job — an enemy-board panel
 exists but is dormant, because during a fight it only duplicated what the game
 was already showing. Panels are individually draggable —
 turn on **Layout mode** in settings (or hit the ⚙ above the HUD), arrange them,

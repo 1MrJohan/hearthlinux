@@ -571,7 +571,7 @@ and typography are final**; treat them as the source of truth and put every toke
 `overlay/theme.py`. `window.py` is layout and plumbing only.
 
 Panels: HUD (phase title, turn medallion, win/tie/loss bar, damage pills), tavern
-buffs, next opponent, scout popout, and the leaderboard rail of hero portraits. An
+buffs, scout popout, and the leaderboard rail of hero portraits. An
 enemy-board panel exists but is dormant: it duplicated the fight the game itself was
 showing, so nothing populates it — the scout popout is how a board gets reviewed.
 
@@ -581,10 +581,11 @@ checkable once there is a result to check it against. `CombatResult` arrives wit
 `CombatEnd`, ~1s into a fight the player watches for 20-45s more, so the overlay banks it
 and reveals it at `ShopReady` — revealing it on arrival spoils the battle being watched.
 
-The **next-opponent panel** carries live recruit-phase odds against that player's
-last-seen board, re-run (debounced) as you buy, sell and reposition. It is a guess and
-says so: the opponent keeps shopping after you last saw them, so the board's age is
-labelled next to the number.
+The **next-opponent forecast** lives in that player's scout popout and is visible only
+while their leaderboard row is hovered. It is re-run (debounced) as you buy, sell and
+reposition. It is a guess and says so: the opponent keeps shopping after you last saw
+them, so the board's age is labelled next to the number. The dedicated next-opponent
+panel was removed because it permanently duplicated the same remembered board.
 
 Non-obvious constraints:
 
