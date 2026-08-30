@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pytest *)",
+      "Bash(.venv/bin/python -m bgtracker *)",
+      "Bash(.venv/bin/python -m pyflakes *)",
+      "Bash(.venv/bin/python scripts/layer-shell-probe.py)",
+      "Bash(.venv/bin/python --version)",
+      "Bash(.venv/bin/pyflakes *)",
+      "Bash(npm install)",
+      "Bash(npm ls *)",
+      "Bash(node --version)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git blame *)",
+      "Bash(git ls-files *)",
+      "Bash(git branch)",
+      "Bash(git stash list)",
+      "Bash(ls *)",
+      "Bash(wc *)"
+    ]
+  }
+}

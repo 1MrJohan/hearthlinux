@@ -543,7 +543,6 @@ Two operational gotchas for `resim`, both learned the hard way:
   trustworthy is that replaying the *same* package reproduces its own stored predictions
   to three decimals, so the noise floor is visible rather than assumed. Accept/reject on
   `resim 800`; the short runs are for throughput.
-
   Workers build a capability catalog from both Firestone's mapping registry and its
   compiled legacy switch tables. The mapper marks only IDs whose visible text can change
   the current fight; if one is absent from that catalog, or implemented behavior lacks

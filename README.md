@@ -139,10 +139,9 @@ Hearthstone (Wine/Proton) → Power.log → tailer → hslog exporter → typed 
 The overlay uses the "Dark Oak" skin (see `design_handoff_overlay_redesign/`):
 a HUD with turn medallion and win/tie/loss bar, tavern buffs, and a leaderboard
 rail of hero portraits with live HP and tavern tier. Its rows open a scout
-popout on hover; the upcoming
-opponent's popout also carries live recruit-phase odds against their last-seen
-board and stays hidden until that opponent is hovered. Reviewing a board is the
-scout popout's job — an enemy-board panel
+popout on hover; the upcoming opponent's popout also carries live recruit-phase
+odds against their last-seen board and stays hidden until that opponent is
+hovered. Reviewing a board is the scout popout's job — an enemy-board panel
 exists but is dormant, because during a fight it only duplicated what the game
 was already showing. Panels are individually draggable —
 turn on **Layout mode** in settings (or hit the ⚙ above the HUD), arrange them,

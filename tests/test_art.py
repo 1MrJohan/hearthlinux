@@ -17,7 +17,6 @@ process-wide state that must not leak between tests.
 from __future__ import annotations
 
 import asyncio
-import urllib.error
 
 import pytest
 
