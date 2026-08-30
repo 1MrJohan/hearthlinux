@@ -29,6 +29,13 @@ from bgtracker.sim.client import SimClient
 
 log = logging.getLogger("bgtracker")
 
+# Catch-up must not monopolize the GTK/asyncio thread or allocate an entire
+# multi-hundred-megabyte session log at once.  At measured parse throughput a
+# 256 KiB slice is normally a few milliseconds; the tiny yield between ready
+# slices also gives the game scheduler room while a restart catches up.
+TAIL_READ_BYTES = 256 * 1024
+BACKLOG_YIELD_SECONDS = 0.001
+
 
 async def start_sim(cfg) -> SimClient | None:
     sim = SimClient.from_config(cfg)
@@ -119,11 +126,6 @@ async def live(settings: SettingsService, overlay=None) -> None:
     # poll_idle setting, which advertises exactly this behaviour, would do
     # nothing at all.
     idle_streak = 0
-    # The first read of a session drains whatever is already in the file, which
-    # is by definition history the tracker did not watch happen. Every read
-    # after it is live — including the case where Power.log did not exist yet,
-    # since a game that starts while we are watching is not catch-up.
-    catching_up = True
     try:
         while True:
             if retarget.is_set():
@@ -145,14 +147,16 @@ async def live(settings: SettingsService, overlay=None) -> None:
                     session_started = asyncio.get_running_loop().time()
                     warned_no_log = False
                     idle_streak = 0   # a new session is activity by definition
-                    catching_up = True
                     status.session = session.name
             if tailer and processor:
-                lines = tailer.read_new_lines()
-                idle_streak = 0 if lines else idle_streak + 1
+                lines = tailer.read_new_lines(max_bytes=TAIL_READ_BYTES)
+                idle_streak = 0 if lines or tailer.backlogged else idle_streak + 1
                 status.note_lines(len(lines))
-                await pipeline.handle(processor.feed(lines), historical=catching_up)
-                catching_up = False
+                await pipeline.handle(
+                    processor.feed(lines), historical=tailer.last_read_historical
+                )
+                if tailer.catchup_completed:
+                    pipeline.finish_catchup()
                 if (
                     not warned_no_log
                     and not tailer.path.exists()
@@ -165,6 +169,9 @@ async def live(settings: SettingsService, overlay=None) -> None:
                         "entered a match. If it stays missing during a game, logging "
                         "is broken: run `python -m bgtracker doctor` and restart Hearthstone."
                     )
+                if tailer.backlogged:
+                    await asyncio.sleep(BACKLOG_YIELD_SECONDS)
+                    continue
             await asyncio.sleep(poll_delay(cfg, idle_streak))
     finally:
         if sim:

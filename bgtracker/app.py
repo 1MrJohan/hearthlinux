@@ -79,6 +79,7 @@ class Pipeline:
                     # The real fight supersedes any guess about it, and must
                     # never queue behind one.
                     self._cancel_shop_forecast()
+                    self._shop_board = None
                     self.memory.record(snap.turn, snap.opponent)
                     prediction = await self._simulate(snap, historical)
                     self._pending = (snap, prediction)
@@ -89,10 +90,12 @@ class Pipeline:
                     seen = self.memory.last_seen(pid)
                     if seen:
                         print(f"  last seen turn {seen.turn}: {render_board_line(seen.board)}")
-                    self._schedule_shop_forecast()
+                    if not historical:
+                        self._schedule_shop_forecast()
                 case ev.ShopBoard(board=board):
                     self._shop_board = board
-                    self._schedule_shop_forecast()
+                    if not historical:
+                        self._schedule_shop_forecast()
                 case ev.GameEnd(placement=place):
                     self._cancel_shop_forecast()
                     if self.db and self._game_id:
@@ -104,6 +107,16 @@ class Pipeline:
                 print_event(derived)
                 for listener in self.listeners:
                     listener(derived, None)
+
+    def finish_catchup(self) -> None:
+        """Forecast the one final shop state reconstructed from history.
+
+        A bounded catch-up yields between slices, so its normal 300ms debounce
+        could otherwise simulate obsolete intermediate boards.  Historical
+        event handling only retains state; reaching the tailer's high-water
+        mark calls this once to resume live background work.
+        """
+        self._schedule_shop_forecast()
 
     def reset_history(self, backup: bool = True):
         """Empty the match history without invalidating the live connection."""

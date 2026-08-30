@@ -160,6 +160,61 @@ def test_catch_up_still_remembers_the_boards_it_saw():
     assert asyncio.run(run()) is not None
 
 
+def test_catch_up_runs_only_one_shop_forecast_from_the_final_state():
+    """Chunked catch-up yields to the loop.  Its debounce must not fire on an
+    obsolete intermediate board, but the reconstructed current board should
+    get one forecast once catch-up reaches its high-water mark."""
+    async def run():
+        pipe, sim, seen = _pipeline()
+        await pipe.handle(
+            [
+                ev.TurnChange(turn=8),
+                ev.NextOpponent(player_id=4),
+                ev.ShopBoard(board=_board(1, minions=1), turn=8),
+            ],
+            historical=True,
+        )
+        await asyncio.sleep(SHOP_DEBOUNCE * 2)
+        before = list(sim.calls)
+
+        await pipe.handle(
+            [ev.ShopBoard(board=_board(1, minions=4), turn=8)],
+            historical=True,
+        )
+        pipe.finish_catchup()
+        await _drain(pipe)
+        return before, sim.calls, seen
+
+    before, calls, seen = asyncio.run(run())
+    assert before == [], "an intermediate historical board was simulated"
+    assert calls == [2000]
+    assert len(seen) == 1
+
+
+def test_catch_up_ending_in_combat_does_not_forecast_the_old_shop_board():
+    """The high-water mark can land mid-fight.  The last recruit board is
+    stale at that point and must not be restarted as background work."""
+    async def run():
+        pipe, sim, _ = _pipeline()
+        board = _board(1, minions=4)
+        await pipe.handle(
+            [
+                ev.TurnChange(turn=8),
+                ev.NextOpponent(player_id=4),
+                ev.ShopBoard(board=board, turn=8),
+                ev.CombatStart(snapshot=BoardSnapshot(
+                    turn=8, friendly=board, opponent=_board(4, minions=2)
+                )),
+            ],
+            historical=True,
+        )
+        pipe.finish_catchup()
+        await _drain(pipe)
+        return sim.calls
+
+    assert asyncio.run(run()) == []
+
+
 def test_the_shop_forecast_runs_in_the_background_lane():
     """A guide the player is shuffling minions against has no business taking
     the whole worker pool the real fight needs."""

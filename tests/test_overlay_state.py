@@ -97,6 +97,29 @@ def test_render_emits_only_the_field_that_moved():
     assert win.last("set_turn") == (7,)
 
 
+def test_real_app_coalesces_an_event_burst_into_one_idle_render(monkeypatch):
+    """Rendering intermediate states before GTK can draw them only repeats
+    setters and layout work on the same shared main-loop turn."""
+    from gi.repository import GLib
+
+    app, win = _app()
+    app._defer_flush = True
+    queued = []
+
+    def idle_add(callback):
+        queued.append(callback)
+        return 17
+
+    monkeypatch.setattr(GLib, "idle_add", idle_add)
+    app.on_event(ev.TurnChange(turn=7), None)
+    app.on_event(ev.TurnChange(turn=8), None)
+
+    assert queued and len(queued) == 1
+    assert win.calls == []
+    assert queued[0]() is False
+    assert win.last("set_turn") == (8,)
+
+
 def test_a_cleared_board_calls_clear_not_set():
     win = RecordingWindow()
     before = OverlayState(board=BoardView("Enemy Board", "x", None))

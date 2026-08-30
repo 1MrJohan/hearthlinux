@@ -40,6 +40,37 @@ def test_the_shop_board_is_reported_for_live_odds():
     assert (mine.card_id, mine.attack, mine.health) == ("BG_EX1_506", 2, 3)
 
 
+def test_shop_board_bursts_publish_only_the_final_projection():
+    """GTK and the debounce can only use the final state from one tail read;
+    projecting the full entity tree after each packet is pure catch-up churn."""
+    b = minimal_bg_game()
+    b.tag_change(7, "ATK", 8)
+    b.tag_change(7, "ATK", 11)
+    proc = LiveGameProcessor()
+    shops = [e for e in proc.feed(b.lines) if isinstance(e, ev.ShopBoard)]
+    assert len(shops) == 1
+    assert shops[0].board.minions[0].attack == 11
+
+
+def test_buffs_bursts_publish_only_the_final_values():
+    b = minimal_bg_game()
+    b.tag_change(2, "BACON_BLOODGEMBUFFATKVALUE", 2)
+    b.tag_change(2, "BACON_BLOODGEMBUFFATKVALUE", 5)
+    buffs = [e for e in LiveGameProcessor().feed(b.lines) if isinstance(e, ev.Buffs)]
+    assert len(buffs) == 1
+    assert buffs[0].entries == (("Blood Gem", 5, 0),)
+
+
+def test_standings_bursts_publish_only_the_final_health():
+    b = minimal_bg_game()
+    b.tag_change(4, "DAMAGE", 3)
+    b.tag_change(4, "DAMAGE", 7)
+    standings = [e for e in LiveGameProcessor().feed(b.lines) if isinstance(e, ev.Standings)]
+    assert len(standings) == 1
+    [mine] = standings[0].places
+    assert mine.health == 33
+
+
 def test_an_unchanged_shop_board_is_not_re_reported():
     """Every one of these starts a simulation, so a repeat tag write that
     leaves the board identical must not trigger one."""
