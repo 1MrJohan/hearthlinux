@@ -120,6 +120,15 @@ def test_the_buff_group_heading_is_styled():
     assert ".buff-group" in theme.stylesheet(1.0)
 
 
+def test_overlay_has_no_perpetual_animation():
+    """The overlay should sleep between events, not repaint a transparent
+    layer-shell surface for every compositor frame of a 20-45 second fight."""
+    css = theme.stylesheet(1.0)
+    assert "animation:" not in css
+    assert "@keyframes" not in css
+    assert ".medallion.combat" in css
+
+
 def test_every_buff_label_the_reader_can_emit_has_a_colour():
     """The other direction: a label with no dot colour ships an invisible dot.
 
