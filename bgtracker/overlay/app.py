@@ -85,6 +85,11 @@ class OverlayApp:
         self.state = OverlayState()
         self._rendered: OverlayState | None = OverlayState()
         self._flush_source: int | None = None
+        # GameState advances TURN as soon as its sub-second combat resolution
+        # finishes, long before PowerTaskList says the player has finished
+        # watching that fight. Keep the real turn independently from the one
+        # captioning the phase currently visible on screen.
+        self._current_turn: int | None = None
 
     def _on_hover_slot(self, slot: int | None) -> None:
         st = self.state
@@ -232,6 +237,7 @@ class OverlayApp:
         match event:
             case ev.GameStart():
                 self._in_combat = False
+                self._current_turn = None
                 self._shop_result = (None, 0)
                 self._clear_to_idle(st)
                 st.phase = ("Hero Select", "")
@@ -239,20 +245,25 @@ class OverlayApp:
             case ev.HeroPicked(card_id=cid):
                 st.status = f"Playing {cards.name(cid)}"
             case ev.TurnChange(turn=t):
-                st.turn = t
+                self._current_turn = t
+                if not self._in_combat:
+                    st.turn = t
             case ev.CombatForecast(snapshot=s) if prediction is not None:
                 # A run still tightening. Same widgets, same treatment — the
                 # numbers simply firm up in place instead of appearing late.
                 self._in_combat = True
+                self._current_turn = s.turn
                 self._enter_combat(st, s)
                 self._set_forecast(st, prediction)
             case ev.CombatStart(snapshot=s):
                 self._in_combat = True
+                self._current_turn = s.turn
                 self._enter_combat(st, s)
                 if prediction is not None:
                     self._set_forecast(st, prediction)
                 else:
                     self._clear_forecast(st)
+                    st.status = "Odds unavailable for this combat"
             case ev.Buffs(entries=e, shop=shop, gold_next_turn=g, free_rerolls=fr):
                 st.buffs = (e, shop, g, fr)
             case ev.Standings(places=places):
@@ -269,6 +280,7 @@ class OverlayApp:
                 self._shop_result = (outcome, damage)
             case ev.ShopReady() if self._in_combat:
                 self._in_combat = False
+                st.turn = self._current_turn
                 st.phase = ("Recruit Phase", self._shop_meta)
                 st.status = ""
                 st.combat = False
@@ -294,6 +306,12 @@ class OverlayApp:
                     )
                 else:
                     st.next_board = BoardView("Next Opponent", "not scouted yet", None)
+            case ev.ShopBoard():
+                # The number belongs to the exact friendly board submitted to
+                # the simulator. Hide it during debounce/recalculation after a
+                # buy, sell or reposition instead of captioning the new board
+                # with the old board's probability.
+                st.next_forecast = None
             case ev.ShopForecast(seen_turn=seen_turn, turn=turn) if prediction is not None:
                 age = turn - seen_turn
                 staleness = "current" if age <= 0 else f"{age} turn{'s' if age > 1 else ''} old"
@@ -301,8 +319,11 @@ class OverlayApp:
                     f"{prediction.won_percent:.0f} / {prediction.tied_percent:.0f}"
                     f" / {prediction.lost_percent:.0f}  ·  {staleness}"
                 )
+            case ev.ShopForecast() if prediction is None:
+                st.next_forecast = "Odds unavailable for this board"
             case ev.GameEnd(placement=p):
                 self._in_combat = False
+                self._current_turn = None
                 self._shop_result = (None, 0)
                 self._clear_to_idle(st)
                 st.phase = ("Game Over", f"finished #{p}" if p else "")
@@ -327,6 +348,7 @@ class OverlayApp:
         st.combat = False
         cls._clear_forecast(st)
         st.result = (None, 0)
+        st.forecast_live = True
         st.board = None
         st.next_board = None
         st.standings = ()
@@ -344,6 +366,7 @@ class OverlayApp:
         st.status = ""
         st.turn = snapshot.turn
         st.combat = True
+        st.forecast_live = True
         # Deliberately no st.board: the game is showing this fight itself, so
         # the panel would only cover it. Reviewing a player's last-seen board
         # is the scout popout's job (hover_board).

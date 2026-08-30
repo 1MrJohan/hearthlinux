@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from bgtracker.sim.client import SimClient
+from bgtracker.sim.client import SimClient, UnsupportedCombatCardsError
 from bgtracker.sim.mapper import to_battle_info
 
 from .test_mapper import snapshot_from_synthetic
@@ -71,3 +71,20 @@ def test_partial_results_only_ever_grow():
     seen, final = asyncio.run(run())
     assert seen == sorted(seen), f"partials went backwards: {seen}"
     assert all(n <= final.sims_run for n in seen), f"partial exceeded final: {seen}"
+
+
+def test_unknown_future_combat_card_returns_structured_error():
+    """A future combat effect must fail closed until Firestone implements it."""
+    async def run():
+        sim = SimClient(sims=100, workers=1, shop_workers=0)
+        info = to_battle_info(snapshot_from_synthetic())
+        info["opponentBoard"]["board"][0]["cardId"] = "BG99_UNSUPPORTED_COMBAT"
+        info["trackerCombatCardIds"] = ["BG99_UNSUPPORTED_COMBAT"]
+        try:
+            with pytest.raises(UnsupportedCombatCardsError) as caught:
+                await sim.simulate(info)
+            assert caught.value.card_ids == ("BG99_UNSUPPORTED_COMBAT",)
+        finally:
+            await sim.close()
+
+    asyncio.run(run())

@@ -44,6 +44,23 @@ class Trinket:
 
 
 @dataclass(frozen=True)
+class Secret:
+    """A combat secret attached to a player.
+
+    Opponent secret identities are hidden in the animation stream, but the
+    authoritative GameState stream materializes the exact entity while it
+    constructs the combat board. Keep a nullable id anyway: if a future log
+    leaves the identity hidden, the mapper must fail closed rather than omit a
+    known combat effect.
+    """
+
+    card_id: str | None
+    entity_id: int
+    num1: int = 0
+    num2: int = 0
+
+
+@dataclass(frozen=True)
 class Minion:
     entity_id: int
     card_id: str | None
@@ -98,7 +115,14 @@ class PlayerBoard:
     # Equipped trinkets only — offers and rejected discoveries sit in
     # SETASIDE/REMOVEDFROMGAME, so the zone is what separates them.
     trinkets: tuple[Trinket, ...] = ()
-    hero_power_id: str | None = None      # active hero power (start-of-combat)
+    # Secrets are combat entities, not hero-power metadata. Firestone models
+    # them directly; dropping one can turn a real loss into a reported 100%
+    # win (Pack Tactics, observed 2026-08-05).
+    secrets: tuple[Secret, ...] = ()
+    # Visible active/passive power. The mapper omits it until the required
+    # per-power state is modeled, and rejects a forecast if its text acts in
+    # combat — silently dropping such a power can invert the odds.
+    hero_power_id: str | None = None
     hero_power_used: bool = False
     # tribe/aura bonuses applied to minions summoned during combat; keys match
     # the simulator's BgsPlayerGlobalInfo (BloodGemAttackBonus, …)
@@ -362,6 +386,7 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     minions: list[Card] = []
     hand: list[Card] = []
     trinkets: list[Card] = []
+    secrets: list[Card] = []
     enchants: dict[int, list[Enchantment]] = {}
     for entity in game.entities:
         if not isinstance(entity, Card):
@@ -373,6 +398,9 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
             # A card with no id is an opponent's hidden card; nothing to send.
             if entity.type == CardType.MINION and entity.card_id:
                 hand.append(entity)
+            continue
+        if zone == Zone.SECRET:
+            secrets.append(entity)
             continue
         if zone != Zone.PLAY:
             continue
@@ -418,6 +446,15 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
                 num2=tag(t, GameTag.TAG_SCRIPT_DATA_NUM_2),
             )
             for t in trinkets
+        ),
+        secrets=tuple(
+            Secret(
+                card_id=s.card_id or None,
+                entity_id=s.id,
+                num1=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_1),
+                num2=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_2),
+            )
+            for s in sorted(secrets, key=lambda entity: entity.id)
         ),
         hero_power_id=hero_power.card_id if hero_power else None,
         hero_power_used=bool(tag(hero_power, GameTag.EXHAUSTED)) if hero_power else False,

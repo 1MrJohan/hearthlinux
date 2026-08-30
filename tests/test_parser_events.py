@@ -3,7 +3,7 @@ from hearthstone.enums import GameTag
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 
-from .synthetic import LogBuilder, minimal_bg_game
+from .synthetic import LogBuilder, minimal_bg_game, secret_bg_game
 
 
 # Emitted whenever their underlying state moves, so how many arrive is a
@@ -97,6 +97,19 @@ def test_combat_snapshot_contents():
     assert (mine.card_id, mine.attack, mine.health) == ("BG_EX1_506", 2, 3)
     [theirs] = snap.opponent.minions
     assert theirs.taunt and theirs.health == 7
+
+
+def test_combat_snapshot_retains_opponent_secret_materialized_before_board():
+    """Pack Tactics was visible in GameState but used to be discarded.
+
+    The resulting stat-only simulation reported a 100% win for a combat that
+    actually lost when the secret summoned its copy.
+    """
+    _, events = feed_all(secret_bg_game().lines)
+    combat = next(e for e in events if isinstance(e, ev.CombatStart))
+
+    [secret] = combat.snapshot.opponent.secrets
+    assert (secret.card_id, secret.entity_id) == ("TB_Bacon_Secrets_15", 8)
 
 
 def test_hero_and_placement():

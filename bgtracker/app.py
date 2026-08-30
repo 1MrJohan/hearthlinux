@@ -17,7 +17,7 @@ from bgtracker.headless import print_event, render_board_line
 from bgtracker.history.db import HistoryDB
 from bgtracker.parse import events as ev
 from bgtracker.sim.client import SimClient, SimResult
-from bgtracker.sim.mapper import to_battle_info
+from bgtracker.sim.mapper import simulation_blocker, to_battle_info
 from bgtracker.state.game import BoardSnapshot, PlayerBoard, is_ghost
 from bgtracker.state.opponents import OpponentMemory
 
@@ -98,6 +98,8 @@ class Pipeline:
                         self._schedule_shop_forecast()
                 case ev.GameEnd(placement=place):
                     self._cancel_shop_forecast()
+                    self._next_opponent = None
+                    self._shop_board = None
                     if self.db and self._game_id:
                         self.db.end_game(self._game_id, place, final_turn=self._turn)
                         self._game_id = None
@@ -144,6 +146,8 @@ class Pipeline:
             self._shop_task = None   # no loop (sync replay): shop odds are moot
 
     async def _shop_forecast(self) -> None:
+        event: ev.ShopForecast | None = None
+        result: SimResult | None = None
         try:
             await asyncio.sleep(SHOP_DEBOUNCE)
             seen = self.memory.last_seen(self._next_opponent)
@@ -151,24 +155,26 @@ class Pipeline:
                 return   # never scouted them: nothing honest to forecast against
             snapshot = BoardSnapshot(turn=self._turn, friendly=self._shop_board,
                                      opponent=seen.board)
-            info = to_battle_info(snapshot)
-            if info is None:
-                return
-            result = await self.sim.simulate(
-                info, sims=SHOP_SIM_COUNT, background=True
-            )
-            _apply_damage_cap(result, snapshot)
             event = ev.ShopForecast(
                 opponent_id=self._next_opponent, seen_turn=seen.turn, turn=self._turn
             )
-            for listener in self.listeners:
-                listener(event, result)
+            info = to_battle_info(snapshot)
+            if info is not None:
+                result = await self.sim.simulate(
+                    info, sims=SHOP_SIM_COUNT, background=True
+                )
+                _apply_damage_cap(result, snapshot)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             # A shop forecast is a convenience; failing one must never disturb
-            # the tailer or the combat path.
+            # the tailer or the combat path. Still publish the empty result:
+            # the board may have changed from supported to unsupported, and
+            # leaving the previous number visible would attach stale odds to it.
             log.debug("shop forecast failed: %r", exc)
+        if event is not None:
+            for listener in self.listeners:
+                listener(event, result)
 
     async def _simulate(self, snapshot: BoardSnapshot, historical: bool = False) -> SimResult | None:
         # A combat that already happened cannot be forecast, and the player is
@@ -178,7 +184,7 @@ class Pipeline:
             return None
         info = to_battle_info(snapshot)
         if info is None:
-            print("  odds: n/a (board incomplete)")
+            print(f"  odds: n/a ({simulation_blocker(snapshot) or 'unsupported combat state'})")
             return None
         def show_partial(provisional: SimResult) -> None:
             # A heavy 7v7 board takes seconds; this puts a usable number on

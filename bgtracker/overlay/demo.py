@@ -140,6 +140,11 @@ async def run(overlay, interval: float = 4.0) -> None:
         # Live shop odds against the next opponent's last-seen board, two turns
         # stale — the state the staleness label exists for.
         (ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), shop_odds, interval),
+        # A board change invalidates those numbers immediately. If Firestone
+        # cannot model the replacement board yet, the explicit empty result
+        # becomes an unavailable label instead of resurrecting stale odds.
+        (ev.ShopBoard(board=you, turn=8), None, 0.0),
+        (ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), None, interval),
     ]
 
     for event, prediction, dwell in itertools.cycle(script):

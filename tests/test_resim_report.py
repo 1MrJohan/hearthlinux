@@ -20,6 +20,19 @@ def test_report_includes_the_wall_time_distribution():
     assert "max 2000" in text, text
 
 
+def test_report_includes_the_trial_distribution():
+    """Latency alone can call starvation a speed-up; sample size makes the
+    simulator's accuracy cost visible beside it."""
+    text = _report([
+        _row(50, 51, 100.0, sims=8000),
+        _row(40, 41, 300.0, sims=6200),
+        _row(30, 31, 2000.0, sims=4000),
+    ])
+    assert "trials: min 4000" in text, text
+    assert "median 6200" in text, text
+    assert "max 8000" in text, text
+
+
 def test_wall_time_is_reported_even_when_nothing_is_comparable():
     """A corpus with no stored predictions still benchmarks fine — the drift
     table is what needs a 'then', not the clock."""

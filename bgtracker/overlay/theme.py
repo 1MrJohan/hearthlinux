@@ -188,12 +188,9 @@ window.bg-overlay { background: transparent; }
     background-image: radial-gradient(circle at 50% 34%, #2a1d10, #120c06);
     box-shadow: inset 0 0 ${p9}px rgba(0,0,0,.65);
 }
-.medallion.combat { animation: turnpulse 2.4s ease-in-out infinite; }
-@keyframes turnpulse {
-    from { box-shadow: inset 0 0 ${p9}px rgba(0,0,0,.65),
-                       0 0 ${p10}px rgba(244,212,122,.45); }
-    to   { box-shadow: inset 0 0 ${p9}px rgba(0,0,0,.65),
-                       0 0 ${p20}px rgba(244,212,122,.9); }
+.medallion.combat {
+    box-shadow: inset 0 0 ${p9}px rgba(0,0,0,.65),
+                0 0 ${p14}px rgba(244,212,122,.7);
 }
 .medallion-num {
     font-family: $display;

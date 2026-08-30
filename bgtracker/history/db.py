@@ -22,6 +22,7 @@ from bgtracker.state.game import (
     Enchantment,
     Minion,
     PlayerBoard,
+    Secret,
     Trinket,
     is_ghost,
 )
@@ -95,9 +96,9 @@ def _minions_from(raw: list[dict]) -> tuple[Minion, ...]:
 def board_from_json(raw: str | None) -> PlayerBoard | None:
     """Rebuild a stored board so a recorded combat can be re-simulated offline.
 
-    Tolerant of rows written before `hand`, `trinkets` and `global_info` existed
-    — those predate the columns but are most of the calibration corpus, and a
-    strict reader would throw the history away.
+    Tolerant of rows written before `hand`, `trinkets`, `secrets` and
+    `global_info` existed — those predate the columns but are most of the
+    calibration corpus, and a strict reader would throw the history away.
     """
     if raw is None:
         return None
@@ -108,6 +109,7 @@ def board_from_json(raw: str | None) -> PlayerBoard | None:
             "minions": _minions_from(d.get("minions", ())),
             "hand": _minions_from(d.get("hand", ())),
             "trinkets": tuple(Trinket(**t) for t in d.get("trinkets", ())),
+            "secrets": tuple(Secret(**s) for s in d.get("secrets", ())),
             "global_info": d.get("global_info", {}),
         }
     )
