@@ -7,7 +7,7 @@ from bgtracker.sim.client import SimResult
 from bgtracker.history.db import HistoryDB, _board_json, board_from_json
 from bgtracker.history.stats import report
 from bgtracker.parse.exporter import LiveGameProcessor
-from bgtracker.state.game import BoardSnapshot, Enchantment, Minion, PlayerBoard, Trinket
+from bgtracker.state.game import BoardSnapshot, Enchantment, Minion, PlayerBoard, Secret, Trinket
 
 from .synthetic import minimal_bg_game
 
@@ -205,6 +205,7 @@ def test_a_stored_board_round_trips():
                         enchantments=(Enchantment(card_id="E1", num1=2, num2=3),)),),
         hand=(Minion(entity_id=10, card_id="BG_X", position=0, attack=1, health=1),),
         trinkets=(Trinket(card_id="T1", entity_id=11, num1=1),),
+        secrets=(Secret(card_id="TB_Bacon_Secrets_15", entity_id=12),),
         global_info={"BloodGemAttackBonus": 2},
     )
     assert board_from_json(_board_json(board)) == board
@@ -218,7 +219,8 @@ def test_a_board_from_an_older_schema_still_loads():
         "minions": [{"entity_id": 2, "card_id": "C", "position": 1, "attack": 1, "health": 1}],
     })
     board = board_from_json(legacy)
-    assert board.hand == () and board.trinkets == () and board.global_info == {}
+    assert board.hand == () and board.trinkets == () and board.secrets == ()
+    assert board.global_info == {}
     assert board.minions[0].enchantments == ()
 
 

@@ -111,14 +111,20 @@ Hearthstone (Wine/Proton) → Power.log → tailer → hslog exporter → typed 
   client's animation queue, and its flip back to shop is when the player
   actually stops watching (median 23s later, up to 48s). Snapshots and history
   follow `GameState`; anything on screen follows the `ShopReady` event, which
-  is raised from the `PowerTaskList` marker.
+  is raised from the `PowerTaskList` marker. That includes the turn medallion:
+  combat N remains labelled N until the shop for N+1 is actually visible.
 - **Odds accuracy**: the mapper sends stats, keywords, tavern tier, hero
   HP/armor, attached enchantments, the friendly hand, equipped trinkets, and
-  the lobby-wide tribe buffs (`globalInfo`). Still unmapped: `validTribes`,
-  anomalies, and quests — those degrade *accuracy*, not correctness. Hero
+  combat secrets, plus the lobby-wide tribe buffs (`globalInfo`). A secret
+  whose identity is not exposed suppresses the forecast rather than being
+  silently omitted. Still unmapped: `validTribes`,
+  anomalies, and quests — recruit-only omissions are already reflected in the
+  live board. Hero
   powers are excluded **on purpose**: the simulator needs per-power `info`
   state, and sending a bare id makes it misapply even non-combat powers
-  (verified swinging a 16% combat to 0%). `bgtracker stats` prints a
+  (verified swinging a 16% combat to 0%). If a visible hero power or card has
+  a current-combat effect the pinned package cannot represent, odds are shown
+  as unavailable instead of as a confidently wrong number. `bgtracker stats` prints a
   calibration table (predicted vs actual win rate per bucket) — that table is
   the evidence for what to map next, and `bgtracker resim` replays stored
   combats through the current mapper to show what a change moved.

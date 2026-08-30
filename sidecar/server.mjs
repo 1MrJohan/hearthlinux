@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { lanes, notReady } from './lanes.mjs';
+import { cacheIsFresh } from './compatibility.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -28,6 +29,7 @@ const CACHE_DIR = process.env.XDG_CACHE_HOME
     ? join(process.env.XDG_CACHE_HOME, 'hs-bg-tracker')
     : join(homedir(), '.cache', 'hs-bg-tracker');
 const CARDS_CACHE = join(CACHE_DIR, 'firestone-cards.json');
+const SIM_PACKAGE = require.resolve('@firestone-hs/simulate-bgs-battle/package.json');
 const CARDS_URLS = [
     'https://static.zerotoheroes.com/data/cards/cards_enUS.gz.json',
     'https://static.firestoneapp.com/data/cards/cards_enUS.gz.json',
@@ -45,7 +47,9 @@ const PARTIAL_MIN_INTERVAL_MS = 120;
 /** Make sure the card cache is on disk and fresh; workers read it themselves. */
 async function ensureCardsFile() {
     try {
-        if (Date.now() - statSync(CARDS_CACHE).mtimeMs < CACHE_MAX_AGE_MS) {
+        if (cacheIsFresh(
+            statSync(CARDS_CACHE), statSync(SIM_PACKAGE), Date.now(), CACHE_MAX_AGE_MS,
+        )) {
             return CARDS_CACHE;
         }
     } catch {}
@@ -204,7 +208,13 @@ function onShardMessage(msg) {
         clearTimeout(job.timer);
         inflight.delete(msg.jobId);
         if (backgroundJobId === msg.jobId) backgroundJobId = null;
-        out({ id: job.id, error: msg.error });
+        out({
+            id: job.id,
+            error: msg.error,
+            ...(msg.unsupportedCards?.length
+                ? { unsupported_cards: msg.unsupportedCards }
+                : {}),
+        });
         return;
     }
     // Latest state per shard, keyed by shard index: a partial supersedes that

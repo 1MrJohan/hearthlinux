@@ -374,6 +374,14 @@ copy of itself, Diremuck Forager pulls Murlocs out, Choral Mrrrglr eats the hand
 stats), so the friendly hand is mapped to the simulator. **The opponent's hand is hidden
 in the log** and always projects empty.
 
+**Secrets.** Active combat secrets are `Zone.SECRET` spell entities, separate from the
+hero power that created them. GameState exposes the exact secret while materializing the
+combat board even though PowerTaskList keeps the opponent-facing animation hidden until
+it triggers. Project and send that entity through `PlayerBoard.secrets`; looking only at
+Akazamzarak's recruit-only hero-power text silently drops the combat effect. A captured
+Pack Tactics fight moved from a false 100% win to 0% when the secret was restored. If a
+future log exposes the entity but not its card id, fail closed rather than guessing.
+
 **Damage cap** (`BACON_COMBAT_DAMAGE_CAP`) limits combat damage in the early game. The
 simulator reports uncapped numbers, so `app.py` clamps what is shown and recorded.
 
@@ -395,7 +403,10 @@ tends to reintroduce a fixed bug.
   the `PowerTaskList` marker. Driving UI from `CombatEnd` makes the display change while
   the user is mid-battle.
 - **Turn numbers.** BG increments the internal `TURN` tag for every recruit *and* combat
-  phase. The turn shown in-game is `(raw + 1) // 2`.
+  phase. The turn shown in-game is `(raw + 1) // 2`. The next raw shop turn arrives
+  as soon as `GameState` resolves the fight, so the overlay retains the combat
+  snapshot's turn while `_in_combat` and reveals the remembered next turn only at
+  `ShopReady`.
 - **`CONTROLLER` is not player identity.** Opponents share a controller slot (14).
   The stable per-player identity is the hero's `PLAYER_ID` tag — that is
   `PlayerBoard.bg_player_id`, and what opponent memory and the leaderboard rail key on.
@@ -446,7 +457,9 @@ tends to reintroduce a fixed bug.
   several tribes at once and the log never says which, so it is labelled for what it is.
 - **Hero powers are deliberately NOT sent to the simulator.** The sim needs per-power
   `info` state; sending a bare id (info=0) makes it misapply even non-combat powers —
-  verified swinging a 16% combat to 0%. `globalInfo` is safe and *is* sent.
+  verified swinging a 16% combat to 0%. `globalInfo` is safe and *is* sent. A visible
+  power whose text acts during combat now suppresses that forecast entirely: omitting
+  it would simulate a different fight, not merely add sampling uncertainty.
 - **Restarting mid-game is safe and bounded — but only because catch-up does not
   simulate.** A fresh `Tailer` records the file size already present as a stable
   historical high-water mark, then drains toward it in 256 KiB slices with a 1ms
@@ -469,11 +482,14 @@ tends to reintroduce a fixed bug.
 
 ## Odds accuracy workflow
 
-The mapper covers stats, keywords, tier, enchantments, hand, and trinkets. Unmapped
-features degrade *accuracy*, not correctness. `bgtracker stats` prints a calibration
-table (predicted vs actual win rate per bucket) — that table is the evidence for what to
-map next. Every combat row in `history.db` stores both board snapshots as JSON alongside
-the prediction, so a mispredicted fight can be re-simulated offline from the row.
+The mapper covers stats, keywords, tier, enchantments, hand, secrets, and trinkets. Recruit-only
+unmapped features are already reflected in the live snapshot and degrade accuracy at
+most. Known current-fight state is different: combat-active hero powers and card effects
+absent from the pinned Firestone package fail closed as unavailable. `bgtracker stats`
+prints a calibration table (predicted vs actual win rate per bucket) — that table is the
+evidence for what to map next. Every combat row in `history.db` stores both board
+snapshots as JSON alongside the prediction, so a mispredicted fight can be re-simulated
+offline from the row.
 
 **`bgtracker resim [N]` is the regression harness, and also the throughput bench.** It
 replays stored combats through the current mapper and simulator and prints
@@ -527,6 +543,13 @@ Two operational gotchas for `resim`, both learned the hard way:
   trustworthy is that replaying the *same* package reproduces its own stored predictions
   to three decimals, so the noise floor is visible rather than assumed. Accept/reject on
   `resim 800`; the short runs are for throughput.
+
+  Workers build a capability catalog from both Firestone's mapping registry and its
+  compiled legacy switch tables. The mapper marks only IDs whose visible text can change
+  the current fight; if one is absent from that catalog, or implemented behavior lacks
+  its card metadata, the sidecar returns `unsupported_cards` instead of treating it as a
+  vanilla stat block. Installing a newer behavior package also invalidates an older card
+  cache so the pair is checked together.
 
 Read the calibration table with two things in mind:
 

@@ -1,18 +1,24 @@
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
-from bgtracker.sim.mapper import to_battle_info
+from bgtracker.sim.mapper import simulation_blocker, to_battle_info
 from dataclasses import replace
 
 from hearthstone.enums import CardType
 
-from bgtracker.state.game import BoardSnapshot, Minion
+from bgtracker.state.game import BoardSnapshot, Minion, Secret
 
-from .synthetic import minimal_bg_game
+from .synthetic import minimal_bg_game, secret_bg_game
 
 
 def snapshot_from_synthetic() -> BoardSnapshot:
     proc = LiveGameProcessor()
     events = proc.feed(minimal_bg_game().lines)
+    return next(e for e in events if isinstance(e, ev.CombatStart)).snapshot
+
+
+def secret_snapshot_from_synthetic() -> BoardSnapshot:
+    proc = LiveGameProcessor()
+    events = proc.feed(secret_bg_game().lines)
     return next(e for e in events if isinstance(e, ev.CombatStart)).snapshot
 
 
@@ -37,6 +43,111 @@ def test_maps_snapshot_to_battle_info():
 def test_incomplete_snapshot_maps_to_none():
     snap = BoardSnapshot(turn=1, friendly=None, opponent=None)
     assert to_battle_info(snap) is None
+
+
+def test_secret_is_sent_to_firestone_and_checked_for_compatibility():
+    info = to_battle_info(secret_snapshot_from_synthetic())
+
+    assert info["opponentBoard"]["player"]["secrets"] == [{
+        "cardId": "TB_Bacon_Secrets_15",
+        "entityId": 8,
+        "scriptDataNum1": 0,
+        "scriptDataNum2": 0,
+    }]
+    assert info["trackerCombatCardIds"] == ["TB_Bacon_Secrets_15"]
+
+
+def test_hidden_secret_fails_closed_instead_of_simulating_without_it():
+    snap = snapshot_from_synthetic()
+    snap = replace(
+        snap,
+        opponent=replace(snap.opponent, secrets=(Secret(card_id=None, entity_id=8),)),
+    )
+
+    assert simulation_blocker(snap) == "combat secret identity hidden"
+    assert to_battle_info(snap) is None
+
+
+def test_combat_hero_power_fails_closed_instead_of_returning_wrong_odds(monkeypatch):
+    """N'Zoth's Wingmen was the cause of a recorded 100%-win forecast that
+    actually lost: sending no power simulated a different fight."""
+    snap = snapshot_from_synthetic()
+    snap = replace(
+        snap,
+        opponent=replace(snap.opponent, hero_power_id="TB_BaconShop_HP_069"),
+    )
+    monkeypatch.setattr(
+        "bgtracker.sim.mapper.cards.get",
+        lambda card_id: {
+            "id": card_id,
+            "mechanics": ["START_OF_COMBAT", "TRIGGER_VISUAL"],
+            "text": "Start of Combat: Your edge minions attack immediately.",
+        },
+    )
+
+    assert simulation_blocker(snap) == (
+        "combat hero power not modeled: TB_BaconShop_HP_069"
+    )
+    assert to_battle_info(snap) is None
+
+
+def test_recruit_only_hero_power_does_not_suppress_visible_board_odds(monkeypatch):
+    snap = snapshot_from_synthetic()
+    snap = replace(
+        snap,
+        friendly=replace(snap.friendly, hero_power_id="RECRUIT_ONLY_POWER"),
+    )
+    monkeypatch.setattr(
+        "bgtracker.sim.mapper.cards.get",
+        lambda card_id: {
+            "id": card_id,
+            "mechanics": ["TRIGGER_VISUAL"],
+            "text": "After you buy a minion, give it +1/+1.",
+        },
+    )
+
+    assert simulation_blocker(snap) is None
+    assert to_battle_info(snap) is not None
+
+
+def test_current_combat_card_is_flagged_for_sidecar_data_compatibility(monkeypatch):
+    """The 1.1.724 pin treated Tasty Lobster as a vanilla stat block because
+    Firestone's card-data feed had not published its metadata yet."""
+    snap = snapshot_from_synthetic()
+    lobster = replace(snap.opponent.minions[0], card_id="BG36_202")
+    snap = replace(snap, opponent=replace(snap.opponent, minions=(lobster,)))
+
+    def get_card(card_id):
+        if card_id == "BG36_202":
+            return {
+                "id": card_id,
+                "mechanics": ["DEATHRATTLE"],
+                "text": "Deathrattle: Give two friendly Beasts +1/+1.",
+            }
+        return {"id": card_id, "mechanics": [], "text": ""}
+
+    monkeypatch.setattr("bgtracker.sim.mapper.cards.get", get_card)
+
+    assert to_battle_info(snap)["trackerCombatCardIds"] == ["BG36_202"]
+
+
+def test_economy_only_deathrattle_does_not_block_current_combat(monkeypatch):
+    snap = snapshot_from_synthetic()
+    barnstormer = replace(snap.opponent.minions[0], card_id="BG26_162")
+    snap = replace(snap, opponent=replace(snap.opponent, minions=(barnstormer,)))
+
+    def get_card(card_id):
+        if card_id == "BG26_162":
+            return {
+                "id": card_id,
+                "mechanics": ["BATTLECRY", "DEATHRATTLE"],
+                "text": "Deathrattle: Give Elementals in the Tavern +8/+8 this game.",
+            }
+        return {"id": card_id, "mechanics": [], "text": ""}
+
+    monkeypatch.setattr("bgtracker.sim.mapper.cards.get", get_card)
+
+    assert "trackerCombatCardIds" not in to_battle_info(snap)
 
 
 def test_hand_is_sent_so_start_of_combat_cards_are_simulated():

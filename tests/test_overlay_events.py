@@ -269,12 +269,12 @@ def test_phase_meta_reports_your_hp_not_the_opponents():
     assert win.last("set_phase")[1] == "18 HP · Tavern 3"
 
 
-def test_medallion_pulses_for_the_whole_visible_fight():
+def test_medallion_keeps_its_combat_emphasis_for_the_whole_visible_fight():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
     assert win.last("set_combat") == (True,)
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
-    assert win.last("set_combat") == (True,), "stopped pulsing mid-animation"
+    assert win.last("set_combat") == (True,), "lost combat emphasis mid-animation"
     app.on_event(ev.ShopReady(), None)
     assert win.last("set_combat") == (False,)
 
@@ -285,6 +285,25 @@ def test_turn_number_tracks_turn_changes():
     assert win.last("set_turn") == (7,)
     app.on_event(ev.GameStart(), None)
     assert win.last("set_turn") == (None,)
+
+
+def test_visible_combat_keeps_its_turn_until_the_animation_finishes():
+    """GameState advances almost immediately, while PowerTaskList keeps the
+    player in combat for another 20-45 seconds."""
+    app, win = _app()
+    app.on_event(ev.TurnChange(turn=7), None)
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+
+    # The engine has resolved combat 7 and entered its internal turn 8, but
+    # the player is still watching combat 7 and its forecast.
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.TurnChange(turn=8), None)
+    assert win.last("set_turn") == (7,)
+    assert app.state.turn == 7
+
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_turn") == (8,)
+    assert app.state.turn == 8
 
 
 def test_combat_start_shows_the_forecast():
@@ -326,6 +345,14 @@ def test_combat_without_a_prediction_clears_stale_odds():
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
     assert win.last("set_odds") == (None, None, None)
+    assert win.last("set_status") == ("Odds unavailable for this combat",)
+
+
+def test_a_later_supported_combat_clears_the_unavailable_message():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    assert win.last("set_status") == ("",)
 
 
 def test_new_game_clears_the_forecast():

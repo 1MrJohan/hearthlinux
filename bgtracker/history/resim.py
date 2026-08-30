@@ -125,6 +125,16 @@ def _report(results: list[Row]) -> str:
             f"median {ordered[len(ordered) // 2]:.0f}ms, max {ordered[-1]:.0f}ms"
         )
 
+    sampled = sorted(r.sims_run for r in results if r.sims_run > 0)
+    if sampled:
+        # Wall time by itself can make a starved, prematurely truncated run
+        # look like an improvement.  Keep the accuracy budget beside the
+        # throughput number instead of only warning at one arbitrary cutoff.
+        lines.append(
+            f"  trials: min {sampled[0]}, median {sampled[len(sampled) // 2]}, "
+            f"max {sampled[-1]}"
+        )
+
     if scored:
         moved = [r for r in scored if r.drift >= 1.0]
         mean_drift = sum(r.drift for r in scored) / len(scored)

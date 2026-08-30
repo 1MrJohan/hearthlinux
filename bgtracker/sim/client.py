@@ -24,6 +24,14 @@ log = logging.getLogger(__name__)
 SIDECAR_DIR = Path(__file__).resolve().parent.parent.parent / "sidecar"
 
 
+class UnsupportedCombatCardsError(RuntimeError):
+    """The installed simulator cannot model combat behavior in this board."""
+
+    def __init__(self, message: str, card_ids: list[str]):
+        super().__init__(message)
+        self.card_ids = tuple(card_ids)
+
+
 @dataclass
 class SimResult:
     won_percent: float
@@ -199,6 +207,11 @@ class SimClient:
                 if msg.get("id") != self._next_id:
                     continue
                 if "error" in msg:
+                    if msg.get("unsupported_cards"):
+                        raise UnsupportedCombatCardsError(
+                            f"sidecar error: {msg['error']}",
+                            msg["unsupported_cards"],
+                        )
                     raise RuntimeError(f"sidecar error: {msg['error']}")
                 # Progress updates keep arriving under the same id until the
                 # final `result` line closes the request out.

@@ -26,6 +26,13 @@ class StubSim:
         )
 
 
+class FailingSim(StubSim):
+    async def simulate(self, battle_info, on_partial=None, sims=None, background=False):
+        self.calls.append(sims)
+        self.lanes.append(background)
+        raise RuntimeError("unsupported combat behavior")
+
+
 def _board(pid: int, minions: int = 1) -> PlayerBoard:
     return PlayerBoard(
         player_id=pid, bg_player_id=pid, hero_card_id="TB_BaconShop_HERO_11",
@@ -123,6 +130,35 @@ def test_the_forecast_reports_how_old_the_scouted_board_is():
     [(event, prediction)] = asyncio.run(run())
     assert (event.turn, event.seen_turn) == (9, 6)
     assert prediction.won_percent == 55
+
+
+def test_a_failed_forecast_publishes_an_empty_update_to_clear_stale_odds():
+    async def run():
+        pipe, _, seen = _pipeline()
+        pipe.sim = FailingSim()
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1), turn=8)])
+        await _drain(pipe)
+        return seen
+
+    [(event, prediction)] = asyncio.run(run())
+    assert event.turn == 8
+    assert prediction is None
+
+
+def test_a_mapper_blocked_forecast_also_clears_stale_odds(monkeypatch):
+    async def run():
+        pipe, sim, seen = _pipeline()
+        monkeypatch.setattr("bgtracker.app.to_battle_info", lambda snapshot: None)
+        await pipe.handle([ev.TurnChange(turn=8), ev.NextOpponent(player_id=4)])
+        await pipe.handle([ev.ShopBoard(board=_board(1), turn=8)])
+        await _drain(pipe)
+        return sim.calls, seen
+
+    calls, [(event, prediction)] = asyncio.run(run())
+    assert calls == []
+    assert event.turn == 8
+    assert prediction is None
 
 
 def test_catch_up_does_not_simulate_combats_that_already_happened():

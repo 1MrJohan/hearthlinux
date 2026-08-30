@@ -210,7 +210,7 @@ class HudPanel(Gtk.Box):
         self._sync_body()
 
     def set_combat(self, combat: bool) -> None:
-        """Gently pulse the medallion while a combat is being forecast."""
+        """Give the medallion a static gold emphasis during combat."""
         if combat:
             self.medallion.add_css_class("combat")
         else:

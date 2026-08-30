@@ -71,6 +71,27 @@ def minimal_bg_game() -> LogBuilder:
     return b
 
 
+def secret_bg_game() -> LogBuilder:
+    """Combat whose opponent materializes after a secret is revealed.
+
+    This is the ordering captured from the 2026-08-05 Pack Tactics miss: the
+    phase flips first, then GameState exposes the secret, and only afterward
+    creates the opponent combat hero. The pending-combat snapshot must retain
+    the secret when that board finally becomes complete.
+    """
+    b = recruit_phase_game()
+    b.tag_change(5, "ZONE", "SETASIDE")
+    b.entity(7, "BG_CS2_065", CARDTYPE="MINION", ZONE="SETASIDE", CONTROLLER=2,
+             ATK=1, HEALTH=7, TAUNT=1, ZONE_POSITION=1)
+    b.tag_change("GameEntity", "TURN", 2)
+    b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 2)
+    b.entity(8, "TB_Bacon_Secrets_15", CARDTYPE="SPELL", ZONE="SECRET",
+             CONTROLLER=2, SECRET=1)
+    b.tag_change(7, "ZONE", "PLAY")
+    b.tag_change(5, "ZONE", "PLAY")
+    return b
+
+
 def recruit_phase_game() -> LogBuilder:
     """A bare two-player recruit phase: heroes in play, friendly player
     established via a revealed hand card. Callers add whatever entities or

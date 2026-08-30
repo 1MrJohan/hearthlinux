@@ -252,5 +252,10 @@ def test_events_arriving_before_the_window_exists_are_not_lost():
     app.window = late
     app._rendered = None
     app._flush()
-    assert late.last("set_turn") == (9,)
+    # TURN 9 belongs to the shop after the still-visible turn-7 combat. It is
+    # retained privately and only becomes visible with ShopReady.
+    assert late.last("set_turn") == (7,)
     assert late.last("set_odds") == (63, 9, 28)
+
+    app.on_event(ev.ShopReady(), None)
+    assert late.last("set_turn") == (9,)
