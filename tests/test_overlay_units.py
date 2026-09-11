@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from bgtracker.state.game import Minion
+from bgtracker.state.game import Enchantment, Minion
 
 gi = pytest.importorskip("gi")
 gi.require_version("Gtk", "4.0")
 
 from bgtracker.overlay.hud import bar_widths  # noqa: E402
 from bgtracker.overlay.rail import status_labels  # noqa: E402
-from bgtracker.overlay.widgets import pip_classes  # noqa: E402
+from bgtracker.overlay.widgets import magnet_pip, pip_classes  # noqa: E402
 from bgtracker.parse.events import Standing  # noqa: E402
 
 
@@ -92,3 +92,36 @@ def test_rail_status_labels_missing_or_invalid_tier_as_unknown(tier):
         tier=tier,
     )
     assert status_labels(standing) == ("30", "T—")
+
+
+# -- magnetized-cards pip ------------------------------------------------
+def _magnetic(entity_id: int, card_id: str) -> Enchantment:
+    return Enchantment(card_id=card_id, num1=4, num2=4, magnetic=True)
+
+
+def test_plain_minion_has_no_magnet_pip():
+    assert magnet_pip(_minion()) is None
+
+
+def test_one_linked_card_is_a_bare_m():
+    minion = _minion(enchantments=(_magnetic(1, "BG31_171te"),))
+    assert magnet_pip(minion) == "M"
+
+
+def test_linked_cards_are_counted_on_the_pip():
+    # Two *distinct* cards. Repeats of one card fold into a single
+    # enchantment upstream, so this can never overstate the count.
+    minion = _minion(enchantments=(_magnetic(1, "BG31_171te"), _magnetic(2, "BG_BOT_911e")))
+    assert magnet_pip(minion) == "M2"
+
+
+def test_ordinary_buffs_do_not_earn_a_magnet_pip():
+    buff = Enchantment(card_id="BG26_146e2", num1=9, num2=9)
+    assert magnet_pip(_minion(enchantments=(buff,))) is None
+
+
+def test_magnet_pip_has_a_colour():
+    # pip_classes ignores letters the palette lacks; "M" is not a flag letter
+    # and reaches the tile through magnet_pip instead, so it needs its own.
+    from bgtracker.overlay import theme
+    assert "M" in theme.PIP_COLOURS

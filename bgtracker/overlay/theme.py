@@ -69,6 +69,9 @@ PIP_COLOURS = {
     "W": "#86c9ef",   # Windfury
     "R": "#d78cf0",   # Reborn
     "S": "#c2cad6",   # Stealth
+    # Not a keyword: the magnetized-cards pip. Copper, so it reads as "mech"
+    # next to the keyword palette without colliding with Divine Shield gold.
+    "M": "#d9a066",
 }
 
 # Tavern-buff dot colours, keyed by the labels in state.game._BUFF_TAGS,

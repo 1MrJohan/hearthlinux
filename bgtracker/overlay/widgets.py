@@ -38,6 +38,21 @@ def pip_classes(flags: str) -> list[str]:
     return [f"pip-{f.lower()}" for f in flags if f in theme.PIP_COLOURS]
 
 
+def magnet_pip(minion: Minion) -> str | None:
+    """Label for the magnetized-cards pip, or None when nothing is magnetized.
+
+    "M" for one linked card, "M2" for two, and so on. This is a count of
+    distinct *cards*, not of mechs — the log folds repeats of the same card
+    into one enchantment, and the total is not recoverable (see
+    docs/superpowers/specs/2026-08-29-magnetize-count-design.md). The number
+    is exact for the opponent too, so the scout popout shows it.
+    """
+    n = minion.linked_cards
+    if n <= 0:
+        return None
+    return "M" if n == 1 else f"M{n}"
+
+
 class RoundArt(Gtk.Widget):
     """A square art crop clipped to a circle, zoomed and shifted to frame a face.
 
@@ -134,15 +149,19 @@ class MinionTile(Gtk.Box):
         name.set_max_width_chars(12)
         self.append(name)
 
-        classes = pip_classes(minion.flags)
-        if classes:
+        labelled = list(zip(
+            (f for f in minion.flags if f in theme.PIP_COLOURS),
+            pip_classes(minion.flags),
+        ))
+        magnet = magnet_pip(minion)
+        if magnet:
+            labelled.append((magnet, "pip-m"))
+        if labelled:
             pips = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                            spacing=theme.px(2, scale))
             pips.set_halign(Gtk.Align.CENTER)
-            for letter, css in zip(
-                (f for f in minion.flags if f in theme.PIP_COLOURS), classes
-            ):
-                pip = Gtk.Label(label=letter)
+            for text, css in labelled:
+                pip = Gtk.Label(label=text)
                 pip.add_css_class("pip")
                 pip.add_css_class(css)
                 pips.append(pip)

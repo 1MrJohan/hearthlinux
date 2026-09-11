@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 from bgtracker.parse import events as ev
 from bgtracker.sim.client import SimResult
-from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard
+from bgtracker.state.game import BoardSnapshot, Enchantment, Minion, PlayerBoard
 from bgtracker.state.opponents import OpponentMemory
 
 # Hero art ids verified against the HearthstoneJSON CDN in the handoff.
@@ -47,7 +47,12 @@ DEMONS = [
 ]
 MECHS = [
     ("EX1_556", 2, 3, {}, False),                    # Harvest Golem
-    ("BOT_312", 2, 6, {"taunt": True}, False),       # Replicating Menace
+    # Replicating Menace with two distinct cards magnetized on — renders the
+    # "M2" pip. The stats already include the +6/+6 they brought.
+    ("BOT_312", 8, 12, {"taunt": True, "enchantments": (
+        Enchantment(card_id="BG31_171te", num1=4, num2=4, magnetic=True),
+        Enchantment(card_id="BG_BOT_911e", num1=2, num2=2, magnetic=True),
+    )}, False),
     ("GVG_106", 1, 5, {"poisonous": True}, False),   # Junkbot
     ("GVG_113", 6, 9, {}, True),                     # Foe Reaper 4000
 ]
