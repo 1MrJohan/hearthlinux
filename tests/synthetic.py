@@ -124,3 +124,32 @@ def feed_buffs(builder: LogBuilder) -> list:
 def buffs_from(builder: LogBuilder) -> ev.Buffs | None:
     emitted = [e for e in feed_buffs(builder) if isinstance(e, ev.Buffs)]
     return emitted[-1] if emitted else None
+
+
+def magnetized_bg_game() -> LogBuilder:
+    """A shop board where a Satellite is magnetized onto our Mech.
+
+    Mirrors the shape captured on 2026-08-29: the magnetized minion becomes a
+    MAGNETIC enchantment attached to the host, and a second Satellite of the
+    same card folds into that one enchantment by growing its script data
+    rather than creating a second entity.
+    """
+    b = recruit_phase_game()
+    b.entity(7, "BG_BOT_312", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=1,
+             ATK=3, HEALTH=4, ZONE_POSITION=1)
+    b.entity(20, "BG31_171te", CARDTYPE="ENCHANTMENT", ZONE="PLAY", CONTROLLER=1,
+             ATTACHED=7, MAGNETIC=1, TAG_SCRIPT_DATA_NUM_1=4, TAG_SCRIPT_DATA_NUM_2=4)
+    # A board-changing tag is what marks the shop board dirty, and a following
+    # packet is what exports the one before it.
+    b.tag_change(7, "ZONE_POSITION", 1)
+    b.tag_change("GameEntity", "TURN", 4)
+    return b
+
+
+def magnetize_fold(b: LogBuilder, ench: int, host: int, value: int) -> LogBuilder:
+    """One more Satellite of the same card: the enchantment grows in place."""
+    b.tag_change(ench, "TAG_SCRIPT_DATA_NUM_1", value)
+    b.tag_change(ench, "TAG_SCRIPT_DATA_NUM_2", value)
+    b.tag_change(host, "ZONE_POSITION", 1)
+    b.tag_change("GameEntity", "TURN", 4)
+    return b

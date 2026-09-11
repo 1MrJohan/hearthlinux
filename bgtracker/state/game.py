@@ -26,6 +26,11 @@ class Enchantment:
     card_id: str | None
     num1: int = 0
     num2: int = 0
+    # A magnetized minion leaves exactly one of these on its host, and repeats
+    # of the *same* card fold into it rather than adding a second — so this
+    # flag counts distinct linked cards, never magnetizations. See
+    # docs/superpowers/specs/2026-08-29-magnetize-count-design.md.
+    magnetic: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,23 @@ class Minion:
     golden: bool = False
     tier: int = 1
     enchantments: tuple[Enchantment, ...] = ()
+
+    @property
+    def linked_cards(self) -> int:
+        """Distinct magnetic cards magnetized into this minion.
+
+        A *count of cards, not of mechs*: repeats of the same card fold into
+        the one enchantment they created, so four Satellites read as one. The
+        total is not in the log — see
+        docs/superpowers/specs/2026-08-29-magnetize-count-design.md.
+        """
+        return sum(1 for e in self.enchantments if e.magnetic)
+
+    @property
+    def magnetized_stats(self) -> tuple[int, int]:
+        """Attack and health magnetized in, summed across linked cards."""
+        atk = sum(e.num1 for e in self.enchantments if e.magnetic)
+        return atk, sum(e.num2 for e in self.enchantments if e.magnetic)
 
     @property
     def flags(self) -> str:
@@ -422,6 +444,7 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
                         card_id=entity.card_id,
                         num1=tag(entity, GameTag.TAG_SCRIPT_DATA_NUM_1),
                         num2=tag(entity, GameTag.TAG_SCRIPT_DATA_NUM_2),
+                        magnetic=bool(tag(entity, GameTag.MAGNETIC)),
                     )
                 )
     if hero is None and not minions:
