@@ -385,7 +385,7 @@ class SettingsWindow(Gtk.ApplicationWindow):
     def _add_debug_extras(self, page: Gtk.Box) -> None:
         page.append(Gtk.Separator())
         page.append(_title("Status"))
-        self._status_box = Gtk.Grid(row_spacing=4, column_spacing=18)
+        self._status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         page.append(self._status_box)
         self._render_status()
 
@@ -417,19 +417,23 @@ class SettingsWindow(Gtk.ApplicationWindow):
 
         The rows are a fixed set in a fixed order, so the labels are built once
         and only the value text (and its ok/bad colour) changes on each tick —
-        rebuilding fourteen widgets a second for two strings that moved would
-        be pure churn.
+        rebuilding the whole list for two strings that moved would be pure
+        churn.
         """
         rows = diagnostics.status.rows()
         if not self._status_values:
-            grid = self._status_box
-            for row, (label, _value, _state) in enumerate(rows):
+            for label, _value, _state in rows:
+                item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
                 name = Gtk.Label(label=label, xalign=0)
                 name.add_css_class("settings-help")
                 shown = Gtk.Label(label="", xalign=0)
                 shown.add_css_class("settings-label")
-                grid.attach(name, 0, row, 1, 1)
-                grid.attach(shown, 1, row, 1, 1)
+                shown.set_wrap(True)
+                shown.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                shown.set_hexpand(True)
+                item.append(name)
+                item.append(shown)
+                self._status_box.append(item)
                 self._status_values[label] = shown
         for label, value, state in rows:
             shown = self._status_values[label]
