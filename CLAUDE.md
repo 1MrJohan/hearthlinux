@@ -341,8 +341,10 @@ hero pick resolves.
 | `G` | Golden | The triple — 3 copies merge into one with doubled stats |
 
 **Tribes / minion types** — Beast, Demon, Dragon, Elemental, Mech, Murloc, Naga, Pirate,
-Quilboar, Undead. Only a rotating subset is in any given lobby (the sidecar accepts
-`gameState.validTribes`, which the mapper does not yet send). Several tribes have
+Quilboar, Undead. Only a rotating subset is in any given lobby. The sidecar accepts
+`gameState.validTribes` and the mapper deliberately does not send it: the log never
+names the lobby's tribes, and a guessed list would exclude a real one — see
+`docs/superpowers/specs/2026-09-10-lobby-tribes-design.md`. Several tribes have
 lobby-wide accumulating buffs stored as *player-level* tags, which the code surfaces as
 the Buffs panel and forwards to the sim as `globalInfo`: Blood Gem (Quilboar), Elemental,
 Pirate, and Tavern Spell. Undead has no player counter — it is tracked per-minion.
