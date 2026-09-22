@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from bgtracker.data import cards
-from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard
+from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard, Secret
 
 
 _COMBAT_TRIGGER_TEXT = re.compile(
@@ -123,17 +123,32 @@ def simulation_blocker(snapshot: BoardSnapshot) -> str | None:
         for secret in board.secrets
     ):
         return "combat secret identity hidden"
-    # Firestone awakens the deity from BACON_OLD_GOD_ATTACK/HEALTH (or
-    # scriptDataNum2/3) on this secret. The snapshot carries neither the
-    # tags nor NUM_3, so the sim would spawn a ?/1 — no captured log yet
-    # shows which of them the game actually sets.
+    # Without NUM_6 Firestone awakens C'Thun whatever the lobby's deity is,
+    # and without NUM_3 at 1 health. Live snapshots always carry both; combat
+    # rows stored before they were read do not.
     if any(
-        secret.card_id == _DEITY_SECRET
+        secret.card_id == _DEITY_SECRET and not secret.num6
         for board in (snapshot.friendly, snapshot.opponent)
         for secret in board.secrets
     ):
-        return "deity secret not modeled"
+        return "deity secret incomplete"
     return None
+
+
+def _secret(secret: Secret) -> dict:
+    result = {
+        "cardId": secret.card_id,
+        "entityId": secret.entity_id,
+        "scriptDataNum1": secret.num1,
+        "scriptDataNum2": secret.num2,
+    }
+    # Deity only. Other secrets (BG28_603) set NUM_3/NUM_6 too, but have always
+    # reached the sim without them, and nothing shows what it would do with
+    # them — an explicit value changes how its `??` fallbacks resolve.
+    if secret.card_id == _DEITY_SECRET:
+        result["scriptDataNum3"] = secret.num3
+        result["scriptDataNum6"] = secret.num6
+    return result
 
 
 def _entity(minion: Minion, friendly: bool) -> dict:
@@ -202,15 +217,7 @@ def _board(board: PlayerBoard, friendly: bool) -> dict:
             for t in board.trinkets
         ]
     if board.secrets:
-        player["secrets"] = [
-            {
-                "cardId": secret.card_id,
-                "entityId": secret.entity_id,
-                "scriptDataNum1": secret.num1,
-                "scriptDataNum2": secret.num2,
-            }
-            for secret in board.secrets
-        ]
+        player["secrets"] = [_secret(secret) for secret in board.secrets]
     return {
         "player": player,
         "board": [_entity(m, friendly) for m in board.minions],

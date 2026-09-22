@@ -7,7 +7,7 @@ from hearthstone.enums import CardType
 
 from bgtracker.state.game import BoardSnapshot, Minion, Secret
 
-from .synthetic import minimal_bg_game, secret_bg_game
+from .synthetic import deity_bg_game, minimal_bg_game, secret_bg_game
 
 
 def snapshot_from_synthetic() -> BoardSnapshot:
@@ -68,18 +68,52 @@ def test_hidden_secret_fails_closed_instead_of_simulating_without_it():
     assert to_battle_info(snap) is None
 
 
-def test_deity_secret_fails_closed_until_its_stats_are_read():
-    """The simulator awakens BG_OldGod's deity from stats the snapshot does
-    not carry, so sending the secret as-is would spawn it as a ?/1."""
+def test_deity_secret_carries_countdown_stats_and_which_deity():
+    """Shape captured from the first Aberration game: countdown in NUM_1,
+    stats in NUM_2/3, the current deity's dbfId (golden Y'Shaarj) in NUM_6."""
+    proc = LiveGameProcessor()
+    events = proc.feed(deity_bg_game().lines)
+    snap = next(e for e in events if isinstance(e, ev.CombatStart)).snapshot
+
+    assert simulation_blocker(snap) is None
+    [secret] = to_battle_info(snap)["playerBoard"]["player"]["secrets"]
+    assert secret == {
+        "cardId": "BG_OldGod",
+        "entityId": 9,
+        "scriptDataNum1": 3,
+        "scriptDataNum2": 248,
+        "scriptDataNum3": 254,
+        "scriptDataNum6": 134634,
+    }
+
+
+def test_other_secrets_keep_their_payload_even_when_num3_is_set():
+    snap = snapshot_from_synthetic()
+    snap = replace(
+        snap,
+        opponent=replace(
+            snap.opponent,
+            secrets=(Secret(card_id="BG28_603", entity_id=8, num3=2, num6=5),),
+        ),
+    )
+
+    [secret] = to_battle_info(snap)["opponentBoard"]["player"]["secrets"]
+    assert set(secret) == {"cardId", "entityId", "scriptDataNum1", "scriptDataNum2"}
+
+
+def test_deity_secret_without_its_deity_fails_closed():
+    """Rows stored before NUM_3/NUM_6 were read load with 0; the sim would
+    awaken a 1-health C'Thun from that rather than the lobby's deity."""
     snap = snapshot_from_synthetic()
     snap = replace(
         snap,
         friendly=replace(
-            snap.friendly, secrets=(Secret(card_id="BG_OldGod", entity_id=8),)
+            snap.friendly,
+            secrets=(Secret(card_id="BG_OldGod", entity_id=8, num1=3, num2=41),),
         ),
     )
 
-    assert simulation_blocker(snap) == "deity secret not modeled"
+    assert simulation_blocker(snap) == "deity secret incomplete"
     assert to_battle_info(snap) is None
 
 

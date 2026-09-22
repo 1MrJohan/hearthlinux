@@ -92,6 +92,26 @@ def secret_bg_game() -> LogBuilder:
     return b
 
 
+def deity_bg_game() -> LogBuilder:
+    """Combat where the friendly player holds the Old God's deity secret.
+
+    Tag values are from the 2026-09-22 Aberration capture, turn 10: the
+    countdown resets to 3 each combat, NUM_2/3 are the deity's grown stats
+    and NUM_6 is golden Y'Shaarj's dbfId after it was tripled.
+    """
+    b = recruit_phase_game()
+    b.entity(7, "BG_EX1_506", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=1,
+             ATK=2, HEALTH=3, ZONE_POSITION=1)
+    b.entity(8, "BG_CS2_065", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=2,
+             ATK=1, HEALTH=7, ZONE_POSITION=1)
+    b.entity(9, "BG_OldGod", CARDTYPE="SPELL", ZONE="SECRET", CONTROLLER=1,
+             TAG_SCRIPT_DATA_NUM_1=3, TAG_SCRIPT_DATA_NUM_2=248,
+             TAG_SCRIPT_DATA_NUM_3=254, TAG_SCRIPT_DATA_NUM_6=134634)
+    b.tag_change("GameEntity", "TURN", 2)
+    b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 2)
+    return b
+
+
 def recruit_phase_game() -> LogBuilder:
     """A bare two-player recruit phase: heroes in play, friendly player
     established via a revealed hand card. Callers add whatever entities or
