@@ -76,10 +76,12 @@ Alternatives rejected:
 
 Two details:
 
-- **Forward `scriptDataNum3/6` only when nonzero.** Every other secret has always been sent
-  without them. Sending an explicit 0 where the sim used to see `undefined` could change
-  how an existing secret's `??` fallbacks resolve; omitting zero keeps every non-deity
-  payload byte-identical.
+- **Forward `scriptDataNum3/6` for the deity secret only.** Every other secret has always
+  been sent without them, and at least one (`BG28_603`) does set `NUM_3/NUM_6` in real logs.
+  Nothing shows what the sim would do with those values, and an explicit value changes how
+  a secret's `??` fallbacks resolve, so every non-deity payload stays byte-identical.
+  (Revised during implementation: the first draft said "only when nonzero", which the
+  `BG28_603` logs would have broken.)
 - **Keep failing closed on an incomplete deity secret.** Combat rows recorded before this
   change stored `Secret` without `num3/num6`, so they load with 0. A `BG_OldGod` with
   `num6 == 0` would silently simulate a 1-health C'Thun; `simulation_blocker` names it

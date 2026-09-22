@@ -63,6 +63,11 @@ class Secret:
     entity_id: int
     num1: int = 0
     num2: int = 0
+    # Only the Old God's deity secret (BG_OldGod) uses these so far: NUM_3 is
+    # the deity's health, NUM_6 the dbfId of the deity it awakens. Defaulted
+    # so combat rows stored before they were read still load.
+    num3: int = 0
+    num6: int = 0
 
 
 @dataclass(frozen=True)
@@ -476,6 +481,8 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
                 entity_id=s.id,
                 num1=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_1),
                 num2=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_2),
+                num3=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_3),
+                num6=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_6),
             )
             for s in sorted(secrets, key=lambda entity: entity.id)
         ),
