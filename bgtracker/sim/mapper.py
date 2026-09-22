@@ -32,6 +32,9 @@ _RECRUIT_ONLY_DESTINATION = re.compile(
     r"spellcraft|activate)\b",
     re.IGNORECASE,
 )
+# The Old God's hidden hero secret: counts friendly Aberration deaths and
+# awakens the lobby's deity (C'Thun, Y'Shaarj) mid-combat.
+_DEITY_SECRET = "BG_OldGod"
 
 
 def _combat_relevant(card_id: str | None) -> bool:
@@ -120,6 +123,16 @@ def simulation_blocker(snapshot: BoardSnapshot) -> str | None:
         for secret in board.secrets
     ):
         return "combat secret identity hidden"
+    # Firestone awakens the deity from BACON_OLD_GOD_ATTACK/HEALTH (or
+    # scriptDataNum2/3) on this secret. The snapshot carries neither the
+    # tags nor NUM_3, so the sim would spawn a ?/1 — no captured log yet
+    # shows which of them the game actually sets.
+    if any(
+        secret.card_id == _DEITY_SECRET
+        for board in (snapshot.friendly, snapshot.opponent)
+        for secret in board.secrets
+    ):
+        return "deity secret not modeled"
     return None
 
 

@@ -68,6 +68,21 @@ def test_hidden_secret_fails_closed_instead_of_simulating_without_it():
     assert to_battle_info(snap) is None
 
 
+def test_deity_secret_fails_closed_until_its_stats_are_read():
+    """The simulator awakens BG_OldGod's deity from stats the snapshot does
+    not carry, so sending the secret as-is would spawn it as a ?/1."""
+    snap = snapshot_from_synthetic()
+    snap = replace(
+        snap,
+        friendly=replace(
+            snap.friendly, secrets=(Secret(card_id="BG_OldGod", entity_id=8),)
+        ),
+    )
+
+    assert simulation_blocker(snap) == "deity secret not modeled"
+    assert to_battle_info(snap) is None
+
+
 def test_combat_hero_power_fails_closed_instead_of_returning_wrong_odds(monkeypatch):
     """N'Zoth's Wingmen was the cause of a recorded 100%-win forecast that
     actually lost: sending no power simulated a different fight."""
