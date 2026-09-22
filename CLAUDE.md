@@ -383,6 +383,11 @@ it triggers. Project and send that entity through `PlayerBoard.secrets`; looking
 Akazamzarak's recruit-only hero-power text silently drops the combat effect. A captured
 Pack Tactics fight moved from a false 100% win to 0% when the secret was restored. If a
 future log exposes the entity but not its card id, fail closed rather than guessing.
+**`BG_OldGod` is the exception that is deliberately blocked**: the Aberration deity's hidden
+secret, which Firestone awakens from `BACON_OLD_GOD_ATTACK/HEALTH` (or `scriptDataNum2/3`).
+The snapshot carries neither, so forwarding it as-is spawns the deity as a ?/1;
+`simulation_blocker` returns "deity secret not modeled" until a captured game shows which
+tags the log sets.
 
 **Damage cap** (`BACON_COMBAT_DAMAGE_CAP`) limits combat damage in the early game. The
 simulator reports uncapped numbers, so `app.py` clamps what is shown and recorded.
