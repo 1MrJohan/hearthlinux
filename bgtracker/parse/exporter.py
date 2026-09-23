@@ -326,14 +326,25 @@ class BGExporter(EntityTreeExporter):
             self._emit(ev.Standings(places=standings))
 
     def friendly_placement(self) -> int | None:
-        """Final placement from any friendly hero entity, regardless of zone.
+        """Final placement of the hero our player entity names, in any zone.
 
         A dead hero sits in GRAVEYARD when the placement tag lands, so the
-        in-play lookup can't see it.
+        in-play lookup can't see it. And it has to be *that* hero: the game
+        creates a late copy of it in SETASIDE just before STATE=COMPLETE,
+        carrying a stale place one or two better than the real one. Being the
+        newest friendly hero, the copy won the old highest-id scan, which is
+        how a 3rd and a 2nd place were both recorded as wins.
         """
         fid = self.friendly_player_id()
         if fid is None:
             return None
+        for player in self.game.players:
+            if tag(player, GameTag.CONTROLLER) == fid:
+                hero = self.game.find_entity_by_id(tag(player, GameTag.HERO_ENTITY))
+                place = tag(hero, GameTag.PLAYER_LEADERBOARD_PLACE) if hero else None
+                if place:
+                    return place
+        # No HERO_ENTITY to follow (synthetic logs): newest friendly hero.
         best = None
         for entity in self.game.entities:
             if (
