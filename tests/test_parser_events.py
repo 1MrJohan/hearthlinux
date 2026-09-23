@@ -263,6 +263,63 @@ def test_elimination_is_sticky_across_ghost_reuse():
     assert entry.dead is True
 
 
+def test_combat_hero_copy_reset_is_not_an_elimination():
+    """Every fight's hero copy is moved to REMOVEDFROMGAME, zeroed and restored
+    in one burst. Latched at the packet, the zero greyed out every opponent on
+    the rail after their first fight with us."""
+    b = minimal_bg_game()
+    b.tag_change(5, "PLAYER_ID", 2)
+    b.tag_change(5, "ZONE", "SETASIDE")
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 2)
+    b.entity(12, "TB_BaconShop_HERO_22", CARDTYPE="HERO", ZONE="PLAY",
+             CONTROLLER=2, HEALTH=30, ARMOR=15, PLAYER_ID=2,
+             BACON_COMBAT_PHASE_HERO=1)
+    b.tag_change(12, "ZONE", "REMOVEDFROMGAME")
+    b.tag_change(12, "HEALTH", 0)
+    b.tag_change(12, "ARMOR", 0)
+    b.tag_change(12, "HEALTH", 30)
+    b.tag_change(12, "ARMOR", 15)
+    b.tag_change("GameEntity", "TURN", 4)  # export the preceding packet
+    proc, events = feed_all(b.lines)
+    assert 2 not in proc.current_exporter._dead_player_ids
+    assert _last_standings(events)[2].dead is False
+
+
+def test_lethal_on_the_combat_copy_reaches_combat_end():
+    """The only entity that shows a lethal before the fight ends is the
+    opponent's combat copy, which then leaves PLAY — so the end snapshot has
+    no opponent, and the elimination has to travel on the event."""
+    b = LogBuilder()
+    b.add("CREATE_GAME")
+    b.add("GameEntity EntityID=1", indent=1)
+    b.add("tag=TURN value=1", indent=2)
+    b.add("Player EntityID=2 PlayerID=1 GameAccountId=[hi=1 lo=1]", indent=1)
+    b.add("Player EntityID=3 PlayerID=2 GameAccountId=[hi=1 lo=2]", indent=1)
+    b.entity(4, "TB_BaconShop_HERO_11", CARDTYPE="HERO", ZONE="PLAY", CONTROLLER=1,
+             HEALTH=40, PLAYER_ID=1)
+    b.entity(6, "BG_EX1_506", CARDTYPE="MINION", ZONE="HAND", CONTROLLER=1)
+    b.entity(7, "BG_EX1_506", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=1,
+             ATK=2, HEALTH=3, ZONE_POSITION=1)
+    b.tag_change("GameEntity", "TURN", 2)
+    b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 2)
+    b.entity(12, "TB_BaconShop_HERO_22", CARDTYPE="HERO", ZONE="PLAY",
+             CONTROLLER=2, HEALTH=30, PLAYER_ID=2, BACON_COMBAT_PHASE_HERO=1)
+    b.entity(8, "BG_CS2_065", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=2,
+             ATK=1, HEALTH=7, ZONE_POSITION=1)
+    b.tag_change("GameEntity", "TURN", 3)  # export the preceding packets
+    b.tag_change(12, "DAMAGE", 40)
+    b.tag_change(12, "ZONE", "GRAVEYARD")
+    b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 1)
+    b.tag_change("GameEntity", "TURN", 4)
+    _, events = feed_all(b.lines)
+
+    [start] = [e for e in events if isinstance(e, ev.CombatStart)]
+    [end] = [e for e in events if isinstance(e, ev.CombatEnd)]
+    assert start.snapshot.opponent.bg_player_id == 2
+    assert end.snapshot.opponent is None
+    assert end.eliminated == frozenset({2})
+
+
 def test_hero_hp_change_refreshes_standings():
     """HP moves far more often than place; the rail must not show stale HP."""
     game = minimal_bg_game()

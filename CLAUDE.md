@@ -432,6 +432,15 @@ tends to reintroduce a fixed bug.
   and the death must be **latched** per `PLAYER_ID`, because a Kel'Thuzad ghost
   fight reuses the dead player's hero entity and can hand it full HP back. Final
   placement must be read from any zone, not just PLAY.
+- **Every fight's hero copy "dies" for an instant, and one fight's really does.** Combat
+  runs on a copy of each hero (`BACON_COMBAT_PHASE_HERO`, same `PLAYER_ID`). Cleanup
+  moves it to `REMOVEDFROMGAME`, zeroes `HEALTH` and restores it in one burst; the
+  per-packet latch must skip that zone or it marks every opponent eliminated after
+  their first fight with you (it did, from `8974223` until 2026-09-22). A real lethal
+  lands on the copy while in PLAY and sends it to GRAVEYARD *before* `CombatEnd` — the
+  leaderboard hero only takes the damage afterwards — so `end.opponent` is `None` and
+  the kill reaches `_classify_outcome` only through `CombatEnd.eliminated`. See
+  `docs/superpowers/specs/2026-09-22-elimination-reads-design.md`.
 - **Kel'Thuzad is not a player.** With an odd number of players left, somebody is paired
   against a *ghost* of an eliminated player (`TB_BaconShop_HERO_KelThuzad`). The ghost's
   hero is a dead player's entity and its HP reads **0 or negative**, so it cannot confirm

@@ -33,6 +33,10 @@ class CombatStart:
 @dataclass(frozen=True)
 class CombatEnd:
     snapshot: BoardSnapshot
+    # PLAYER_IDs eliminated so far, this fight included. A lethal takes the
+    # loser's hero out of PLAY before this event, so the snapshot alone cannot
+    # tell a kill from an opponent it simply no longer sees.
+    eliminated: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)

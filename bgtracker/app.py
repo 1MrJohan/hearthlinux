@@ -83,8 +83,8 @@ class Pipeline:
                     self.memory.record(snap.turn, snap.opponent)
                     prediction = await self._simulate(snap, historical)
                     self._pending = (snap, prediction)
-                case ev.CombatEnd(snapshot=end_snap):
-                    derived = self._finish_combat(end_snap)
+                case ev.CombatEnd(snapshot=end_snap, eliminated=eliminated):
+                    derived = self._finish_combat(end_snap, eliminated)
                 case ev.NextOpponent(player_id=pid):
                     self._next_opponent = pid
                     seen = self.memory.last_seen(pid)
@@ -217,12 +217,14 @@ class Pipeline:
             print("  odds: unavailable")
             return None
 
-    def _finish_combat(self, end_snap: BoardSnapshot) -> ev.CombatResult | None:
+    def _finish_combat(
+        self, end_snap: BoardSnapshot, eliminated: frozenset[int] = frozenset()
+    ) -> ev.CombatResult | None:
         if self._pending is None:
             return None
         start_snap, prediction = self._pending
         self._pending = None
-        outcome = _classify_outcome(start_snap, end_snap)
+        outcome = _classify_outcome(start_snap, end_snap, eliminated)
         if self.db and self._game_id:
             self.db.record_combat(self._game_id, start_snap, prediction, outcome)
         return ev.CombatResult(
@@ -272,8 +274,15 @@ def _apply_damage_cap(result: SimResult, snapshot: BoardSnapshot) -> None:
         result.won_lethal_percent = 0.0
 
 
-def _classify_outcome(start: BoardSnapshot, end: BoardSnapshot) -> str | None:
-    """Win/tie/loss from hero HP deltas across the combat."""
+def _classify_outcome(
+    start: BoardSnapshot, end: BoardSnapshot, eliminated: frozenset[int] = frozenset()
+) -> str | None:
+    """Win/tie/loss from hero HP deltas across the combat.
+
+    `eliminated` is the PLAYER_IDs dead by CombatEnd. A lethal takes the
+    opponent's hero out of PLAY before then, so `end.opponent` is None exactly
+    when the fight was won outright — the one case HP deltas cannot see.
+    """
     if start.friendly is None or end.friendly is None:
         return None
     my_delta = (end.friendly.health + end.friendly.armor) - (
@@ -287,6 +296,10 @@ def _classify_outcome(start: BoardSnapshot, end: BoardSnapshot) -> str | None:
         # A ghost's hero HP reads 0 or negative, so it cannot confirm a win —
         # this is "did not lose, cannot say more", not "nothing happened".
         return "ghost"
+    if start.opponent and start.opponent.bg_player_id in eliminated:
+        # After the ghost check on purpose: a ghost is a dead player's entity,
+        # so its id is always in the set without this fight having killed it.
+        return "win"
     if (
         start.opponent
         and end.opponent
