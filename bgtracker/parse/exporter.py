@@ -233,7 +233,10 @@ class BGExporter(EntityTreeExporter):
                 elif value == SHOP:
                     self._pending_combat = False
                     self._shop_dirty = True
-                    self._emit(ev.CombatEnd(snapshot=self.snapshot()))
+                    self._emit(ev.CombatEnd(
+                        snapshot=self.snapshot(),
+                        eliminated=frozenset(self._dead_player_ids),
+                    ))
             elif gametag == GameTag.STATE and value == State.COMPLETE and not self._ended:
                 # Placement tags land a few packets AFTER the COMPLETE state;
                 # defer GameEnd until we see one (or give up on next game).
@@ -254,10 +257,18 @@ class BGExporter(EntityTreeExporter):
             # is an observed transition rather than just final display state.
             # A Kel'Thuzad ghost can restore this entity's HP later in the same
             # batch, so latch it at the packet where it becomes visible.
+            #
+            # Except off a combat hero copy being cleaned up: the game moves it
+            # to REMOVEDFROMGAME, zeroes HEALTH and restores it in one burst,
+            # and read at the packet that zero is every opponent "dying" after
+            # each fight. A real lethal lands on the copy while it is in PLAY
+            # and sends it to GRAVEYARD, so it still latches here — which is
+            # what lets CombatEnd see an opponent killed in this fight.
             player_id = tag(entity, GameTag.PLAYER_ID)
             health = tag(entity, GameTag.HEALTH) - tag(entity, GameTag.DAMAGE)
-            if player_id and (
-                health <= 0 or tag(entity, GameTag.ZONE) == Zone.GRAVEYARD
+            zone = tag(entity, GameTag.ZONE)
+            if player_id and zone != Zone.REMOVEDFROMGAME and (
+                health <= 0 or zone == Zone.GRAVEYARD
             ):
                 self._dead_player_ids.add(player_id)
 

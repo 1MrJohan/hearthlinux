@@ -26,6 +26,29 @@ def test_classify_outcome():
     assert _classify_outcome(start, BoardSnapshot(1, _board(1, 40), None)) is None
 
 
+def test_eliminating_the_opponent_is_a_win():
+    """A lethal takes the opponent's hero out of PLAY before CombatEnd, so the
+    end snapshot has no opponent to compare HP against."""
+    start = BoardSnapshot(turn=10, friendly=_board(1, 13), opponent=_board(14, 5, bg_pid=5))
+    end = BoardSnapshot(10, _board(1, 13), None)
+    assert _classify_outcome(start, end) is None
+    assert _classify_outcome(start, end, eliminated=frozenset({5})) == "win"
+
+
+def test_elimination_does_not_override_a_loss_or_a_ghost():
+    """A ghost is a dead player's entity, so its id is always in the set; and
+    HP really lost is a loss whatever else happened."""
+    ghost = _board(14, -2, hero="TB_BaconShop_HERO_KelThuzad", bg_pid=5)
+    start = BoardSnapshot(turn=10, friendly=_board(1, 13), opponent=ghost)
+    assert _classify_outcome(
+        start, BoardSnapshot(10, _board(1, 13), None), eliminated=frozenset({5})
+    ) == "ghost"
+    alive = BoardSnapshot(turn=10, friendly=_board(1, 13), opponent=_board(14, 5, bg_pid=5))
+    assert _classify_outcome(
+        alive, BoardSnapshot(10, _board(1, 8), None), eliminated=frozenset({5})
+    ) == "loss"
+
+
 def test_a_different_opponent_after_combat_is_not_a_tie():
     """Identity is bg_player_id, never player_id.
 
