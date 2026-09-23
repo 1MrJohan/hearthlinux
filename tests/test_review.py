@@ -174,6 +174,62 @@ def test_game_delta_attributed_only_when_exactly_one_game_between_readings(db):
     assert deltas[open_ended] is None
 
 
+def _screen_rating(db, at, rating, game_id, delta):
+    db.conn.execute(
+        "INSERT INTO ratings (recorded_at, rating, game_id, delta, source)"
+        " VALUES (?,?,?,?,'screen')",
+        (at, rating, game_id, delta),
+    )
+    db.conn.commit()
+
+
+def test_the_screen_delta_beats_the_difference_of_readings(db):
+    """Untracked games in the gap would be folded into 6143 − 6000; the banner
+    showed this one game's own +44."""
+    _rating(db, "2026-09-22T09:00:00+00:00", 6000)
+    game = _game(db, "2026-09-23T10:00:00+00:00", placement=3)
+    _screen_rating(db, "2026-09-23T10:20:00+00:00", 6143, game, 44)
+    assert {g.id: g.mmr_delta for g in review.game_list(db)}[game] == 44
+
+
+def test_every_screen_read_game_gets_its_delta_however_many_share_a_gap(db):
+    _rating(db, "2026-09-23T09:00:00+00:00", 6099)
+    a = _game(db, "2026-09-23T10:00:00+00:00")
+    b = _game(db, "2026-09-23T11:00:00+00:00")
+    _screen_rating(db, "2026-09-23T11:20:00+00:00", 6143, b, 44)
+    deltas = {g.id: g.mmr_delta for g in review.game_list(db)}
+    # b has its own number; a still shares a gap with b and gets none.
+    assert deltas[b] == 44 and deltas[a] is None
+
+
+# -- mmr_breaks ----------------------------------------------------------
+
+def test_a_chain_that_joins_up_has_no_breaks(db):
+    _rating(db, "2026-09-23T09:00:00+00:00", 6099)
+    g1 = _game(db, "2026-09-23T10:00:00+00:00")
+    _screen_rating(db, "2026-09-23T10:20:00+00:00", 6143, g1, 44)
+    g2 = _game(db, "2026-09-23T10:30:00+00:00")
+    _screen_rating(db, "2026-09-23T10:50:00+00:00", 6100, g2, -43)
+    assert review.mmr_breaks(db, UTC) == []
+
+
+def test_untracked_games_break_the_chain_where_they_happened(db):
+    _rating(db, "2026-09-23T09:00:00+00:00", 6099)
+    game = _game(db, "2026-09-23T12:00:00+00:00")
+    # 6143 − 44 = 6099 would join; 6300 − 44 = 6256 does not.
+    _screen_rating(db, "2026-09-23T12:20:00+00:00", 6300, game, 44)
+    breaks = review.mmr_breaks(db, UTC)
+    assert [b.isoformat() for b in breaks] == ["2026-09-23T12:20:00+00:00"]
+
+
+def test_manual_readings_never_break_the_chain(db):
+    """A typed reading carries no delta, so it says nothing about the game
+    before it — there is nothing to disagree with."""
+    _rating(db, "2026-09-23T09:00:00+00:00", 6099)
+    _rating(db, "2026-09-23T12:00:00+00:00", 6500)
+    assert review.mmr_breaks(db, UTC) == []
+
+
 # -- game_detail ---------------------------------------------------------
 
 def test_game_detail_in_turn_order(db):

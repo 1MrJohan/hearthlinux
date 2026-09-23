@@ -27,7 +27,8 @@ a personal-use tool.
 ## Commands
 
 ```bash
-# Setup (Arch/CachyOS system deps: python-gobject gtk4 gtk4-layer-shell python-xlib nodejs)
+# Setup (Arch/CachyOS system deps: python-gobject gtk4 gtk4-layer-shell python-xlib nodejs;
+#  optional: tesseract tesseract-data-eng, to read the MMR off the end screen)
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -e .
 (cd sidecar && npm install)
@@ -215,10 +216,11 @@ GTK import**, so `overlay/history_window.py` is a thin renderer and the same vie
 grow a CLI later. Three rules there, each of which is a correctness question rather than
 a style one:
 
-- **Adding a column to `combats` needs an `ALTER`, not a schema edit.**
+- **Adding a column to `combats` or `ratings` needs an `ALTER`, not a schema edit.**
   `CREATE TABLE IF NOT EXISTS` silently leaves an existing table alone, so a column added
   only to `_SCHEMA` works on a fresh database and is missing on the author's real one.
-  New columns go in `_ADDED_COMBAT_COLUMNS`; a one-shot *data* fixup instead bumps
+  New columns go in `_ADDED_COMBAT_COLUMNS` / `_ADDED_RATING_COLUMNS`, and an index on
+  one goes in `_migrate()` after the `ALTER`s; a one-shot *data* fixup instead bumps
   `_USER_VERSION` and adds a guarded block in `_migrate()`.
 - **Timestamps are stored UTC and grouped in the caller's timezone.** "How did I do on
   Tuesday" is a local-calendar question, so the bucketing happens at read time.
@@ -237,10 +239,16 @@ a style one:
   Fourteen games written before this fix still claim durations over three hours — their
   `ended_at` was stamped with a replay's clock. Left as they are: the real values are
   gone, nothing reads `ended_at`, and a fixup that guessed would be worse.
-- **MMR readings are manual snapshots, not per-game facts**, and every derived number is
-  held to what they can honestly support: a period's net is the difference between the
-  last readings either side of it, and a single game gets a delta *only* when it is the
-  only game between two consecutive readings. Do not interpolate to fill the gaps.
+- **MMR readings are snapshots, and only a screen reading is a per-game fact.** No log
+  carries a rating. After a *live* `GameEnd`, `screen/rating.py` reads the post-game
+  banner (rating in white, change yellow on a gain and red on a loss) and records it with
+  `game_id`, `delta` and `source = 'screen'`; a miss raises the manual nudge instead.
+  Every derived number is held to what the readings can honestly support: a game gets a
+  delta when the screen showed one for it, or when it is the only game between two
+  consecutive readings; a period's net is the difference between the last readings either
+  side of it. `review.mmr_breaks` flags where a screen reading's `rating − delta` does not
+  meet the previous reading — untracked games happened there. Do not interpolate to fill
+  the gaps. See `docs/superpowers/specs/2026-09-23-mmr-screen-read-design.md`.
 
 The window opens the DB per refresh and closes it again, and re-queries whenever it
 becomes the active window. Reads are cheap at this scale, and a cached handle would
@@ -273,6 +281,7 @@ survive a `Delete history` reset still pointing at an unlinked file.
 | Settings UI / match-history UI | `overlay/settings_window.py`, `overlay/history_window.py` |
 | Log handlers and level | `logging_setup.py` |
 | Live status and the diagnostics bundle | `diagnostics.py` |
+| Game-window capture (X11); rating OCR off the post-game banner | `screen/capture.py`, `screen/rating.py` |
 
 ### Where state lives on disk
 

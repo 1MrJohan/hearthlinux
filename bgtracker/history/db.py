@@ -77,6 +77,18 @@ _ADDED_COMBAT_COLUMNS = (
     ("opponent_is_ghost", "INTEGER"),
 )
 
+# Columns added to `ratings` for readings taken off the post-game screen. NULL
+# in all three is a hand-typed reading, which is every row written before them.
+_ADDED_RATING_COLUMNS = (
+    ("game_id", "INTEGER"),  # the game this reading closes
+    ("delta", "INTEGER"),    # the change the screen showed for that game
+    ("source", "TEXT"),      # 'screen', or NULL for manual
+)
+
+# Sanity bounds for a recorded rating, not game rules: wide enough for any
+# real rating, narrow enough to catch a mistyped or misread one.
+RATING_MIN, RATING_MAX = 0, 30_000
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -165,10 +177,18 @@ class HistoryDB:
 
     def _migrate(self) -> None:
         """Bring an older database up to the current shape."""
-        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(combats)")}
-        for name, decl in _ADDED_COMBAT_COLUMNS:
-            if name not in existing:
-                self.conn.execute(f"ALTER TABLE combats ADD COLUMN {name} {decl}")
+        for table, added in (("combats", _ADDED_COMBAT_COLUMNS),
+                             ("ratings", _ADDED_RATING_COLUMNS)):
+            existing = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+            for name, decl in added:
+                if name not in existing:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        # Here rather than in _SCHEMA, which runs before an old table has the
+        # column. One screen reading per game, so a second read is a no-op.
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ratings_game"
+            " ON ratings (game_id) WHERE game_id IS NOT NULL"
+        )
 
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         if version < 2:
@@ -287,11 +307,22 @@ class HistoryDB:
         )
         self.conn.commit()
 
-    def record_rating(self, rating: int) -> None:
-        self.conn.execute(
-            "INSERT INTO ratings (recorded_at, rating) VALUES (?, ?)", (_now(), rating)
+    def record_rating(
+        self,
+        rating: int,
+        *,
+        game_id: int | None = None,
+        delta: int | None = None,
+        source: str | None = None,
+    ) -> bool:
+        """Store a reading; False if that game already has one."""
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO ratings (recorded_at, rating, game_id, delta, source)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (_now(), rating, game_id, delta, source),
         )
         self.conn.commit()
+        return cur.rowcount == 1
 
     def close(self) -> None:
         self.conn.close()

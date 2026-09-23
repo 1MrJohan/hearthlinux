@@ -419,8 +419,14 @@ class OverlayApp:
                 self._clear_to_idle(st)
                 st.phase = ("Game Over", f"finished #{p}" if p else "")
                 st.status = f"Finished #{p}" if p else "Game over"
-                # Placement-agnostic: `finalize()` can flush a GameEnd with
-                # none, and a finished game is worth a rating either way.
+            case ev.RatingRead(rating=rating, delta=delta):
+                st.status = f"MMR {rating} ({delta:+d})"
+                self._hide_mmr_prompt()
+            case ev.RatingMissed():
+                # Asked only once the screen read has given up, so the nudge
+                # never flashes up and is retracted a second later. Always
+                # follows a GameEnd, with or without a placement — a finished
+                # game is worth a rating either way.
                 self._show_mmr_prompt()
         self._queue_flush()
 

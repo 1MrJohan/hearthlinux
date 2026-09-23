@@ -455,14 +455,26 @@ def test_game_end_clears_the_forecast():
 
 
 # -- the end-of-game MMR nudge -----------------------------------------
-# Ratings are the one thing the log never carries, so the readings are only
-# ever as complete as the player remembers to type in. The nudge asks at the
-# one moment the number is on screen — and because it is a hole in the
-# overlay's click-through guarantee for as long as it is up, when it comes
-# down matters as much as when it goes up.
-def test_a_finished_game_asks_for_a_rating():
+# The rating is read off the post-game banner when it can be; the nudge asks
+# only when that read has given up, at the one moment the number is still on
+# screen. It is a hole in the overlay's click-through guarantee for as long as
+# it is up, so when it comes down matters as much as when it goes up.
+def _missed(app) -> None:
+    app.on_event(ev.GameEnd(placement=3), None)
+    app.on_event(ev.RatingMissed(reason="not seen on screen"), None)
+
+
+def test_game_end_alone_does_not_ask_yet():
+    """The screen read is still running; asking now would flash the nudge up
+    and take it down again a second later."""
     app, win = _app()
     app.on_event(ev.GameEnd(placement=3), None)
+    assert win.last("set_mmr_prompt") is None
+
+
+def test_a_missed_read_asks_for_a_rating():
+    app, win = _app()
+    _missed(app)
     assert win.last("set_mmr_prompt") == (True,)
 
 
@@ -471,21 +483,36 @@ def test_a_game_that_ended_without_a_placement_still_asks():
     never arrived. The game is still over, and the rating still moved."""
     app, win = _app()
     app.on_event(ev.GameEnd(placement=None), None)
+    app.on_event(ev.RatingMissed(reason="not seen on screen"), None)
     assert win.last("set_mmr_prompt") == (True,)
 
 
-def test_the_next_game_takes_the_nudge_down():
-    """Also what keeps catch-up quiet: a replayed GameEnd raises it, and every
-    catch-up game but the last is followed by a GameStart."""
+def test_a_screen_read_shows_the_rating_and_does_not_ask():
     app, win = _app()
     app.on_event(ev.GameEnd(placement=3), None)
+    app.on_event(ev.RatingRead(rating=6143, delta=44), None)
+    assert win.last("set_mmr_prompt") is None
+    assert app.state.status == "MMR 6143 (+44)"
+
+
+def test_a_loss_shows_its_sign():
+    app, _ = _app()
+    app.on_event(ev.RatingRead(rating=6099, delta=-98), None)
+    assert app.state.status == "MMR 6099 (-98)"
+
+
+def test_the_next_game_takes_the_nudge_down():
+    """Also what keeps catch-up quiet: a replayed GameEnd is followed by a
+    miss, and every catch-up game but the last is followed by a GameStart."""
+    app, win = _app()
+    _missed(app)
     app.on_event(ev.GameStart(), None)
     assert win.last("set_mmr_prompt") == (False,)
 
 
 def test_the_nudge_times_out():
     app, win = _app()
-    app.on_event(ev.GameEnd(placement=3), None)
+    _missed(app)
     app._mmr_timed_out()
     assert win.last("set_mmr_prompt") == (False,)
     assert app.state.mmr_prompt is False
@@ -493,7 +520,7 @@ def test_the_nudge_times_out():
 
 def test_the_setting_suppresses_the_nudge_entirely():
     app, win = _app(mmr_prompt=False)
-    app.on_event(ev.GameEnd(placement=3), None)
+    _missed(app)
     assert win.last("set_mmr_prompt") is None
     assert app.state.mmr_prompt is False
 
@@ -501,7 +528,7 @@ def test_the_setting_suppresses_the_nudge_entirely():
 def test_turning_the_setting_off_takes_a_visible_nudge_down():
     """Every setting applies live; this one would otherwise wait for a game."""
     app, win = _app()
-    app.on_event(ev.GameEnd(placement=3), None)
+    _missed(app)
     app.settings.cfg.mmr_prompt = False
     app._apply_overlay({"mmr_prompt"})
     assert win.last("set_mmr_prompt") == (False,)

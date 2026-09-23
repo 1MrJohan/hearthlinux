@@ -247,6 +247,7 @@ def test_a_rebuild_keeps_the_mmr_nudge_up():
     reading nothing else in the tracker can reconstruct."""
     app, _ = _app()
     app.on_event(ev.GameEnd(placement=3), None)
+    app.on_event(ev.RatingMissed(reason="not seen on screen"), None)
 
     replacement = RecordingWindow()
     app.window = replacement
