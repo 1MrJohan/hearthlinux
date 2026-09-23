@@ -1,8 +1,9 @@
 """Reading the rating off the post-game banner, and what the pipeline does with it.
 
-The fixture is a crop of a real 2560x1440 capture of a 3rd-place banner
-(Rating 6143, +44), served through a fake window at its original offset so the
-geometry is exercised exactly as it runs live. Tests that need real OCR
+The fixtures are crops of real 2560x1440 captures — a 3rd-place banner
+(Rating 6143, +44) and a 2nd-place one (6286, +72) whose curtain edge and
+sparkles sit beside the change — served through a fake window at their
+original offset so the geometry is exercised exactly as it runs live. Tests that need real OCR
 self-skip without tesseract, as the sim round-trip does without node.
 """
 
@@ -23,7 +24,9 @@ from bgtracker.screen import rating as sr
 from bgtracker.screen.capture import Pixels
 from bgtracker.screen.rating import Reading, RatingReader
 
-FIXTURE = Path(__file__).parent / "fixtures" / "screens" / "rating-win-6143-plus44.png"
+SCREENS = Path(__file__).parent / "fixtures" / "screens"
+FIXTURE = SCREENS / "rating-win-6143-plus44.png"
+SECOND = SCREENS / "rating-2nd-6286-plus72.png"
 # Where the crop sat in the 2560x1440 window it was taken from.
 WINDOW = (2560, 1440)
 ORIGIN = (848, 864)
@@ -36,8 +39,8 @@ needs_tesseract = pytest.mark.skipif(
 class FixtureWindow:
     """A GameWindow serving grabs out of the fixture crop."""
 
-    def __init__(self, recolour=None):
-        image = pytest.importorskip("PIL.Image").open(FIXTURE).convert("RGB")
+    def __init__(self, recolour=None, fixture=FIXTURE):
+        image = pytest.importorskip("PIL.Image").open(fixture).convert("RGB")
         if recolour is not None:
             pixels = getattr(image, "get_flattened_data", image.getdata)()
             image.putdata([recolour(*p) for p in pixels])
@@ -85,26 +88,64 @@ def test_regions_are_clamped_to_the_window():
     assert (x, y, w, h) == (0, 0, 800, 600)
 
 
-# -- colour --------------------------------------------------------------
+# -- colour and glyphs ----------------------------------------------------
+
+def _locate(window):
+    return sr.locate(sr.split_ink(window.grab(*sr.region(sr.BAND, *WINDOW))))
+
 
 def test_a_gain_is_yellow():
-    window = FixtureWindow()
-    ink = sr.split_ink(window.grab(*sr.region(sr.BAND, *WINDOW)))
-    assert ink.present(ink.white_count)
-    assert sr.sign_of(ink) == 1
+    assert _locate(FixtureWindow()).sign == 1
 
 
 def test_a_loss_is_red():
-    window = FixtureWindow(recolour=_yellow_to_red)
-    ink = sr.split_ink(window.grab(*sr.region(sr.BAND, *WINDOW)))
-    assert sr.sign_of(ink) == -1
+    assert _locate(FixtureWindow(recolour=_yellow_to_red)).sign == -1
 
 
-def test_both_colours_or_neither_is_no_sign():
-    def ink(gain, loss):
-        return sr.Ink(100, 100, b"", b"", b"", 0, gain, loss)
-    assert sr.sign_of(ink(0, 0)) is None
-    assert sr.sign_of(ink(500, 500)) is None
+def test_the_curtain_edge_beside_the_change_is_not_a_glyph():
+    """2-5px-wide runs of gold 29px past "+72" read as "+72   - 55" when they
+    were fed to OCR with it. Only glyph-wide runs are kept."""
+    ink = sr.split_ink(FixtureWindow(fixture=SECOND).grab(*sr.region(sr.BAND, *WINDOW)))
+    narrow = [r for r in ink.gain_runs if r.width < 6]
+    assert narrow, "the fixture no longer contains the noise this test is about"
+    banner = sr.locate(ink)
+    kept = {x for x in range(ink.width) if 0 in banner.change[-ink.height * ink.width:][x::ink.width]}
+    assert all(not (r.start <= x <= r.end) for r in narrow for x in kept)
+
+
+def _ink(white=(), gain=(), loss=(), width=500, height=108):
+    runs = lambda spec: tuple(sr.Run(a, b, 30, 82) for a, b in spec)
+    blank = b"\xff" * (width * height)
+    return sr.Ink(width, height, blank, blank, blank, runs(white), runs(gain), runs(loss))
+
+
+RATING = ((116, 154), (170, 190), (208, 243), (252, 287))
+
+
+def test_both_colours_or_neither_is_no_banner():
+    assert sr.locate(_ink(RATING)) is None
+    assert sr.locate(_ink(RATING, gain=((320, 359),), loss=((320, 359),))) is None
+
+
+def test_a_change_too_far_from_the_rating_is_not_its_change():
+    assert sr.locate(_ink(RATING, gain=((400, 430),))) is None   # 112px > 1.5 digits
+    assert sr.locate(_ink(RATING, gain=((320, 359),))).sign == 1
+
+
+def test_specks_go_and_glyphs_stay():
+    """A sparkle sharing a glyph's columns survives the column filter; only its
+    size gives it away."""
+    w, h = 10, 10
+    mask = bytearray(b"\xff" * (w * h))
+    for y in range(1, 9):                       # a 2x8 stroke: 16px
+        mask[y * w + 2] = mask[y * w + 3] = 0
+    mask[0 * w + 7] = mask[1 * w + 7] = 0      # a 2px speck
+    out = sr._despeckle(bytes(mask), w, h, min_area=5)
+    assert out[5 * w + 2] == 0 and out[0 * w + 7] == 255
+
+
+def test_no_white_is_no_banner():
+    assert sr.locate(_ink(gain=((320, 359),))) is None
 
 
 # -- acceptance ----------------------------------------------------------
@@ -137,6 +178,12 @@ def test_accept(label, rating, delta, sign, expected):
 def test_the_fixture_reads_as_6143_plus_44():
     reader = RatingReader(window=FixtureWindow())
     assert asyncio.run(reader.read_once()) == Reading(6143, 44)
+
+
+@needs_tesseract
+def test_the_second_place_banner_reads_as_6286_plus_72():
+    reader = RatingReader(window=FixtureWindow(fixture=SECOND))
+    assert asyncio.run(reader.read_once()) == Reading(6286, 72)
 
 
 @needs_tesseract

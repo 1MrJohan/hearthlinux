@@ -16,7 +16,12 @@ Two rules shape the reader, and both are about never recording a wrong number:
 
 The rating and the change are read out of one wide band split by colour
 rather than out of two fixed boxes, so a five-digit rating pushing the change
-rightwards moves no boundary.
+rightwards moves no boundary. The band also catches whatever the banner's
+frame puts beside the numbers — on the 2nd-place banner, the curtain's gold
+edge and animated sparkles sit 29px past the change — so only *glyphs* are
+kept: runs of ink columns at least `MIN_GLYPH_WIDTH` digit-heights wide,
+chained from the rating outwards. The noise measured so far is 2-5px wide;
+the narrowest glyph, a `1`, is 21px.
 """
 
 from __future__ import annotations
@@ -29,15 +34,16 @@ import shutil
 from dataclasses import dataclass
 
 from bgtracker.history.db import RATING_MAX, RATING_MIN
+from bgtracker.sim.cpu import efficiency_cpus
 
 from .capture import GameWindow, Pixels
 
 log = logging.getLogger(__name__)
 
-# How long after GameEnd to keep looking. The banner is up a few seconds after
-# the game ends and stays until the player clicks past it; clicking through
-# fast costs the automatic read, and the manual nudge takes over.
-SCREEN_READ_SECONDS = 30.0
+# How long after GameEnd to keep looking. GameState ends the game when the
+# final fight resolves, but the player may watch that fight for up to ~48s
+# before the banner appears, and it then stays until they click past it.
+SCREEN_READ_SECONDS = 90.0
 POLL_SECONDS = 0.4
 OCR_TIMEOUT = 5.0
 
@@ -48,9 +54,17 @@ OCR_TIMEOUT = 5.0
 LABEL = (-0.0625, 0.655, 0.0625, 0.695)
 BAND = (-0.14, 0.685, 0.22, 0.760)
 
-# Share of the band a colour must cover to count as present. The fixture's
-# rating covers 6.2% and its change 2.8%.
-MIN_INK = 0.005
+# Glyph geometry, in units of the rating's digit height (51px at 1440p).
+MIN_GLYPH_WIDTH = 0.15   # narrower runs are frame edges and sparkles
+MAX_GLYPH_GAP = 1.0      # widest gap inside a number is 17px
+MAX_REACH = 1.5          # rating to change is 31px
+# Blobs smaller than this share of a digit-height square are sparkles, even
+# when they share a glyph's columns (one above the "2" of "+72" read as a
+# trailing "1"). A "-" is ~0.08 of one; the specks seen are under 0.01.
+MIN_BLOB = 0.02
+# Before the digit height is known, the rating's own runs are found with a
+# floor in units of band height (a `1` is 21px of a 108px band).
+MIN_RATING_GLYPH = 0.1
 
 
 @dataclass(frozen=True)
@@ -60,23 +74,44 @@ class Reading:
 
 
 @dataclass(frozen=True)
+class Run:
+    """Contiguous columns holding one colour's ink, and the rows it spans."""
+
+    start: int
+    end: int      # inclusive
+    top: int
+    bottom: int
+
+    @property
+    def width(self) -> int:
+        return self.end - self.start + 1
+
+    @property
+    def height(self) -> int:
+        return self.bottom - self.top + 1
+
+
+@dataclass(frozen=True)
 class Ink:
-    """A band split by colour. Masks are 8-bit greyscale, 0 where the ink is."""
+    """A band split by colour: 8-bit masks, 0 where the ink is, and the runs."""
 
     width: int
     height: int
     white: bytes
     gain: bytes
     loss: bytes
-    white_count: int
-    gain_count: int
-    loss_count: int
+    white_runs: tuple[Run, ...]
+    gain_runs: tuple[Run, ...]
+    loss_runs: tuple[Run, ...]
 
-    def present(self, count: int) -> bool:
-        return count >= MIN_INK * self.width * self.height
 
-    def pgm(self, mask: bytes) -> bytes:
-        return b"P5 %d %d 255\n" % (self.width, self.height) + mask
+@dataclass(frozen=True)
+class Banner:
+    """The rating and the change located in a band, ready for OCR."""
+
+    rating: bytes   # PGM
+    change: bytes   # PGM
+    sign: int
 
 
 def region(box: tuple[float, float, float, float], width: int, height: int
@@ -91,30 +126,124 @@ def region(box: tuple[float, float, float, float], width: int, height: int
     return left, top, right - left, bottom - top
 
 
+def _runs(top: list[int], bottom: list[int]) -> tuple[Run, ...]:
+    runs, start = [], None
+    for x in range(len(top) + 1):
+        inked = x < len(top) and top[x] >= 0
+        if inked and start is None:
+            start = x
+        elif not inked and start is not None:
+            runs.append(Run(start, x - 1,
+                            min(top[start:x]), max(bottom[start:x])))
+            start = None
+    return tuple(runs)
+
+
 def split_ink(px: Pixels) -> Ink:
     """One pass over the band, sorting each pixel into white, yellow or red."""
-    n = px.width * px.height
-    white, gain, loss = bytearray(b"\xff" * n), bytearray(b"\xff" * n), bytearray(b"\xff" * n)
-    counts = [0, 0, 0]
-    for i, (r, g, b) in enumerate(zip(px.r, px.g, px.b)):
-        if r > 200 and g > 200 and b > 200:
-            white[i] = 0
-            counts[0] += 1
-        elif r > 180 and g > 150 and b < 110:
-            gain[i] = 0
-            counts[1] += 1
-        elif r > 170 and g < 90 and b < 90:
-            loss[i] = 0
-            counts[2] += 1
-    return Ink(px.width, px.height, bytes(white), bytes(gain), bytes(loss), *counts)
+    w, h = px.width, px.height
+    masks = [bytearray(b"\xff" * (w * h)) for _ in range(3)]
+    tops = [[-1] * w for _ in range(3)]
+    bottoms = [[-1] * w for _ in range(3)]
+    for y in range(h):
+        row = y * w
+        for x, (r, g, b) in enumerate(zip(px.r[row:row + w], px.g[row:row + w],
+                                          px.b[row:row + w])):
+            if r > 200 and g > 200 and b > 200:
+                k = 0
+            elif r > 180 and g > 150 and b < 110:
+                k = 1
+            elif r > 170 and g < 90 and b < 90:
+                k = 2
+            else:
+                continue
+            masks[k][row + x] = 0
+            if tops[k][x] < 0:
+                tops[k][x] = y
+            bottoms[k][x] = y
+    return Ink(w, h, *(bytes(m) for m in masks),
+               *(_runs(tops[k], bottoms[k]) for k in range(3)))
 
 
-def sign_of(ink: Ink) -> int | None:
-    """+1 for a yellow change, -1 for red, None unless exactly one is there."""
-    gain, loss = ink.present(ink.gain_count), ink.present(ink.loss_count)
-    if gain == loss:
+def _chain(runs: tuple[Run, ...], after: int, reach: float, gap: float,
+           min_width: float) -> list[Run]:
+    """Glyph runs starting within `reach` of column `after`, each within `gap`
+    of the last. Narrow runs are skipped, not chained through."""
+    glyphs = [r for r in runs if r.width >= min_width and r.start > after]
+    if not glyphs or glyphs[0].start - after > reach:
+        return []
+    chain = [glyphs[0]]
+    for run in glyphs[1:]:
+        if run.start - chain[-1].end > gap:
+            break
+        chain.append(run)
+    return chain
+
+
+def _keep(mask: bytes, width: int, runs: list[Run]) -> bytes:
+    """`mask` with everything outside `runs`' columns blanked."""
+    out = bytearray(b"\xff" * len(mask))
+    for row in range(0, len(mask), width):
+        for run in runs:
+            out[row + run.start:row + run.end + 1] = mask[row + run.start:row + run.end + 1]
+    return bytes(out)
+
+
+def _despeckle(mask: bytes, width: int, height: int, min_area: float) -> bytes:
+    """`mask` without its 4-connected ink blobs smaller than `min_area`."""
+    out = bytearray(mask)
+    seen = bytearray(len(mask))
+    for origin in range(len(mask)):
+        if mask[origin] or seen[origin]:
+            continue
+        blob, stack = [], [origin]
+        seen[origin] = 1
+        while stack:
+            i = stack.pop()
+            blob.append(i)
+            x = i % width
+            for j in (i - width, i + width, i - 1 if x else -1, i + 1 if x + 1 < width else -1):
+                if 0 <= j < len(mask) and not mask[j] and not seen[j]:
+                    seen[j] = 1
+                    stack.append(j)
+        if len(blob) < min_area:
+            for i in blob:
+                out[i] = 255
+    return bytes(out)
+
+
+def _pgm(mask: bytes, width: int, height: int) -> bytes:
+    return b"P5 %d %d 255\n" % (width, height) + mask
+
+
+def locate(ink: Ink) -> Banner | None:
+    """The rating's glyphs and exactly one colour of change beside them."""
+    floor = MIN_RATING_GLYPH * ink.height
+    rating = _chain(ink.white_runs, -1, ink.width, ink.width, floor)
+    if not rating:
         return None
-    return 1 if gain else -1
+    digit = max(r.height for r in rating)
+    rating = _chain(ink.white_runs, -1, ink.width,
+                    MAX_GLYPH_GAP * digit, MIN_GLYPH_WIDTH * digit)
+    end = rating[-1].end
+    changes = {
+        sign: _chain(runs, end, MAX_REACH * digit, MAX_GLYPH_GAP * digit,
+                     MIN_GLYPH_WIDTH * digit)
+        for sign, runs in ((1, ink.gain_runs), (-1, ink.loss_runs))
+    }
+    found = [sign for sign, chain in changes.items() if chain]
+    if len(found) != 1:
+        return None
+    sign = found[0]
+    change_mask = ink.gain if sign > 0 else ink.loss
+    blob = MIN_BLOB * digit * digit
+
+    def clean(mask: bytes, runs: list[Run]) -> bytes:
+        kept = _despeckle(_keep(mask, ink.width, runs), ink.width, ink.height, blob)
+        return _pgm(kept, ink.width, ink.height)
+
+    return Banner(rating=clean(ink.white, rating),
+                  change=clean(change_mask, changes[sign]), sign=sign)
 
 
 def accept(label: str, rating: str, delta: str, sign: int) -> Reading | None:
@@ -135,9 +264,24 @@ def accept(label: str, rating: str, delta: str, sign: int) -> Reading | None:
     return Reading(rating=value, delta=sign * int(change[2]))
 
 
+def _deferential_prefix() -> list[str]:
+    """Run tesseract where the simulator runs: on the efficiency cores at idle
+    priority. The window now spans the final fight, which the player is still
+    watching, and a hitch is one preempted frame. Through util-linux rather
+    than a preexec_fn, which keeps the fork hazard sim/cpu.py documents out of
+    this path entirely; missing tools just mean normal priority."""
+    prefix: list[str] = []
+    cpus = efficiency_cpus()
+    if cpus and shutil.which("taskset"):
+        prefix += ["taskset", "-c", ",".join(str(c) for c in sorted(cpus))]
+    if shutil.which("chrt"):
+        prefix += ["chrt", "--idle", "0"]
+    return prefix
+
+
 async def ocr(image: bytes, psm: int, whitelist: str | None = None,
-              tesseract: str = "tesseract") -> str:
-    args = [tesseract, "stdin", "stdout", "--psm", str(psm)]
+              tesseract: str = "tesseract", prefix: list[str] | None = None) -> str:
+    args = [*(prefix or ()), tesseract, "stdin", "stdout", "--psm", str(psm)]
     if whitelist:
         args += ["-c", f"tessedit_char_whitelist={whitelist}"]
     # One thread: tesseract's OpenMP pool would otherwise wake every core for a
@@ -168,9 +312,14 @@ def unavailable() -> str | None:
 
 
 class RatingReader:
-    def __init__(self, window: GameWindow | None = None, tesseract: str = "tesseract"):
+    def __init__(self, window: GameWindow | None = None, tesseract: str = "tesseract",
+                 prefix: list[str] | None = None):
         self.window = window if window is not None else GameWindow()
         self.tesseract = tesseract
+        self.prefix = _deferential_prefix() if prefix is None else prefix
+
+    async def _ocr(self, image: bytes, psm: int, whitelist: str | None = None) -> str:
+        return await ocr(image, psm, whitelist, self.tesseract, self.prefix)
 
     async def read_once(self) -> Reading | None:
         size = self.window.size()
@@ -179,25 +328,27 @@ class RatingReader:
         band_px = self.window.grab(*region(BAND, *size))
         if band_px is None:
             return None
-        ink = split_ink(band_px)
-        sign = sign_of(ink)
         # Cheap pixel checks first: most polls land on a screen with no banner,
-        # and those should cost an X round trip, not three tesseract runs.
-        if sign is None or not ink.present(ink.white_count):
+        # and those should cost an X round trip, not a tesseract run.
+        banner = locate(split_ink(band_px))
+        if banner is None:
             return None
         label_px = self.window.grab(*region(LABEL, *size))
         if label_px is None:
             return None
-        label, rating, delta = await asyncio.gather(
-            ocr(label_px.ppm(), 7, tesseract=self.tesseract),
-            ocr(ink.pgm(ink.white), 13, "0123456789", self.tesseract),
-            ocr(ink.pgm(ink.gain if sign > 0 else ink.loss), 13, "+-0123456789",
-                self.tesseract),
+        # The label alone before the digits: a lookalike screen then costs one
+        # tesseract run rather than three.
+        label = await self._ocr(label_px.ppm(), 7)
+        if label.strip().lower() != "rating":
+            return None
+        rating, delta = await asyncio.gather(
+            self._ocr(banner.rating, 13, "0123456789"),
+            self._ocr(banner.change, 13, "+-0123456789"),
         )
-        reading = accept(label, rating, delta, sign)
+        reading = accept(label, rating, delta, banner.sign)
         if reading is None:
-            log.debug("banner not accepted: label=%r rating=%r delta=%r sign=%d",
-                      label, rating, delta, sign)
+            log.debug("banner not accepted: rating=%r delta=%r sign=%d",
+                      rating, delta, banner.sign)
         return reading
 
     async def watch(self, seconds: float = SCREEN_READ_SECONDS,
