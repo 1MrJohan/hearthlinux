@@ -145,10 +145,20 @@ SETTINGS: tuple[Setting, ...] = (
         "mmr_prompt", "overlay", "bool", True,
         "Ask for your MMR after a game",
         "A small 'Record MMR' button appears under the HUD when a game ends "
-        "and opens the match-history window with the rating box focused. "
-        "Ratings are never in the log, so they are only ever as complete as "
-        "you type them in. It disappears by itself after two minutes.",
+        "and the rating could not be read off the screen, and opens the "
+        "match-history window with the rating box focused. It disappears by "
+        "itself after two minutes.",
         channel=OVERLAY,
+    ),
+    Setting(
+        "mmr_screen_read", "overlay", "bool", True,
+        "Read your MMR off the end screen",
+        "When a game ends, the tracker screenshots two small strips of the "
+        "Hearthstone window where the banner shows your new rating, reads "
+        "them with tesseract, and records the rating and its change for that "
+        "game. Nothing is recorded unless the reading is unambiguous. Needs "
+        "tesseract installed; the image never leaves this machine.",
+        channel=NONE,
     ),
 
     # -- simulator ------------------------------------------------------

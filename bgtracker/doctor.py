@@ -173,6 +173,29 @@ def _check_overlay():
                       "and scout popout are disabled; install: sudo pacman -S python-xlib")
 
 
+def _check_rating_read(cfg):
+    yield ("head", "end-screen MMR read:")
+    if not cfg.mmr_screen_read:
+        yield ("info", "off (mmr_screen_read = false) — ratings are typed by hand")
+        return
+    from bgtracker.screen.capture import GameWindow
+    from bgtracker.screen.rating import unavailable
+
+    reason = unavailable()
+    if reason is not None:
+        yield ("bad", f"{reason} — the Record MMR button asks after every game "
+                      "instead; install: sudo pacman -S tesseract tesseract-data-eng")
+        return
+    yield ("ok", "tesseract + python-xlib available")
+    window = GameWindow()
+    size = window.size()
+    window.close()
+    if size is None:
+        yield ("info", "no 'Hearthstone' window found (is the game running?)")
+    else:
+        yield ("ok", f"game window found ({size[0]}x{size[1]})")
+
+
 async def checks(cfg: Config | None = None):
     """Every diagnostic, as `(kind, text)` records.
 
@@ -200,6 +223,8 @@ async def checks(cfg: Config | None = None):
     async for record in _check_sim(cfg):
         yield record
     for record in _check_overlay():
+        yield record
+    for record in _check_rating_read(cfg):
         yield record
 
 

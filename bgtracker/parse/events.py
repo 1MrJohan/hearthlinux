@@ -139,6 +139,23 @@ class GameEnd:
 
 
 @dataclass(frozen=True)
+class RatingRead:
+    """The post-game screen was read and the rating recorded. Derived by the
+    pipeline, never parsed: no log carries a rating."""
+
+    rating: int
+    delta: int
+
+
+@dataclass(frozen=True)
+class RatingMissed:
+    """No rating was read for the game that just ended — the cue for the
+    manual nudge. Exactly one of these or `RatingRead` follows every GameEnd."""
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class Buffs:
     """Friendly player's curated buffs and turn economy.
 
@@ -171,5 +188,7 @@ Event = (
     | NextOpponent
     | Standings
     | GameEnd
+    | RatingRead
+    | RatingMissed
     | Buffs
 )

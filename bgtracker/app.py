@@ -16,6 +16,7 @@ from bgtracker.diagnostics import status
 from bgtracker.headless import print_event, render_board_line
 from bgtracker.history.db import HistoryDB
 from bgtracker.parse import events as ev
+from bgtracker.screen.rating import RatingReader
 from bgtracker.sim.client import SimClient, SimResult
 from bgtracker.sim.mapper import simulation_blocker, to_battle_info
 from bgtracker.state.game import BoardSnapshot, PlayerBoard, is_ghost
@@ -36,9 +37,20 @@ SHOP_SIM_COUNT = 2000
 
 
 class Pipeline:
-    def __init__(self, sim: SimClient | None, db: HistoryDB | None):
+    def __init__(
+        self,
+        sim: SimClient | None,
+        db: HistoryDB | None,
+        rating_reader: RatingReader | None = None,
+        cfg=None,
+    ):
         self.sim = sim
         self.db = db
+        # None wherever the screen cannot belong to the game being handled — a
+        # --replay, a test — or tesseract is missing. `cfg.mmr_screen_read` is
+        # read fresh at each GameEnd, so the setting applies live.
+        self.rating_reader = rating_reader
+        self.cfg = cfg
         self.memory = OpponentMemory()
         self.listeners: list[Callable[[ev.Event, SimResult | None], None]] = []
         self._game_id: int | None = None
@@ -47,6 +59,7 @@ class Pipeline:
         self._next_opponent: int | None = None
         self._shop_board: PlayerBoard | None = None
         self._shop_task: asyncio.Task | None = None
+        self._rating_task: asyncio.Task | None = None
 
     async def handle(self, events: list[ev.Event], historical: bool = False) -> None:
         """Fan events out. `historical` marks a batch the tracker did not watch
@@ -66,6 +79,8 @@ class Pipeline:
                     self.memory.reset()
                     self._pending = None
                     self._cancel_shop_forecast()
+                    # Whatever is on screen now belongs to the new game.
+                    self._cancel_rating_read()
                     self._next_opponent = None
                     self._shop_board = None
                     if self.db:
@@ -100,9 +115,13 @@ class Pipeline:
                     self._cancel_shop_forecast()
                     self._next_opponent = None
                     self._shop_board = None
+                    game_id = self._game_id
                     if self.db and self._game_id:
                         self.db.end_game(self._game_id, place, final_turn=self._turn)
                         self._game_id = None
+                    missed = self._start_rating_read(game_id, historical)
+                    if missed is not None:
+                        derived = ev.RatingMissed(reason=missed)
             for listener in self.listeners:
                 listener(event, prediction)
             if derived is not None:
@@ -175,6 +194,52 @@ class Pipeline:
         if event is not None:
             for listener in self.listeners:
                 listener(event, result)
+
+    def _start_rating_read(self, game_id: int | None, historical: bool) -> str | None:
+        """Start reading the post-game screen; the reason it can't, otherwise."""
+        # A game that ended while the tracker was not watching: whatever is on
+        # screen now belongs to something else.
+        if historical:
+            return "caught up from the log"
+        if self.rating_reader is None:
+            return "screen reader unavailable"
+        if self.cfg is not None and not self.cfg.mmr_screen_read:
+            return "screen reading is off"
+        if self.db is None or game_id is None:
+            return "game not recorded"
+        self._cancel_rating_read()
+        try:
+            self._rating_task = asyncio.get_running_loop().create_task(
+                self._read_rating(game_id)
+            )
+        except RuntimeError:
+            self._rating_task = None
+            return "no event loop"
+        return None
+
+    def _cancel_rating_read(self) -> None:
+        if self._rating_task is not None and not self._rating_task.done():
+            self._rating_task.cancel()
+        self._rating_task = None
+
+    async def _read_rating(self, game_id: int) -> None:
+        event: ev.Event = ev.RatingMissed(reason="not seen on screen")
+        try:
+            reading = await self.rating_reader.watch()
+            if reading is not None and self.db is not None:
+                self.db.record_rating(
+                    reading.rating, game_id=game_id, delta=reading.delta, source="screen"
+                )
+                event = ev.RatingRead(rating=reading.rating, delta=reading.delta)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Like the shop forecast: a convenience that must never disturb the
+            # tailer. The miss still goes out, so the manual nudge takes over.
+            log.warning("reading the rating off the screen failed: %r", exc)
+        print_event(event)
+        for listener in self.listeners:
+            listener(event, None)
 
     async def _simulate(self, snapshot: BoardSnapshot, historical: bool = False) -> SimResult | None:
         # A combat that already happened cannot be forecast, and the player is

@@ -6,11 +6,12 @@ connection) so schema migrations always apply before anything reads.
 
 Timestamps are stored in UTC; grouping into days/weeks/months happens in the
 *caller's* timezone (defaulting to the machine's), because "how did I do on
-Tuesday" is a local-calendar question. MMR readings are manual snapshots, not
+Tuesday" is a local-calendar question. MMR readings are snapshots, not
 per-game facts, so every derived number here says only what the readings can
 honestly support: a period's net is the difference between the last readings
 before its end and before its start, and a single game gets a delta only when
-it is the *only* game between two consecutive readings.
+the post-game screen showed one for it, or when it is the *only* game between
+two consecutive readings.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ class GameRow:
     hero_card_id: str | None
     placement: int | None  # None: unfinished (or tracker died mid-game)
     final_turn: int | None
-    mmr_delta: int | None  # only when readings isolate this one game
+    mmr_delta: int | None  # the screen's, or when readings isolate this one game
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,24 @@ def mmr_series(db: HistoryDB, tz: tzinfo | None = None) -> list[tuple[datetime, 
         "SELECT recorded_at, rating FROM ratings ORDER BY recorded_at"
     ).fetchall()
     return [(_local(at, tz), rating) for at, rating in rows]
+
+
+def mmr_breaks(db: HistoryDB, tz: tzinfo | None = None) -> list[datetime]:
+    """Readings where the chain of screen deltas does not join up.
+
+    A screen reading also says what the rating was *before* its game
+    (rating − delta). When that differs from the previous reading, games were
+    played the tracker never saw, or a reading is missing, and a line drawn
+    straight between the two would claim a history nobody recorded.
+    """
+    rows = db.conn.execute(
+        "SELECT recorded_at, rating, delta FROM ratings ORDER BY recorded_at"
+    ).fetchall()
+    breaks = []
+    for (_, previous, _), (at, rating, delta) in zip(rows, rows[1:]):
+        if delta is not None and rating - delta != previous:
+            breaks.append(_local(at, tz))
+    return breaks
 
 
 def _period_key(moment: datetime, bucket: str) -> str:
@@ -159,6 +178,12 @@ def game_list(db: HistoryDB, tz: tzinfo | None = None) -> list[GameRow]:
             inside = [gid for gid, m in moments if t0 < m < t1]
             if len(inside) == 1:
                 deltas[inside[0]] = r1 - r0
+    # The post-game screen's own number for its game beats any difference of
+    # readings: untracked games in the same gap would be folded into the latter.
+    deltas.update(db.conn.execute(
+        "SELECT game_id, delta FROM ratings"
+        " WHERE game_id IS NOT NULL AND delta IS NOT NULL"
+    ).fetchall())
 
     return [
         GameRow(

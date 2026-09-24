@@ -22,7 +22,7 @@ from gi.repository import Gtk, Pango  # noqa: E402
 
 from bgtracker.data import cards  # noqa: E402
 from bgtracker.history import review  # noqa: E402
-from bgtracker.history.db import HistoryDB  # noqa: E402
+from bgtracker.history.db import RATING_MAX, RATING_MIN, HistoryDB  # noqa: E402
 
 from . import theme  # noqa: E402
 
@@ -31,9 +31,6 @@ log = logging.getLogger(__name__)
 CHART_H = 200
 RANGES = (("7 days", 7), ("14 days", 14), ("30 days", 30),
           ("90 days", 90), ("All", None))
-# Sanity bounds for a manual rating entry, not game rules: wide enough for any
-# real ladder value, tight enough to catch a fat-fingered extra digit.
-RATING_MIN, RATING_MAX = 0, 30_000
 
 
 def _rgb(hex_colour: str) -> tuple[float, float, float]:

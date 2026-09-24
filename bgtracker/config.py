@@ -65,6 +65,8 @@ class Config:
     hover_strips: bool = True
     # Offer to record your MMR on the overlay when a game ends.
     mmr_prompt: bool = True
+    # Read the new rating off the post-game banner instead of asking for it.
+    mmr_screen_read: bool = True
 
     # -- hover calibration (written by dragging in layout mode) ----------
     leaderboard_top_frac: float = 0.16

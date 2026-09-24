@@ -24,6 +24,8 @@ from bgtracker.history.db import HistoryDB
 from bgtracker.logwatch.session import newest_session_dir, power_log_path, prune_old_sessions
 from bgtracker.logwatch.tailer import Tailer, poll_delay
 from bgtracker.parse.exporter import LiveGameProcessor
+from bgtracker.screen.rating import RatingReader
+from bgtracker.screen.rating import unavailable as rating_unavailable
 from bgtracker.settings import SIM, SIM_RESPAWN, TAILER, SettingsService
 from bgtracker.sim.client import SimClient
 
@@ -93,11 +95,19 @@ def _target_logs_dir(cfg, strict: bool = False) -> Path | None:
     return logs_dir
 
 
+def _rating_reader() -> RatingReader | None:
+    reason = rating_unavailable()
+    if reason is not None:
+        log.info("MMR will not be read off the end screen: %s", reason)
+        return None
+    return RatingReader()
+
+
 async def live(settings: SettingsService, overlay=None) -> None:
     cfg = settings.cfg
     logs_dir = _target_logs_dir(cfg, strict=True)
     sim = await start_sim(cfg)
-    pipeline = Pipeline(sim=sim, db=HistoryDB())
+    pipeline = Pipeline(sim=sim, db=HistoryDB(), rating_reader=_rating_reader(), cfg=cfg)
     if overlay is not None:
         overlay.pipeline = pipeline
         pipeline.listeners.append(overlay.on_event)

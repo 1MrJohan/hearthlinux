@@ -120,6 +120,23 @@ def test_hero_and_placement():
     assert end.placement == 3
 
 
+def test_placement_follows_the_player_hero_not_the_late_copy():
+    """Every real game since at least 2026-09-22 ends with a newer copy of our
+    hero in SETASIDE carrying a stale, better place. The player entity's
+    HERO_ENTITY names the real one (9 of 17 retained games were misrecorded)."""
+    b = minimal_bg_game()
+    b.lines.pop()   # hold STATE=COMPLETE until the copy exists
+    b.tag_change(2, "CONTROLLER", 1)   # as real player entities carry
+    b.tag_change(2, "HERO_ENTITY", 4)
+    b.entity(20, "TB_BaconShop_HERO_11", CARDTYPE="HERO", ZONE="SETASIDE",
+             CONTROLLER=1, LINKED_ENTITY=2)
+    b.tag_change(20, "PLAYER_LEADERBOARD_PLACE", 1)
+    b.tag_change("GameEntity", "STATE", "COMPLETE")
+    _, events = feed_all(b.lines)
+    end = next(e for e in events if isinstance(e, ev.GameEnd))
+    assert end.placement == 3
+
+
 def test_bob_skins_are_never_counted_as_player_heroes():
     """Bob is the tavern keeper, not a player, and sits in PLAY as a HERO in
     every real game wearing one of 50+ cosmetic skins. The scan filters him by
