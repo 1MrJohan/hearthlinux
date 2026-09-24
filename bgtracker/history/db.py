@@ -307,6 +307,12 @@ class HistoryDB:
         )
         self.conn.commit()
 
+    def last_rating(self) -> int | None:
+        row = self.conn.execute(
+            "SELECT rating FROM ratings ORDER BY recorded_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+        return row[0] if row else None
+
     def record_rating(
         self,
         rating: int,

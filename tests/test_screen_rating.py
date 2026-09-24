@@ -225,18 +225,22 @@ def test_no_game_window_is_no_reading():
 # -- polling -------------------------------------------------------------
 
 class Scripted(RatingReader):
-    """Returns a scripted sequence of reads, then keeps returning the last."""
+    """Plays back a scripted sequence of polls, then keeps repeating the last.
+    A Reading is a banner that read; "seen" is a banner that did not; None is
+    a screen with no banner at all."""
 
-    def __init__(self, reads):
-        super().__init__(window=NoWindow())
-        self.reads = list(reads)
+    def __init__(self, polls, misses=None):
+        super().__init__(window=NoWindow(), misses=misses)
+        self.polls = list(polls)
         self.calls = 0
 
-    async def read_once(self):
+    async def attempt(self):
         self.calls += 1
-        if len(self.reads) > 1:
-            return self.reads.pop(0)
-        return self.reads[0]
+        poll = self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
+        if poll is None:
+            return sr.Attempt(located=False)
+        reading = None if poll == "seen" else poll
+        return sr.Attempt(located=True, reading=reading, band=b"band", label=b"label")
 
 
 def test_a_counting_number_is_waited_out():
@@ -245,16 +249,57 @@ def test_a_counting_number_is_waited_out():
     assert got == Reading(6143, 44)
 
 
-def test_one_good_read_is_not_enough():
+def test_one_good_read_is_not_enough_without_a_previous_rating():
     reader = Scripted([None, Reading(6143, 44), None])
     assert asyncio.run(reader.watch(seconds=0.05, interval=0.001)) is None
 
 
+def test_a_read_that_joins_the_last_rating_is_enough_alone():
+    """6109 - 100 = 6009, the stored reading before game 412: accepted on the
+    first read, before a quick click can take the banner away."""
+    reader = Scripted([Reading(6109, 100), None])
+    got = asyncio.run(reader.watch(seconds=1, interval=0.001, previous_rating=6009))
+    assert got == Reading(6109, 100) and reader.calls == 1
+
+
+def test_a_count_caught_mid_way_does_not_join():
+    """The number animates up to its final value; a read mid-count subtracts to
+    something that is not the previous rating."""
+    reader = Scripted([Reading(6080, 100), None])
+    got = asyncio.run(reader.watch(seconds=0.05, interval=0.001, previous_rating=6009))
+    assert got is None
+
+
+def test_a_located_banner_is_read_again_without_waiting():
+    reader = Scripted(["seen", "seen", Reading(6109, 100)])
+    got = asyncio.run(reader.watch(seconds=1, interval=10, previous_rating=6009))
+    assert got == Reading(6109, 100) and reader.calls == 3
+
+
 def test_a_raising_read_is_a_miss_not_a_crash():
     class Raising(Scripted):
-        async def read_once(self):
+        async def attempt(self):
             raise OSError("X server went away")
     assert asyncio.run(Raising([None]).watch(seconds=0.02, interval=0.001)) is None
+
+
+def test_a_banner_that_never_reads_is_kept(tmp_path):
+    asyncio.run(Scripted(["seen"], misses=tmp_path).watch(seconds=0.02, interval=0.001))
+    assert sorted(f.name.split("-")[-1] for f in tmp_path.iterdir()) == ["band.ppm", "label.ppm"]
+
+
+def test_no_banner_keeps_nothing(tmp_path):
+    asyncio.run(Scripted([None], misses=tmp_path).watch(seconds=0.02, interval=0.001))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_only_the_newest_misses_are_kept(tmp_path):
+    for i in range(12):
+        (tmp_path / f"2026010{i:02d}-000000-band.ppm").write_bytes(b"x")
+        (tmp_path / f"2026010{i:02d}-000000-label.ppm").write_bytes(b"x")
+    sr._save_miss(sr.Attempt(located=True, band=b"b", label=b"l"), tmp_path, keep=10)
+    assert len(list(tmp_path.glob("*-band.ppm"))) == 10
+    assert len(list(tmp_path.glob("*-label.ppm"))) == 10
 
 
 # -- storage -------------------------------------------------------------
@@ -363,7 +408,7 @@ def test_no_reader_misses_at_once(tmp_path):
 
 def test_a_read_that_gives_up_is_a_miss(tmp_path):
     class Never(Scripted):
-        async def watch(self, seconds=0, interval=0):
+        async def watch(self, seconds=0, interval=0, previous_rating=None):
             return None
 
     async def run():
@@ -379,7 +424,7 @@ def test_a_read_that_gives_up_is_a_miss(tmp_path):
 
 def test_the_next_game_cancels_a_read_in_progress(tmp_path):
     class Slow(Scripted):
-        async def watch(self, seconds=0, interval=0):
+        async def watch(self, seconds=0, interval=0, previous_rating=None):
             await asyncio.sleep(10)
             return Reading(6143, 44)
 
@@ -395,3 +440,19 @@ def test_the_next_game_cancels_a_read_in_progress(tmp_path):
     assert task.cancelled()
     assert seen == []
     assert db.conn.execute("SELECT COUNT(*) FROM ratings").fetchone()[0] == 0
+
+
+def test_the_pipeline_hands_the_reader_the_last_stored_rating(tmp_path):
+    """One read, then the banner is gone — a quick click-through. It still
+    records, because the read joins the rating stored before the game."""
+    reader = Scripted([Reading(6109, 100), None])
+
+    async def run():
+        pipe, db, seen = _pipeline(tmp_path, reader)
+        db.record_rating(6009)
+        await pipe.handle([ev.GameStart(log_id="g1"), ev.GameEnd(placement=1)])
+        await _settle(pipe)
+        return seen
+
+    assert asyncio.run(run()) == [ev.RatingRead(rating=6109, delta=100)]
+    assert reader.calls == 1
