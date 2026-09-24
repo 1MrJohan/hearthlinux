@@ -56,6 +56,9 @@ OCR_TIMEOUT = 5.0
 # the reader does not know yet. Disposable, like the rest of the cache.
 MISS_DIR = CACHE_DIR / "banners"
 KEEP_MISSES = 10
+# How often, while the pixel check finds nothing, the label is read on its own
+# in case a banner is up that the pixel check does not recognise.
+PROBE_SECONDS = 2.0
 
 # Regions as (x0, y0, x1, y1): x from the window's horizontal centre and y from
 # its top, both in units of window HEIGHT — the banner is centred and Unity
@@ -340,6 +343,9 @@ class Attempt:
     reading: Reading | None = None
     band: bytes | None = None    # PPM
     label: bytes | None = None   # PPM
+    # The label read "Rating": this frame really is the banner. A board's
+    # white attack numbers beside red health gems pass the pixel check too.
+    labelled: bool = False
 
 
 def _save_miss(attempt: Attempt, directory: Path, keep: int = KEEP_MISSES) -> None:
@@ -398,7 +404,22 @@ class RatingReader:
             log.debug("banner not accepted: label=%r rating=%r/%r digits=%r/%r sign=%d",
                       label, rating, rating_word, digits, digits_word, banner.sign)
         return Attempt(located=True, reading=reading,
-                       band=band_px.ppm(), label=label_px.ppm())
+                       band=band_px.ppm(), label=label_px.ppm(),
+                       labelled=label.strip().lower() == "rating")
+
+    async def probe(self) -> Attempt | None:
+        """The frame, if the label reads "Rating" whatever the pixels say."""
+        size = self.window.size()
+        if size is None:
+            return None
+        band_px = self.window.grab(*region(BAND, *size))
+        label_px = self.window.grab(*region(LABEL, *size))
+        if band_px is None or label_px is None:
+            return None
+        if (await self._ocr(label_px.ppm(), 7)).strip().lower() != "rating":
+            return None
+        return Attempt(located=False, band=band_px.ppm(), label=label_px.ppm(),
+                       labelled=True)
 
     async def read_once(self) -> Reading | None:
         return (await self.attempt()).reading
@@ -419,6 +440,7 @@ class RatingReader:
         last: Reading | None = None
         seen_at: float | None = None
         miss: Attempt | None = None
+        probed = started
         while loop.time() < deadline:
             try:
                 attempt = await self.attempt()
@@ -428,9 +450,9 @@ class RatingReader:
                 log.debug("screen read failed: %r", exc)
                 attempt = Attempt(located=False)
             reading = attempt.reading
-            if attempt.located and seen_at is None:
+            if attempt.labelled and seen_at is None:
                 seen_at = loop.time()
-                log.info("end-screen banner located %.1fs after the game ended",
+                log.info("end-screen banner confirmed %.1fs after the game ended",
                          seen_at - started)
             joins = (reading is not None and previous_rating is not None
                      and reading.rating - reading.delta == previous_rating)
@@ -439,8 +461,15 @@ class RatingReader:
                          reading.rating, reading.delta, loop.time() - seen_at,
                          "" if joins else ", by agreement")
                 return reading
-            if attempt.located and reading is None:
+            if attempt.located and reading is None and attempt.labelled:
                 miss = attempt
+            elif not attempt.located and loop.time() - probed >= PROBE_SECONDS:
+                probed = loop.time()
+                unrecognised = await self.probe()
+                if unrecognised is not None:
+                    if miss is None or not miss.located:
+                        miss = unrecognised
+                    log.info("a banner is up that the pixel check does not recognise")
             last = reading
             # A banner is up for as long as the player takes to click past
             # it, so while one is located the next read starts at once.
