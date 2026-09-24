@@ -103,6 +103,9 @@ class BGExporter(EntityTreeExporter):
         # Armed by a concede: the final place lands after the marker, so the
         # end waits for it (or for COMPLETE, or the next game).
         self._conceded = False
+        # The placement last put in a GameEnd or PlacementRevised; the named
+        # hero's place can still move after COMPLETE.
+        self._announced: int | None = None
         self._standings_dirty = False
         self._standings: tuple = ()
         # Elimination is permanent, but a Kel'Thuzad ghost fight reuses the
@@ -264,6 +267,10 @@ class BGExporter(EntityTreeExporter):
                 self._ended = True
             if self._ended:
                 self._maybe_emit_end()
+            if (self._end_emitted and value and value != self._announced
+                    and entity is self.named_hero()):
+                self._announced = value
+                self._emit(ev.PlacementRevised(placement=value))
         elif gametag in _HERO_STANDING_TAGS and getattr(entity, "type", None) == CardType.HERO:
             # The rail shows live HP, which changes far more often than a
             # player's place. maybe_emit_standings() dedupes, so flagging on
@@ -389,6 +396,7 @@ class BGExporter(EntityTreeExporter):
         placement = self.friendly_placement()
         if placement:
             self._end_emitted = True
+            self._announced = placement
             self._emit(ev.GameEnd(placement=placement))
 
     def finalize(self):
@@ -399,6 +407,7 @@ class BGExporter(EntityTreeExporter):
         if (self._ended or self._conceded) and not self._end_emitted:
             self._end_emitted = True
             placement = self.friendly_placement() if self._conceded else None
+            self._announced = placement
             self._emit(ev.GameEnd(placement=placement))
 
 

@@ -428,3 +428,27 @@ def test_a_later_real_prediction_replaces_an_earlier_one(tmp_path):
     ).fetchone()
     assert row == (74, 6, 20, 12000, 530.0, 1.0, "loss", "HERO_02")
     db.close()
+
+
+def test_a_revised_placement_is_what_the_history_keeps(tmp_path):
+    from bgtracker.parse import events as ev
+    db = HistoryDB(tmp_path / "history.db")
+    pipeline = Pipeline(sim=None, db=db)
+    asyncio.run(pipeline.handle([
+        ev.GameStart(log_id="g1"),
+        ev.GameEnd(placement=7),
+        ev.PlacementRevised(placement=6),
+    ]))
+    assert db.conn.execute("SELECT placement FROM games").fetchone() == (6,)
+
+
+def test_a_revision_after_the_next_game_starts_touches_nothing(tmp_path):
+    from bgtracker.parse import events as ev
+    db = HistoryDB(tmp_path / "history.db")
+    pipeline = Pipeline(sim=None, db=db)
+    asyncio.run(pipeline.handle([
+        ev.GameStart(log_id="g1"), ev.GameEnd(placement=7),
+        ev.GameStart(log_id="g2"), ev.PlacementRevised(placement=6),
+    ]))
+    rows = db.conn.execute("SELECT log_id, placement FROM games ORDER BY id").fetchall()
+    assert rows == [("g1", 7), ("g2", None)]

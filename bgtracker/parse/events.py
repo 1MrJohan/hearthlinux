@@ -139,6 +139,15 @@ class GameEnd:
 
 
 @dataclass(frozen=True)
+class PlacementRevised:
+    """The local hero's place changed after GameEnd announced it. In game 408
+    it landed 24ms after STATE=COMPLETE and matched the banner; the last
+    revision before the next game stands."""
+
+    placement: int
+
+
+@dataclass(frozen=True)
 class RatingRead:
     """The post-game screen was read and the rating recorded. Derived by the
     pipeline, never parsed: no log carries a rating."""
@@ -188,6 +197,7 @@ Event = (
     | NextOpponent
     | Standings
     | GameEnd
+    | PlacementRevised
     | RatingRead
     | RatingMissed
     | Buffs
