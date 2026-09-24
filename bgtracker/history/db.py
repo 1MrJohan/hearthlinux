@@ -307,12 +307,6 @@ class HistoryDB:
         )
         self.conn.commit()
 
-    def set_placement(self, game_id: int, placement: int) -> None:
-        # Not end_game: that also rewrites final_turn and stamps ended_at, and
-        # a revision is only ever about the place.
-        self.conn.execute("UPDATE games SET placement = ? WHERE id = ?", (placement, game_id))
-        self.conn.commit()
-
     def last_rating(self) -> int | None:
         row = self.conn.execute(
             "SELECT rating FROM ratings ORDER BY recorded_at DESC, id DESC LIMIT 1"

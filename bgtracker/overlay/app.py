@@ -419,12 +419,6 @@ class OverlayApp:
                 self._clear_to_idle(st)
                 st.phase = ("Game Over", f"finished #{p}" if p else "")
                 st.status = f"Finished #{p}" if p else "Game over"
-            case ev.PlacementRevised(placement=p):
-                st.phase = ("Game Over", f"finished #{p}")
-                # A rating read off the banner is the more useful line; only
-                # the placement's own wording is replaced.
-                if st.status.startswith("Finished #"):
-                    st.status = f"Finished #{p}"
             case ev.RatingRead(rating=rating, delta=delta):
                 st.status = f"MMR {rating} ({delta:+d})"
                 self._hide_mmr_prompt()

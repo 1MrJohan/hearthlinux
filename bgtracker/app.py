@@ -60,9 +60,6 @@ class Pipeline:
         self._shop_board: PlayerBoard | None = None
         self._shop_task: asyncio.Task | None = None
         self._rating_task: asyncio.Task | None = None
-        # The game a PlacementRevised belongs to: the one that just ended,
-        # until the next one starts.
-        self._ended_game_id: int | None = None
 
     async def handle(self, events: list[ev.Event], historical: bool = False) -> None:
         """Fan events out. `historical` marks a batch the tracker did not watch
@@ -86,7 +83,6 @@ class Pipeline:
                     self._cancel_rating_read()
                     self._next_opponent = None
                     self._shop_board = None
-                    self._ended_game_id = None
                     if self.db:
                         self._game_id = self.db.start_game(log_id)
                 case ev.TurnChange(turn=t):
@@ -120,16 +116,12 @@ class Pipeline:
                     self._next_opponent = None
                     self._shop_board = None
                     game_id = self._game_id
-                    self._ended_game_id = game_id
                     if self.db and self._game_id:
                         self.db.end_game(self._game_id, place, final_turn=self._turn)
                         self._game_id = None
                     missed = self._start_rating_read(game_id, historical)
                     if missed is not None:
                         derived = ev.RatingMissed(reason=missed)
-                case ev.PlacementRevised(placement=place):
-                    if self.db and self._ended_game_id:
-                        self.db.set_placement(self._ended_game_id, place)
             for listener in self.listeners:
                 listener(event, prediction)
             if derived is not None:

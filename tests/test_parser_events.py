@@ -224,66 +224,6 @@ def test_the_game_entity_tag_alone_ends_nothing():
     assert _ends(b.lines) == []
 
 
-# -- placement settling after COMPLETE --------------------------------------
-# The named hero carries a live place all game, so GameEnd fires at COMPLETE;
-# in 5 of 20 retained games that place moved once more within 54ms. See
-# docs/superpowers/specs/2026-09-23-placement-after-complete-design.md.
-
-def _revisions(lines):
-    return [e for e in feed_all(lines)[1] if isinstance(e, ev.PlacementRevised)]
-
-
-def _completed_at(place: int) -> LogBuilder:
-    b = _mid_game()
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", place)
-    b.tag_change("GameEntity", "STATE", "COMPLETE")
-    return b
-
-
-def test_a_place_that_settles_after_complete_is_revised():
-    """Game 408: 7 at COMPLETE, 6 24ms later, and the banner said 6th."""
-    b = _completed_at(7)
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 6)
-    assert _ends(b.lines) == [ev.GameEnd(placement=7)]
-    assert _revisions(b.lines) == [ev.PlacementRevised(placement=6)]
-
-
-def test_the_same_place_again_is_not_a_revision():
-    b = _completed_at(7)
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 7)
-    assert _revisions(b.lines) == []
-
-
-def test_every_change_is_revised_and_the_last_one_stands():
-    b = _completed_at(7)
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 6)
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 5)
-    assert _revisions(b.lines) == [ev.PlacementRevised(placement=6),
-                                   ev.PlacementRevised(placement=5)]
-
-
-def test_another_heros_place_after_complete_is_not_ours():
-    b = _completed_at(7)
-    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 1)
-    assert _revisions(b.lines) == []
-
-
-def test_the_next_game_ends_the_watch():
-    b = _completed_at(7)
-    b.add("CREATE_GAME")
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 6)
-    assert _revisions(b.lines) == []
-
-
-def test_a_concede_that_ends_on_its_place_is_not_revised_by_it():
-    """The tag that lets GameEnd out is already announced."""
-    b = _mid_game()
-    b.tag_change(2, "3479", 1)
-    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 8)
-    assert _ends(b.lines) == [ev.GameEnd(placement=8)]
-    assert _revisions(b.lines) == []
-
-
 def test_bob_skins_are_never_counted_as_player_heroes():
     """Bob is the tavern keeper, not a player, and sits in PLAY as a HERO in
     every real game wearing one of 50+ cosmetic skins. The scan filters him by

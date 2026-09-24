@@ -532,19 +532,3 @@ def test_turning_the_setting_off_takes_a_visible_nudge_down():
     app.settings.cfg.mmr_prompt = False
     app._apply_overlay({"mmr_prompt"})
     assert win.last("set_mmr_prompt") == (False,)
-
-
-def test_a_revised_placement_updates_game_over():
-    app, win = _app()
-    app.on_event(ev.GameEnd(placement=7), None)
-    app.on_event(ev.PlacementRevised(placement=6), None)
-    assert win.last("set_phase") == ("Game Over", "finished #6")
-    assert app.state.status == "Finished #6"
-
-
-def test_a_revision_leaves_a_rating_on_the_status_line():
-    app, _ = _app()
-    app.on_event(ev.GameEnd(placement=7), None)
-    app.on_event(ev.RatingRead(rating=6217, delta=-69), None)
-    app.on_event(ev.PlacementRevised(placement=6), None)
-    assert app.state.status == "MMR 6217 (-69)"
