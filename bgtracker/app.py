@@ -229,8 +229,11 @@ class Pipeline:
                 previous_rating=self.db.last_rating() if self.db else None
             )
             if reading is not None and self.db is not None:
+                # A lobby snapshot has no delta; history gives the game one
+                # only when no other game sits between it and the last reading.
                 self.db.record_rating(
-                    reading.rating, game_id=game_id, delta=reading.delta, source="screen"
+                    reading.rating, game_id=game_id, delta=reading.delta,
+                    source="screen" if reading.delta is not None else "lobby",
                 )
                 event = ev.RatingRead(rating=reading.rating, delta=reading.delta)
         except asyncio.CancelledError:

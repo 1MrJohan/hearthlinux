@@ -66,6 +66,10 @@ PROBE_SECONDS = 2.0
 # a best guess from that.
 LABEL = (-0.0625, 0.655, 0.0625, 0.695)
 BAND = (-0.14, 0.685, 0.22, 0.760)
+# The Battlegrounds lobby's rating panel, where a player who clicks past the
+# banner mid-count lands. Measured on the same 1440p capture basis.
+LOBBY_LABEL = (0.391, 0.150, 0.507, 0.188)
+LOBBY_NUMBER = (0.36, 0.190, 0.54, 0.245)
 
 # Glyph geometry, in units of the rating's digit height (51px at 1440p).
 MIN_GLYPH_WIDTH = 0.15   # narrower runs are frame edges and sparkles
@@ -88,7 +92,9 @@ MIN_RATING_GLYPH = 0.1
 @dataclass(frozen=True)
 class Reading:
     rating: int
-    delta: int
+    # The banner's change for this game; None for a lobby snapshot, which
+    # says what the rating is but not what this game did.
+    delta: int | None = None
 
 
 @dataclass(frozen=True)
@@ -268,6 +274,33 @@ def locate(ink: Ink) -> Banner | None:
                   change=clean(change_mask, digits), sign=sign)
 
 
+def lobby_digits(ink: Ink) -> bytes | None:
+    """The lobby panel's rating as a PGM of its white glyphs, or None."""
+    rating = _chain(ink.white_runs, -1, ink.width, ink.width, MIN_RATING_GLYPH * ink.height)
+    if not rating:
+        return None
+    digit = max(r.height for r in rating)
+    rating = _chain(ink.white_runs, -1, ink.width,
+                    MAX_GLYPH_GAP * digit, MIN_GLYPH_WIDTH * digit)
+    if not 3 <= len(rating) <= 5:
+        return None
+    kept = _despeckle(_keep(ink.white, ink.width, rating), ink.width, ink.height,
+                      MIN_BLOB * digit * digit)
+    return _pgm(kept, ink.width, ink.height)
+
+
+def lobby_value(label: str, digits: str, digits_word: str) -> int | None:
+    # Letters only: the label crop's edge catches the panel frame, which OCR
+    # reads as a stray ")" (the 6069 capture read "Rating)").
+    if re.sub(r"[^a-z]", "", label.lower()) != "rating" or digits != digits_word:
+        return None
+    digits = digits.strip()
+    if not re.fullmatch(r"\d{3,5}", digits):
+        return None
+    value = int(digits)
+    return value if RATING_MIN <= value <= RATING_MAX else None
+
+
 def accept(label: str, rating: str, digits: str, sign: int) -> Reading | None:
     """The OCR'd strings as a reading, or None if any of them is doubtful.
     `digits` is the change without its sign, which `sign` carries."""
@@ -421,6 +454,27 @@ class RatingReader:
         return Attempt(located=False, band=band_px.ppm(), label=label_px.ppm(),
                        labelled=True)
 
+    async def read_lobby(self) -> int | None:
+        """The rating on the Battlegrounds lobby's panel, or None."""
+        size = self.window.size()
+        if size is None:
+            return None
+        number_px = self.window.grab(*region(LOBBY_NUMBER, *size))
+        if number_px is None:
+            return None
+        digits = lobby_digits(split_ink(number_px))
+        if digits is None:
+            return None
+        label_px = self.window.grab(*region(LOBBY_LABEL, *size))
+        if label_px is None:
+            return None
+        label, number, number_word = await asyncio.gather(
+            self._ocr(label_px.ppm(), 7),
+            self._ocr(digits, 13, "0123456789"),
+            self._ocr(digits, 8, "0123456789"),
+        )
+        return lobby_value(label, number, number_word)
+
     async def read_once(self) -> Reading | None:
         return (await self.attempt()).reading
 
@@ -428,7 +482,9 @@ class RatingReader:
                     interval: float = POLL_SECONDS,
                     previous_rating: int | None = None) -> Reading | None:
         """Poll until a read joins `previous_rating` or two consecutive reads
-        agree, or `seconds` run out.
+        agree, or `seconds` run out. While no banner is up, the lobby's panel
+        is tried too, and two agreeing lobby reads give a snapshot with no
+        delta — the player clicked the banner away before it could be read.
 
         `rating − delta` is the rating before the game. When it equals the
         last stored one, a single read is accepted: a count caught mid-way or
@@ -441,6 +497,7 @@ class RatingReader:
         seen_at: float | None = None
         miss: Attempt | None = None
         probed = started
+        lobby_last: int | None = None
         while loop.time() < deadline:
             try:
                 attempt = await self.attempt()
@@ -470,6 +527,16 @@ class RatingReader:
                     if miss is None or not miss.located:
                         miss = unrecognised
                     log.info("a banner is up that the pixel check does not recognise")
+                else:
+                    lobby = await self.read_lobby()
+                    # Equal to the last reading is either a game that moved
+                    # nothing or a panel not yet refreshed; nothing says which.
+                    if lobby is not None and lobby != previous_rating:
+                        if lobby == lobby_last:
+                            log.info("rating %d read off the lobby; the banner was "
+                                     "clicked away before it could be read", lobby)
+                            return Reading(rating=lobby)
+                        lobby_last = lobby
             last = reading
             # A banner is up for as long as the player takes to click past
             # it, so while one is located the next read starts at once.

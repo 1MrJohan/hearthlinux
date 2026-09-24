@@ -55,6 +55,9 @@ def print_event(event: ev.Event) -> None:
         case ev.GameEnd(placement=p):
             print(f"=== game end — placement: {p if p else '?'} ===")
         case ev.RatingRead(rating=rating, delta=delta):
-            print(f"  MMR {rating} ({delta:+d}), read off the end screen")
+            if delta is None:
+                print(f"  MMR {rating}, read off the lobby")
+            else:
+                print(f"  MMR {rating} ({delta:+d}), read off the end screen")
         case ev.RatingMissed(reason=reason):
             print(f"  MMR not read ({reason})")
