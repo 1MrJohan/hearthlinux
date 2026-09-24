@@ -460,8 +460,15 @@ tends to reintroduce a fixed bug.
   is recorded as a genuine `'loss'`, which is why the loss check runs *before* the ghost
   check. Calibration excludes ghost fights via the `combats.opponent_is_ghost` flag rather
   than the outcome, because scoring only the legible ones would bias the table toward losses.
-- **Placement tags land a few packets *after* the `STATE = COMPLETE`** tag, so `GameEnd`
-  is deferred until one appears (or flushed by `finalize()`).
+- **Placement is read off the hero the player entity names (`HERO_ENTITY`), and it can
+  still move after `STATE = COMPLETE`.** A late SETASIDE copy of our hero carries a stale
+  place (9 of 17 games recorded too high when the newest copy was trusted). The named
+  hero has a live place all game, so `GameEnd` fires at `COMPLETE`; in 6 of 21 games that
+  place changed once more within ~54ms, and the exporter announces it as
+  `PlacementRevised` (banner-confirmed on game 408: 7 at `COMPLETE`, 6th on screen). An
+  early concede never logs `COMPLETE` at all; tag `3479` on our player arms the end. See
+  `docs/superpowers/specs/2026-09-23-placement-after-complete-design.md` and
+  `2026-09-23-early-concede-design.md`.
 - **An unknown `GameTag` silently drops the whole log line.** hslog resolves tags through
   the `hearthstone` package's `GameTag` enum and raises `NoSuchEnum` on anything it does
   not know; `exporter.feed` catches per line, so a patch that ships new tags costs those
