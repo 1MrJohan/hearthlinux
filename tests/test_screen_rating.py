@@ -1,8 +1,8 @@
 """Reading the rating off the post-game banner, and what the pipeline does with it.
 
 The fixtures are crops of real 2560x1440 captures — a 3rd-place banner
-(Rating 6143, +44) and a 2nd-place one (6286, +72) whose curtain edge and
-sparkles sit beside the change — served through a fake window at their
+(Rating 6143, +44), a 2nd-place one (6286, +72) whose curtain edge and
+sparkles sit beside the change, and a 6th-place loss (6217, -69) — served through a fake window at their
 original offset so the geometry is exercised exactly as it runs live. Tests that need real OCR
 self-skip without tesseract, as the sim round-trip does without node.
 """
@@ -27,6 +27,7 @@ from bgtracker.screen.rating import Reading, RatingReader
 SCREENS = Path(__file__).parent / "fixtures" / "screens"
 FIXTURE = SCREENS / "rating-win-6143-plus44.png"
 SECOND = SCREENS / "rating-2nd-6286-plus72.png"
+LOSS = SCREENS / "rating-6th-6217-minus69.png"
 # Where the crop sat in the 2560x1440 window it was taken from.
 WINDOW = (2560, 1440)
 ORIGIN = (848, 864)
@@ -99,7 +100,7 @@ def test_a_gain_is_yellow():
 
 
 def test_a_loss_is_red():
-    assert _locate(FixtureWindow(recolour=_yellow_to_red)).sign == -1
+    assert _locate(FixtureWindow(fixture=LOSS)).sign == -1
 
 
 def test_the_curtain_edge_beside_the_change_is_not_a_glyph():
@@ -129,7 +130,9 @@ def test_both_colours_or_neither_is_no_banner():
 
 def test_a_change_too_far_from_the_rating_is_not_its_change():
     assert sr.locate(_ink(RATING, gain=((400, 430),))) is None   # 112px > 1.5 digits
-    assert sr.locate(_ink(RATING, gain=((320, 359),))).sign == 1
+    assert sr.locate(_ink(RATING, gain=((320, 359), (375, 403)))).sign == 1
+    # A sign with no digits after it is not a change.
+    assert sr.locate(_ink(RATING, gain=((320, 359),))) is None
 
 
 def test_specks_go_and_glyphs_stay():
@@ -150,26 +153,25 @@ def test_no_white_is_no_banner():
 
 # -- acceptance ----------------------------------------------------------
 
-@pytest.mark.parametrize("label,rating,delta,sign,expected", [
-    ("Rating", "6143", "+44", 1, Reading(6143, 44)),
-    ("Rating\n", " 6099 ", "-98", -1, Reading(6099, -98)),
-    ("Rating", "10230", "+7", 1, Reading(10230, 7)),
+@pytest.mark.parametrize("label,rating,digits,sign,expected", [
+    ("Rating", "6143", "44", 1, Reading(6143, 44)),
+    ("Rating\n", " 6217 ", "69", -1, Reading(6217, -69)),
+    ("Rating", "10230", "7", 1, Reading(10230, 7)),
     # Another screen entirely.
-    ("Ratings", "6143", "+44", 1, None),
-    ("", "6143", "+44", 1, None),
-    # The misread this whole design exists for: psm 7 reads "+44" as "144".
-    ("Rating", "6143", "144", 1, None),
-    # OCR's sign disagreeing with the colour.
-    ("Rating", "6143", "+44", -1, None),
-    ("Rating", "6143", "-44", 1, None),
-    # Digits that are not a rating.
-    ("Rating", "61", "+44", 1, None),
-    ("Rating", "614E", "+44", 1, None),
-    ("Rating", "99999", "+44", 1, None),
-    ("Rating", "6143", "+1044", 1, None),
+    ("Ratings", "6143", "44", 1, None),
+    ("", "6143", "44", 1, None),
+    # A sign in the digits means the sign glyph was not where it should be.
+    ("Rating", "6143", "+44", 1, None),
+    ("Rating", "6143", "-44", -1, None),
+    ("Rating", "6143", "", 1, None),
+    # Digits that are not a rating, or not a change.
+    ("Rating", "61", "44", 1, None),
+    ("Rating", "614E", "44", 1, None),
+    ("Rating", "99999", "44", 1, None),
+    ("Rating", "6143", "1044", 1, None),
 ])
-def test_accept(label, rating, delta, sign, expected):
-    assert sr.accept(label, rating, delta, sign) == expected
+def test_accept(label, rating, digits, sign, expected):
+    assert sr.accept(label, rating, digits, sign) == expected
 
 
 # -- the whole read, with real OCR ---------------------------------------
@@ -187,11 +189,25 @@ def test_the_second_place_banner_reads_as_6286_plus_72():
 
 
 @needs_tesseract
-def test_red_ink_under_a_plus_sign_is_refused():
-    """The recoloured fixture still says "+44" — colour and OCR disagree, and
+def test_the_loss_banner_reads_as_6217_minus_69():
+    """psm 13 alone read this "-69" as a bare "-" while the sign sat in the
+    image beside the digits."""
+    reader = RatingReader(window=FixtureWindow(fixture=LOSS))
+    assert asyncio.run(reader.read_once()) == Reading(6217, -69)
+
+
+def test_red_ink_in_the_shape_of_a_plus_is_refused():
+    """The recoloured fixture still draws a "+". Colour and shape disagree, and
     a disagreement is never resolved by picking one."""
-    reader = RatingReader(window=FixtureWindow(recolour=_yellow_to_red))
-    assert asyncio.run(reader.read_once()) is None
+    assert _locate(FixtureWindow(recolour=_yellow_to_red)) is None
+
+
+def test_a_minus_is_flat_and_a_plus_is_square():
+    loss = sr.split_ink(FixtureWindow(fixture=LOSS).grab(*sr.region(sr.BAND, *WINDOW)))
+    gain = sr.split_ink(FixtureWindow().grab(*sr.region(sr.BAND, *WINDOW)))
+    minus, plus = loss.loss_runs[0], gain.gain_runs[0]
+    assert minus.height / minus.width <= sr.MINUS_MAX_ASPECT
+    assert plus.height / plus.width >= sr.PLUS_MIN_ASPECT
 
 
 class NoWindow:

@@ -7,12 +7,14 @@ docs/superpowers/specs/2026-09-23-mmr-screen-read-design.md.
 
 Two rules shape the reader, and both are about never recording a wrong number:
 
-- **The sign comes from colour, never from OCR.** tesseract's line mode reads
-  `+44` as `144`, which is a plausible delta. The raw-line mode reads the `+`
-  correctly, and the reader then requires the OCR'd sign to *agree* with the
-  colour — a check that fails closed rather than a guess that happens to work.
-- **Two consecutive captures must agree.** The banner animates, and a read
-  taken mid-count is a wrong number that looks right.
+- **The sign never goes through OCR.** Next to digits it breaks tesseract in
+  both directions: line mode read `+44` as `144` and `+72` as `+12`, raw-line
+  mode read `-69` as a bare `-`. The sign is the change's colour, confirmed by
+  the shape of its first glyph — a `+` is square, a `-` is flat — and only the
+  digits after it are OCR'd.
+- **Agreement, twice over.** The digits are read in two segmentation modes
+  that must agree, and two consecutive captures must agree. The banner
+  animates, and a read taken mid-count is a wrong number that looks right.
 
 The rating and the change are read out of one wide band split by colour
 rather than out of two fixed boxes, so a five-digit rating pushing the change
@@ -58,6 +60,11 @@ BAND = (-0.14, 0.685, 0.22, 0.760)
 MIN_GLYPH_WIDTH = 0.15   # narrower runs are frame edges and sparkles
 MAX_GLYPH_GAP = 1.0      # widest gap inside a number is 17px
 MAX_REACH = 1.5          # rating to change is 31px
+# Height over width of the change's first glyph: a "+" measures 1.02, a "-"
+# 0.56. A sign glyph that does not match its colour means the chain is not
+# what it looks like.
+PLUS_MIN_ASPECT = 0.8
+MINUS_MAX_ASPECT = 0.7
 # Blobs smaller than this share of a digit-height square are sparkles, even
 # when they share a glyph's columns (one above the "2" of "+72" read as a
 # trailing "1"). A "-" is ~0.08 of one; the specks seen are under 0.01.
@@ -110,7 +117,7 @@ class Banner:
     """The rating and the change located in a band, ready for OCR."""
 
     rating: bytes   # PGM
-    change: bytes   # PGM
+    change: bytes   # PGM of the change's digits, without its sign glyph
     sign: int
 
 
@@ -235,6 +242,10 @@ def locate(ink: Ink) -> Banner | None:
     if len(found) != 1:
         return None
     sign = found[0]
+    glyph, *digits = changes[sign]
+    aspect = glyph.height / glyph.width
+    if not digits or (aspect < PLUS_MIN_ASPECT if sign > 0 else aspect > MINUS_MAX_ASPECT):
+        return None
     change_mask = ink.gain if sign > 0 else ink.loss
     blob = MIN_BLOB * digit * digit
 
@@ -243,11 +254,12 @@ def locate(ink: Ink) -> Banner | None:
         return _pgm(kept, ink.width, ink.height)
 
     return Banner(rating=clean(ink.white, rating),
-                  change=clean(change_mask, changes[sign]), sign=sign)
+                  change=clean(change_mask, digits), sign=sign)
 
 
-def accept(label: str, rating: str, delta: str, sign: int) -> Reading | None:
-    """The OCR'd strings as a reading, or None if any of them is doubtful."""
+def accept(label: str, rating: str, digits: str, sign: int) -> Reading | None:
+    """The OCR'd strings as a reading, or None if any of them is doubtful.
+    `digits` is the change without its sign, which `sign` carries."""
     # What keeps the reader off every other screen, including whatever the
     # player has already clicked through to.
     if label.strip().lower() != "rating":
@@ -258,10 +270,10 @@ def accept(label: str, rating: str, delta: str, sign: int) -> Reading | None:
     value = int(rating)
     if not RATING_MIN <= value <= RATING_MAX:
         return None
-    change = re.fullmatch(r"([+-])(\d{1,3})", delta.strip())
-    if change is None or (change[1] == "+") != (sign > 0):
+    digits = digits.strip()
+    if not re.fullmatch(r"\d{1,3}", digits):
         return None
-    return Reading(rating=value, delta=sign * int(change[2]))
+    return Reading(rating=value, delta=sign * int(digits))
 
 
 def _deferential_prefix() -> list[str]:
@@ -341,14 +353,18 @@ class RatingReader:
         label = await self._ocr(label_px.ppm(), 7)
         if label.strip().lower() != "rating":
             return None
-        rating, delta = await asyncio.gather(
-            self._ocr(banner.rating, 13, "0123456789"),
-            self._ocr(banner.change, 13, "+-0123456789"),
+        # Raw line and single word: modes that segment differently, so one
+        # misreading a glyph the other reads right is a disagreement.
+        rating, rating_word, digits, digits_word = await asyncio.gather(
+            *(self._ocr(image, psm, "0123456789")
+              for image in (banner.rating, banner.change) for psm in (13, 8))
         )
-        reading = accept(label, rating, delta, banner.sign)
+        reading = None
+        if rating == rating_word and digits == digits_word:
+            reading = accept(label, rating, digits, banner.sign)
         if reading is None:
-            log.debug("banner not accepted: rating=%r delta=%r sign=%d",
-                      rating, delta, banner.sign)
+            log.debug("banner not accepted: rating=%r/%r digits=%r/%r sign=%d",
+                      rating, rating_word, digits, digits_word, banner.sign)
         return reading
 
     async def watch(self, seconds: float = SCREEN_READ_SECONDS,
