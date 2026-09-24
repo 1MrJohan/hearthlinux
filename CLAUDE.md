@@ -242,7 +242,9 @@ a style one:
 - **MMR readings are snapshots, and only a screen reading is a per-game fact.** No log
   carries a rating. After a *live* `GameEnd`, `screen/rating.py` reads the post-game
   banner (rating in white, change yellow on a gain and red on a loss) and records it with
-  `game_id`, `delta` and `source = 'screen'`; a miss raises the manual nudge instead.
+  `game_id`, `delta` and `source = 'screen'`. A banner clicked away mid count-up shows no
+  change yet, so the reader then reads the lobby's rating panel and stores a snapshot
+  (`source = 'lobby'`, no delta); only when both fail does the manual nudge appear.
   Every derived number is held to what the readings can honestly support: a game gets a
   delta when the screen showed one for it, or when it is the only game between two
   consecutive readings; a period's net is the difference between the last readings either

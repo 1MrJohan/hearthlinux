@@ -144,7 +144,7 @@ class RatingRead:
     pipeline, never parsed: no log carries a rating."""
 
     rating: int
-    delta: int
+    delta: int | None = None   # None: read off the lobby, which shows no change
 
 
 @dataclass(frozen=True)

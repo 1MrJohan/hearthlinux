@@ -40,8 +40,9 @@ needs_tesseract = pytest.mark.skipif(
 class FixtureWindow:
     """A GameWindow serving grabs out of the fixture crop."""
 
-    def __init__(self, recolour=None, fixture=FIXTURE):
+    def __init__(self, recolour=None, fixture=FIXTURE, origin=ORIGIN):
         image = pytest.importorskip("PIL.Image").open(fixture).convert("RGB")
+        self.origin = origin
         if recolour is not None:
             pixels = getattr(image, "get_flattened_data", image.getdata)()
             image.putdata([recolour(*p) for p in pixels])
@@ -51,7 +52,7 @@ class FixtureWindow:
         return WINDOW
 
     def grab(self, x, y, w, h):
-        ox, oy = ORIGIN
+        ox, oy = self.origin
         crop = self.image.crop((x - ox, y - oy, x - ox + w, y - oy + h))
         r, g, b = crop.split()
         return Pixels(w, h, r.tobytes(), g.tobytes(), b.tobytes())
@@ -491,3 +492,112 @@ def test_the_pipeline_hands_the_reader_the_last_stored_rating(tmp_path):
 
     assert asyncio.run(run()) == [ev.RatingRead(rating=6109, delta=100)]
     assert reader.calls == 1
+
+
+# -- the lobby, after a banner clicked away mid-count ----------------------
+# Game 415's banner was caught at 6055 of 6069 with no change drawn yet; the
+# lobby the player landed on showed 6069. See
+# docs/superpowers/specs/2026-09-24-lobby-rating-read-design.md.
+
+LOBBY = SCREENS / "lobby-6069.png"
+LOBBY_ORIGIN = (1712, 144)
+
+
+def test_lobby_regions_land_inside_the_fixture():
+    w, h = pytest.importorskip("PIL.Image").open(LOBBY).size
+    for box in (sr.LOBBY_LABEL, sr.LOBBY_NUMBER):
+        x, y, rw, rh = sr.region(box, *WINDOW)
+        assert LOBBY_ORIGIN[0] <= x and x + rw <= LOBBY_ORIGIN[0] + w
+        assert LOBBY_ORIGIN[1] <= y and y + rh <= LOBBY_ORIGIN[1] + h
+
+
+@needs_tesseract
+def test_the_lobby_reads_as_6069():
+    reader = RatingReader(window=FixtureWindow(fixture=LOBBY, origin=LOBBY_ORIGIN), misses=None)
+    assert asyncio.run(reader.read_lobby()) == 6069
+
+
+def test_the_banner_has_no_lobby_panel():
+    """The banner fixture's lobby regions hold no readable panel."""
+    reader = RatingReader(window=NoWindow(), misses=None)
+    assert asyncio.run(reader.read_lobby()) is None
+
+
+@pytest.mark.parametrize("label,digits,word,expected", [
+    ("Rating", "6069", "6069", 6069),
+    ("Rating", "6069", "6089", None),     # the two modes disagree
+    ("Rating)", "6069", "6069", 6069),     # the panel frame at the crop's edge
+    ("Ratings", "6069", "6069", None),
+    ("Rating", "60", "60", None),
+    ("Rating", "99999", "99999", None),
+])
+def test_lobby_value(label, digits, word, expected):
+    assert sr.lobby_value(label, digits, word) == expected
+
+
+class Lobby(Scripted):
+    """No banner at all; the lobby panel reads a scripted sequence."""
+
+    def __init__(self, values, polls=(None,)):
+        super().__init__(list(polls))
+        self.values = list(values)
+
+    async def probe(self):
+        return None
+
+    async def read_lobby(self):
+        return self.values.pop(0) if len(self.values) > 1 else self.values[0]
+
+
+def test_two_agreeing_lobby_reads_give_a_snapshot(monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 0.0)
+    got = asyncio.run(Lobby([6069]).watch(seconds=1, interval=0.001, previous_rating=6019))
+    assert got == Reading(6069, None)
+
+
+def test_one_lobby_read_is_not_enough(monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 0.0)
+    got = asyncio.run(Lobby([6069, None]).watch(seconds=0.05, interval=0.001,
+                                                previous_rating=6019))
+    assert got is None
+
+
+def test_a_lobby_still_showing_the_previous_rating_is_refused(monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 0.0)
+    got = asyncio.run(Lobby([6019]).watch(seconds=0.05, interval=0.001, previous_rating=6019))
+    assert got is None
+
+
+def test_a_banner_read_wins_over_the_lobby(monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 0.0)
+    reader = Lobby([6070], polls=[None, Reading(6069, 50)])
+    got = asyncio.run(reader.watch(seconds=1, interval=0.001, previous_rating=6019))
+    assert got == Reading(6069, 50)
+
+
+def test_a_lobby_snapshot_is_stored_without_a_delta(tmp_path, monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 0.0)
+    from bgtracker.history import review
+
+    class Quick(Lobby):
+        async def watch(self, seconds=0, interval=0, previous_rating=None):
+            return await Lobby.watch(self, seconds=1, interval=0.001,
+                                     previous_rating=previous_rating)
+
+    async def run():
+        pipe, db, seen = _pipeline(tmp_path, Quick([6069]))
+        db.conn.execute("INSERT INTO ratings (recorded_at, rating) VALUES (?, ?)",
+                        ("2026-01-01T00:00:00+00:00", 6019))
+        await pipe.handle([ev.GameStart(log_id="g1"), ev.GameEnd(placement=4)])
+        await _settle(pipe)
+        return db, seen
+
+    db, seen = asyncio.run(run())
+    assert seen == [ev.RatingRead(rating=6069, delta=None)]
+    assert db.conn.execute(
+        "SELECT rating, delta, source FROM ratings ORDER BY id DESC LIMIT 1"
+    ).fetchone() == (6069, None, "lobby")
+    # The only game since 6019, so the history gives it the change. (Real games
+    # start minutes before their reading; here both land in the same second.)
+    db.conn.execute("UPDATE games SET started_at = '2026-06-01T00:00:00+00:00'")
+    assert review.game_list(db)[0].mmr_delta == 50

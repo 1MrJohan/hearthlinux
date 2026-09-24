@@ -420,7 +420,7 @@ class OverlayApp:
                 st.phase = ("Game Over", f"finished #{p}" if p else "")
                 st.status = f"Finished #{p}" if p else "Game over"
             case ev.RatingRead(rating=rating, delta=delta):
-                st.status = f"MMR {rating} ({delta:+d})"
+                st.status = f"MMR {rating}" + (f" ({delta:+d})" if delta is not None else "")
                 self._hide_mmr_prompt()
             case ev.RatingMissed():
                 # Asked only once the screen read has given up, so the nudge

@@ -532,3 +532,11 @@ def test_turning_the_setting_off_takes_a_visible_nudge_down():
     app.settings.cfg.mmr_prompt = False
     app._apply_overlay({"mmr_prompt"})
     assert win.last("set_mmr_prompt") == (False,)
+
+
+def test_a_lobby_reading_shows_the_rating_alone():
+    app, win = _app()
+    app.on_event(ev.GameEnd(placement=4), None)
+    app.on_event(ev.RatingRead(rating=6069), None)
+    assert app.state.status == "MMR 6069"
+    assert win.last("set_mmr_prompt") is None
