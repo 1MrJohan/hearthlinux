@@ -137,6 +137,93 @@ def test_placement_follows_the_player_hero_not_the_late_copy():
     assert end.placement == 3
 
 
+# -- early concede -------------------------------------------------------
+# An early concede never logs STATE=COMPLETE. The only mark it leaves on both
+# captured concedes is tag 3479 on our own player entity, and the final place
+# lands *after* it. See docs/superpowers/specs/2026-09-23-early-concede-design.md.
+
+def _mid_game() -> LogBuilder:
+    """The minimal game, still running: we sit 4th, the opponent 2nd."""
+    b = minimal_bg_game()
+    del b.lines[-2:]   # no final place, no COMPLETE
+    for player, controller, hero in ((2, 1, 4), (3, 2, 5)):
+        b.tag_change(player, "CONTROLLER", controller)   # as real player entities carry
+        b.tag_change(player, "HERO_ENTITY", hero)
+    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 4)
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 2)
+    return b
+
+
+def _ends(lines):
+    return [e for e in feed_all(lines)[1] if isinstance(e, ev.GameEnd)]
+
+
+def test_nothing_ends_a_game_still_running():
+    assert _ends(_mid_game().lines) == []
+
+
+def test_a_concede_ends_on_our_new_place_without_complete():
+    """Game 409: 3479, then our place 4 → 8, then silence."""
+    b = _mid_game()
+    b.tag_change(2, "3479", 1)
+    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 8)
+    assert _ends(b.lines) == [ev.GameEnd(placement=8)]
+
+
+def test_the_marker_alone_does_not_end_the_game():
+    """Ending on 3479 itself would record the pre-concede place (4th) as
+    final — in game 409 the 8 arrived after it."""
+    b = _mid_game()
+    b.tag_change(2, "3479", 1)
+    assert _ends(b.lines) == []
+
+
+def test_the_lobby_reshuffling_around_a_concede_is_not_our_place():
+    b = _mid_game()
+    b.tag_change(2, "3479", 1)
+    b.tag_change(5, "PLAYER_LEADERBOARD_PLACE", 1)
+    assert _ends(b.lines) == []
+    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 8)
+    assert _ends(b.lines) == [ev.GameEnd(placement=8)]
+
+
+def test_a_concede_that_completes_ends_once_at_its_place():
+    """Game 411: already at its final place, then COMPLETE."""
+    b = _mid_game()
+    b.tag_change(2, "PLAYSTATE", "CONCEDED")
+    b.tag_change(2, "3479", 1)
+    b.tag_change("GameEntity", "STATE", "COMPLETE")
+    assert _ends(b.lines) == [ev.GameEnd(placement=4)]
+
+
+def test_an_armed_game_ends_at_the_next_game_with_its_place():
+    b = _mid_game()
+    b.tag_change(2, "3479", 1)
+    b.add("CREATE_GAME")
+    assert _ends(b.lines) == [ev.GameEnd(placement=4)]
+
+
+def test_an_unarmed_unfinished_game_still_ends_with_nothing():
+    """Without a concede, the live place is not a final one."""
+    b = _mid_game()
+    b.add("CREATE_GAME")
+    assert _ends(b.lines) == []
+
+
+def test_an_opponents_concede_is_not_ours():
+    b = _mid_game()
+    b.tag_change(3, "3479", 1)
+    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 8)
+    assert _ends(b.lines) == []
+
+
+def test_the_game_entity_tag_alone_ends_nothing():
+    b = _mid_game()
+    b.tag_change("GameEntity", "4302", 1)
+    b.tag_change(4, "PLAYER_LEADERBOARD_PLACE", 8)
+    assert _ends(b.lines) == []
+
+
 def test_bob_skins_are_never_counted_as_player_heroes():
     """Bob is the tavern keeper, not a player, and sits in PLAY as a HERO in
     every real game wearing one of 50+ cosmetic skins. The scan filters him by

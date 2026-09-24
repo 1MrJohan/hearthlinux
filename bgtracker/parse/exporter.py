@@ -16,7 +16,7 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 
-from hearthstone.entities import Card, Game
+from hearthstone.entities import Card, Game, Player
 from hearthstone.enums import CardType, GameTag, State, Zone
 from hslog import LogParser
 from hslog import packets as hspackets
@@ -40,6 +40,13 @@ BOB_HERO_ID = "TB_BaconShopBob"
 
 SHOP = 1
 COMBAT = 2
+
+# Set to 1 on the local player's entity when they concede, and in no normal
+# ending. Not in the hearthstone enum, so a number; two samples do not earn it
+# a name. An early concede never logs STATE=COMPLETE, so this is the only
+# sign the game is over. See
+# docs/superpowers/specs/2026-09-23-early-concede-design.md.
+_CONCEDE_TAG = 3479
 
 # Hero tags that move a player's leaderboard display.
 _HERO_HP_TAGS = frozenset({GameTag.HEALTH, GameTag.DAMAGE, GameTag.ARMOR})
@@ -93,6 +100,9 @@ class BGExporter(EntityTreeExporter):
         self._pending_combat = False
         self._ended = False
         self._end_emitted = False
+        # Armed by a concede: the final place lands after the marker, so the
+        # end waits for it (or for COMPLETE, or the next game).
+        self._conceded = False
         self._standings_dirty = False
         self._standings: tuple = ()
         # Elimination is permanent, but a Kel'Thuzad ghost fight reuses the
@@ -244,8 +254,14 @@ class BGExporter(EntityTreeExporter):
                 self._maybe_emit_end()
         elif gametag == GameTag.NEXT_OPPONENT_PLAYER_ID and value:
             self._emit(ev.NextOpponent(player_id=value))
+        elif gametag == _CONCEDE_TAG and value and self._is_friendly_player(entity):
+            self._conceded = True
         elif gametag == GameTag.PLAYER_LEADERBOARD_PLACE:
             self._standings_dirty = True
+            if self._conceded and not self._ended and entity is self.named_hero():
+                # The conceder's own place is the one that settles; the rest
+                # of the lobby reshuffles around it and says nothing about us.
+                self._ended = True
             if self._ended:
                 self._maybe_emit_end()
         elif gametag in _HERO_STANDING_TAGS and getattr(entity, "type", None) == CardType.HERO:
@@ -325,6 +341,18 @@ class BGExporter(EntityTreeExporter):
             self._standings = standings
             self._emit(ev.Standings(places=standings))
 
+    def _is_friendly_player(self, entity) -> bool:
+        fid = self.friendly_player_id()
+        return (isinstance(entity, Player) and fid is not None
+                and tag(entity, GameTag.CONTROLLER) == fid)
+
+    def named_hero(self):
+        """The hero our player entity names in HERO_ENTITY, in any zone, or None."""
+        for player in self.game.players:
+            if self._is_friendly_player(player):
+                return self.game.find_entity_by_id(tag(player, GameTag.HERO_ENTITY))
+        return None
+
     def friendly_placement(self) -> int | None:
         """Final placement of the hero our player entity names, in any zone.
 
@@ -338,12 +366,10 @@ class BGExporter(EntityTreeExporter):
         fid = self.friendly_player_id()
         if fid is None:
             return None
-        for player in self.game.players:
-            if tag(player, GameTag.CONTROLLER) == fid:
-                hero = self.game.find_entity_by_id(tag(player, GameTag.HERO_ENTITY))
-                place = tag(hero, GameTag.PLAYER_LEADERBOARD_PLACE) if hero else None
-                if place:
-                    return place
+        hero = self.named_hero()
+        place = tag(hero, GameTag.PLAYER_LEADERBOARD_PLACE) if hero else None
+        if place:
+            return place
         # No HERO_ENTITY to follow (synthetic logs): newest friendly hero.
         best = None
         for entity in self.game.entities:
@@ -366,10 +392,14 @@ class BGExporter(EntityTreeExporter):
             self._emit(ev.GameEnd(placement=placement))
 
     def finalize(self):
-        """Flush a pending GameEnd even if no placement ever appeared."""
-        if self._ended and not self._end_emitted:
+        """Flush a pending GameEnd even if no placement ever appeared.
+
+        A conceded game whose place never changed after the marker was already
+        at its final place, so that one is flushed with it."""
+        if (self._ended or self._conceded) and not self._end_emitted:
             self._end_emitted = True
-            self._emit(ev.GameEnd(placement=None))
+            placement = self.friendly_placement() if self._conceded else None
+            self._emit(ev.GameEnd(placement=placement))
 
 
 @dataclass
