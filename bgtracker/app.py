@@ -225,7 +225,9 @@ class Pipeline:
     async def _read_rating(self, game_id: int) -> None:
         event: ev.Event = ev.RatingMissed(reason="not seen on screen")
         try:
-            reading = await self.rating_reader.watch()
+            reading = await self.rating_reader.watch(
+                previous_rating=self.db.last_rating() if self.db else None
+            )
             if reading is not None and self.db is not None:
                 self.db.record_rating(
                     reading.rating, game_id=game_id, delta=reading.delta, source="screen"

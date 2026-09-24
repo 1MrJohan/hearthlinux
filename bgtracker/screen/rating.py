@@ -33,8 +33,11 @@ import logging
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
+from bgtracker.config import CACHE_DIR
 from bgtracker.history.db import RATING_MAX, RATING_MIN
 from bgtracker.sim.cpu import efficiency_cpus
 
@@ -48,6 +51,11 @@ log = logging.getLogger(__name__)
 SCREEN_READ_SECONDS = 90.0
 POLL_SECONDS = 0.4
 OCR_TIMEOUT = 5.0
+
+# Frames of banners that were located but never read, for diagnosing a layout
+# the reader does not know yet. Disposable, like the rest of the cache.
+MISS_DIR = CACHE_DIR / "banners"
+KEEP_MISSES = 10
 
 # Regions as (x0, y0, x1, y1): x from the window's horizontal centre and y from
 # its top, both in units of window HEIGHT — the banner is centred and Unity
@@ -323,39 +331,63 @@ def unavailable() -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class Attempt:
+    """One poll: whether a banner was on screen, what it read as, and the
+    frame, kept so a banner that never reads can be looked at afterwards."""
+
+    located: bool
+    reading: Reading | None = None
+    band: bytes | None = None    # PPM
+    label: bytes | None = None   # PPM
+
+
+def _save_miss(attempt: Attempt, directory: Path, keep: int = KEEP_MISSES) -> None:
+    """Write the frame of a banner that never read; keep the newest `keep`."""
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        (directory / f"{stamp}-band.ppm").write_bytes(attempt.band)
+        (directory / f"{stamp}-label.ppm").write_bytes(attempt.label)
+        for old in sorted(directory.glob("*-band.ppm"))[:-keep]:
+            old.unlink(missing_ok=True)
+            old.with_name(old.name.replace("-band", "-label")).unlink(missing_ok=True)
+    except OSError as exc:
+        log.debug("could not keep the unread banner: %r", exc)
+
+
 class RatingReader:
     def __init__(self, window: GameWindow | None = None, tesseract: str = "tesseract",
-                 prefix: list[str] | None = None):
+                 prefix: list[str] | None = None, misses: Path | None = MISS_DIR):
         self.window = window if window is not None else GameWindow()
         self.tesseract = tesseract
         self.prefix = _deferential_prefix() if prefix is None else prefix
+        self.misses = misses
 
     async def _ocr(self, image: bytes, psm: int, whitelist: str | None = None) -> str:
         return await ocr(image, psm, whitelist, self.tesseract, self.prefix)
 
-    async def read_once(self) -> Reading | None:
+    async def attempt(self) -> Attempt:
         size = self.window.size()
         if size is None:
-            return None
+            return Attempt(located=False)
         band_px = self.window.grab(*region(BAND, *size))
         if band_px is None:
-            return None
+            return Attempt(located=False)
         # Cheap pixel checks first: most polls land on a screen with no banner,
         # and those should cost an X round trip, not a tesseract run.
         banner = locate(split_ink(band_px))
         if banner is None:
-            return None
+            return Attempt(located=False)
         label_px = self.window.grab(*region(LABEL, *size))
         if label_px is None:
-            return None
-        # The label alone before the digits: a lookalike screen then costs one
-        # tesseract run rather than three.
-        label = await self._ocr(label_px.ppm(), 7)
-        if label.strip().lower() != "rating":
-            return None
-        # Raw line and single word: modes that segment differently, so one
-        # misreading a glyph the other reads right is a disagreement.
-        rating, rating_word, digits, digits_word = await asyncio.gather(
+            return Attempt(located=False)
+        # One round, label and digits together: the banner is on screen for
+        # as long as the player takes to click past it. Raw line and single
+        # word segment differently, so one misreading a glyph the other reads
+        # right is a disagreement.
+        label, rating, rating_word, digits, digits_word = await asyncio.gather(
+            self._ocr(label_px.ppm(), 7),
             *(self._ocr(image, psm, "0123456789")
               for image in (banner.rating, banner.change) for psm in (13, 8))
         )
@@ -363,28 +395,61 @@ class RatingReader:
         if rating == rating_word and digits == digits_word:
             reading = accept(label, rating, digits, banner.sign)
         if reading is None:
-            log.debug("banner not accepted: rating=%r/%r digits=%r/%r sign=%d",
-                      rating, rating_word, digits, digits_word, banner.sign)
-        return reading
+            log.debug("banner not accepted: label=%r rating=%r/%r digits=%r/%r sign=%d",
+                      label, rating, rating_word, digits, digits_word, banner.sign)
+        return Attempt(located=True, reading=reading,
+                       band=band_px.ppm(), label=label_px.ppm())
+
+    async def read_once(self) -> Reading | None:
+        return (await self.attempt()).reading
 
     async def watch(self, seconds: float = SCREEN_READ_SECONDS,
-                    interval: float = POLL_SECONDS) -> Reading | None:
-        """Poll until two consecutive reads agree, or `seconds` run out."""
+                    interval: float = POLL_SECONDS,
+                    previous_rating: int | None = None) -> Reading | None:
+        """Poll until a read joins `previous_rating` or two consecutive reads
+        agree, or `seconds` run out.
+
+        `rating − delta` is the rating before the game. When it equals the
+        last stored one, a single read is accepted: a count caught mid-way or
+        a misread digit would have to be wrong in exactly the way that still
+        subtracts to it."""
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + seconds
-        previous: Reading | None = None
+        started = loop.time()
+        deadline = started + seconds
+        last: Reading | None = None
+        seen_at: float | None = None
+        miss: Attempt | None = None
         while loop.time() < deadline:
             try:
-                reading = await self.read_once()
+                attempt = await self.attempt()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.debug("screen read failed: %r", exc)
-                reading = None
-            if reading is not None and reading == previous:
+                attempt = Attempt(located=False)
+            reading = attempt.reading
+            if attempt.located and seen_at is None:
+                seen_at = loop.time()
+                log.info("end-screen banner located %.1fs after the game ended",
+                         seen_at - started)
+            joins = (reading is not None and previous_rating is not None
+                     and reading.rating - reading.delta == previous_rating)
+            if joins or (reading is not None and reading == last):
+                log.info("rating %d (%+d) read %.2fs after the banner appeared%s",
+                         reading.rating, reading.delta, loop.time() - seen_at,
+                         "" if joins else ", by agreement")
                 return reading
-            previous = reading
-            await asyncio.sleep(interval)
+            if attempt.located and reading is None:
+                miss = attempt
+            last = reading
+            # A banner is up for as long as the player takes to click past
+            # it, so while one is located the next read starts at once.
+            await asyncio.sleep(0 if attempt.located else interval)
+        if miss is not None:
+            log.info("end-screen banner seen but never read; frame kept in %s",
+                     self.misses)
+            if self.misses is not None:
+                _save_miss(miss, self.misses)
         return None
 
     def close(self) -> None:
