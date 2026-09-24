@@ -239,8 +239,11 @@ class Scripted(RatingReader):
         poll = self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
         if poll is None:
             return sr.Attempt(located=False)
+        if poll == "board":   # passes the pixel check, but the label is not "Rating"
+            return sr.Attempt(located=True, band=b"band", label=b"label")
         reading = None if poll == "seen" else poll
-        return sr.Attempt(located=True, reading=reading, band=b"band", label=b"label")
+        return sr.Attempt(located=True, reading=reading, band=b"band", label=b"label",
+                          labelled=True)
 
 
 def test_a_counting_number_is_waited_out():
@@ -286,6 +289,38 @@ def test_a_raising_read_is_a_miss_not_a_crash():
 def test_a_banner_that_never_reads_is_kept(tmp_path):
     asyncio.run(Scripted(["seen"], misses=tmp_path).watch(seconds=0.02, interval=0.001))
     assert sorted(f.name.split("-")[-1] for f in tmp_path.iterdir()) == ["band.ppm", "label.ppm"]
+
+
+def test_a_board_that_fools_the_pixel_check_is_not_kept(tmp_path):
+    """Game 414's kept frame was a board mid-fight: white attack numbers beside
+    red health gems. The label never read "Rating", so it was not the banner."""
+    asyncio.run(Scripted(["board"], misses=tmp_path).watch(seconds=0.02, interval=0.001))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_banner_the_pixel_check_misses_is_kept_by_the_label_probe(tmp_path, monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 0.0)
+
+    class Unrecognised(Scripted):
+        async def probe(self):
+            return sr.Attempt(located=False, band=b"band", label=b"label", labelled=True)
+
+    reader = Unrecognised([None], misses=tmp_path)
+    asyncio.run(reader.watch(seconds=0.05, interval=0.001))
+    assert sorted(f.name.split("-")[-1] for f in tmp_path.iterdir()) == ["band.ppm", "label.ppm"]
+
+
+def test_the_label_probe_waits_between_tries(monkeypatch):
+    monkeypatch.setattr(sr, "PROBE_SECONDS", 10.0)
+    calls = []
+
+    class Counting(Scripted):
+        async def probe(self):
+            calls.append(1)
+            return None
+
+    asyncio.run(Counting([None]).watch(seconds=0.05, interval=0.001))
+    assert calls == []
 
 
 def test_no_banner_keeps_nothing(tmp_path):
