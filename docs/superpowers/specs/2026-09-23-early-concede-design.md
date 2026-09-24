@@ -34,7 +34,7 @@ They are not dropped: hslog passes a numeric tag through as an int, and all
 three reach `BGExporter.handle_tag_change`. Unknown *named* tags are the ones
 that raise `NoSuchEnum`.
 
-Across all 18 games in the retained session logs (2026-09-22 and -23), **none
+Across the 18 games in the retained session logs at the time (2026-09-22 and -23), **none
 of the three tags appears anywhere except this concede**. The 17 games that
 ended normally, including two where `GameNetLogger.log` also says "Player
 conceded the game" (13:49, 16:47), carry none of them. In those two, the
@@ -44,62 +44,72 @@ to an early concede.
 The place set in that packet is final: a concede with eight alive is 8th, and
 the −97 fits it.
 
+## The second sample
+
+Game 411 was conceded at 17:58:47 on turn 8 (7th). Its packet differs:
+
+| Entity | Tag | Value |
+|---|---|---|
+| our player entity | `PLAYSTATE` | `CONCEDED` |
+| our player entity | `3479` | 1 |
+| our player entity | `PLAYSTATE` | `LOSING`, then `LOST` |
+| `GameEntity` | `STATE` | `COMPLETE`, 36ms later |
+
+No `4356` and no `4302`, and the game *did* complete, so the existing path
+already ended it correctly (7th, and its banner was read: 6009 −70). Our hero's
+place did not change in the packet; it was already final.
+
+Game 409 never set `PLAYSTATE` at all. The one tag the two concedes share is
+`3479` on our own player entity, and it appears in none of the 17 normal
+endings, all of which go `LOSING → LOST` (or `WON`) and then `COMPLETE`.
+
 ## Decision
 
-**Treat the local player entity's tag `4356` or `3479` becoming 1 as a
-concede, and end the game there** with the place of the hero `HERO_ENTITY`
-names, as `friendly_placement()` already reads it. That is live, at the moment
-the banner is about to appear (`EndGameScreen` was 5s later), so the screen
-read and, failing that, the nudge both work unchanged. Nothing downstream of
-`GameEnd` changes.
+**`3479 = 1` on the local player entity marks a concede. It arms the game's
+end but does not end it.** In game 409 the place changed to 8 *after* `3479`
+in the same packet; ending on the marker itself would have recorded the live
+place from before the concede (4th). So after the marker, the game ends on
+the first of:
 
-- **Player-scoped tags only.** `4302` sits on the game entity, and nothing
-  yet shows whether an *opponent's* concede would set it in our log. Ending
-  our game on someone else's concede would be worse than today's silence.
-  `3479` and `4356` are on our own player entity, so they cannot be about
-  anyone else.
-- **Deferred like `COMPLETE`.** The concede sets `_ended` and goes through
-  `_maybe_emit_end()`, so the place tag landing a few lines later in the same
-  packet is still picked up, and a concede with no place still ends via
-  `finalize()`.
-- **The existing `COMPLETE` path is untouched.** A game that ends normally
-  never sets these tags; if a later patch starts setting them at a normal end,
-  `_end_emitted` makes whichever arrives first the only `GameEnd`.
+1. **a place change on the hero `HERO_ENTITY` names**: game 409, 4 → 8. Place
+   changes on *other* heroes are ignored while armed, because the lobby
+   reshuffles as the conceder drops out.
+2. **`STATE = COMPLETE`**: game 411, through the existing path.
+3. **`finalize()` at the next `CREATE_GAME`**, with the named hero's place as
+   it stands. A place that never changed after a concede was already final
+   (game 411 again). This is late for the banner, so the reader misses and
+   the nudge asks. It is the fallback, not the path.
+
+Both concedes then carry the right placement, and 409's `GameEnd` lands at
+17:24:01, five seconds before its banner.
+
+- **`4356` and `4302` are not used.** Each appeared in one concede only.
+  `4302` is also on the game entity, so nothing shows it would not be set by
+  an *opponent's* concede.
+- **`3479` stays a number**, as a named constant with this spec beside it.
+  Naming it `CONCEDED` in an enum would claim more than two samples show.
+- **Only our player entity counts.** An opponent's `3479` must not end our
+  game.
 
 ### Rejected
 
-- **Closing an unfinished game at the next `CREATE_GAME`.** This works for any
-  cause and needs no unknown tags, but it is ~70s late for the banner, and it
-  would record a *live* leaderboard position as final. It would do that for
-  every game whose end the tracker missed for other reasons too, such as a
-  truncated log or a crash mid-game. A wrong placement recorded as fact is
-  worse than a blank one.
+- **Ending on `PLAYSTATE = CONCEDED`.** It is named and obvious, and game
+  409, the case this spec exists for, never set it.
+- **Closing any unfinished game at the next `CREATE_GAME`.** That would
+  record a live leaderboard position as final for every game whose end was
+  missed for any reason, such as a truncated log or a crash. `finalize()`
+  does this only for a game already armed by a concede.
 - **Tailing `GameNetLogger.log` for "Player conceded the game".** That line
-  also appears when leaving a normal end screen, and the tracker's only input
-  is `Power.log` by design.
-- **Naming the tags.** Adding `3479`/`4356` to a local enum would make the
-  code read better and claim a meaning we have not established. They stay
-  numbers, as constants with this spec's evidence beside them.
-
-## Open before implementing
-
-**A second early concede.** One sample cannot say which of `3479`/`4356`
-means "conceded" rather than "left the game" or "was eliminated". The second
-sample decides three things:
-
-1. whether both tags recur. The trigger keeps only the tags present in both
-   samples.
-2. whether either appears for an ordinary elimination. The 17 normal games say
-   no, but only a few of them were eliminations before the final two.
-3. whether the place in the concede packet is still the final one when players
-   are already dead (a concede at 5 alive should read 5).
+  also appears when leaving a normal end screen (13:49, 16:47), and the
+  tracker's only input is `Power.log` by design.
 
 ## Verification
 
-- `pytest tests/`, with a synthetic concede built in `tests/synthetic.py`:
-  `GameEnd` on the tag, with the named hero's place; no `GameEnd` on `4302`
-  alone; no second `GameEnd` when `COMPLETE` follows.
-- Replay of `Hearthstone_2026_09_23_17_15_53/Power.log` (captured as a fixture
-  once trimmed): game 409 must end as 8th at 17:24:01. Every other retained game
-  must end exactly as it does today.
+- `pytest tests/`, with synthetic concedes covering: our place change ends
+  the game with the new place, with no `COMPLETE`; another hero's place
+  change while armed does not; `COMPLETE` after a concede ends it once;
+  `finalize()` ends an armed game with the current place; `3479` on the
+  opponent and `4302` alone do nothing.
+- Replay of every retained session log: game 409 ends as 8th in its concede
+  packet, and all 19 other games end exactly as they do today.
 - Live: the next early concede records its place and reads its banner.
