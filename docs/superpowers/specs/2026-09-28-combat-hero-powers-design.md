@@ -100,7 +100,15 @@ in combat.
 |---|---|---|
 | Swatting Insects, Wingmen, ALL Will Burn!, Fragrant Phylactery | `cardId`, `entityId`, zeros | — |
 | Rapid Reanimation | `used = hero_power_used` | — |
-| Wax Warband | `used = activated`, `info3 = NUM_3` | block: "hero power state not recorded" |
+| Wax Warband | `used = true`, `info3 = NUM_3` | block: "hero power state not recorded" |
+
+**Wax Warband is always `used`, deliberately unlike Firestone.** Running the parser over
+`…_09_24_13_37_05` shows the opponent's snapshot reads the combat copy
+(`ACTIVATED = 1`, `NUM_3` 1 then 6, as above), but the friendly snapshot reads the
+recruit-phase entity, the one that is in `PLAY` for your controller all game (the captured
+aberration game reads entity 228 on every turn), and `ACTIVATED` has never been observed
+set on it. Gating on it would silently drop your own buff. The power's text carries no
+condition, and `NUM_3` is live on both entities, so `used` is sent as true.
 
 `PlayerBoard` gains `hero_power_entity_id`, `hero_power_activated` (`bool | None`) and
 `hero_power_nums` (`NUM_1 … NUM_6`, `tuple | None`). `None` means "recorded before this

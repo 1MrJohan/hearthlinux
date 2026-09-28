@@ -21,6 +21,7 @@ def _check(
     ids: list[str],
     combat_ids: list[str] | None = None,
     secrets: list[str] | None = None,
+    powers: list[str] | None = None,
 ) -> dict:
     script = """
 import { checkBattleCompatibility } from './sidecar/compatibility.mjs';
@@ -32,6 +33,7 @@ const input = {
   playerBoard: {
     player: {
       secrets: payload.secrets.map((cardId, entityId) => ({ cardId, entityId })),
+      heroPowers: payload.powers.map((cardId, entityId) => ({ cardId, entityId })),
     },
     board: minions,
   },
@@ -46,6 +48,7 @@ console.log(JSON.stringify(checkBattleCompatibility(input, allCards, implemented
         "ids": ids,
         "combatIds": combat_ids or [],
         "secrets": secrets or [],
+        "powers": powers or [],
     })
     done = subprocess.run(
         ["node", "--input-type=module", "-e", script, payload],
@@ -99,6 +102,14 @@ def test_secret_effect_is_included_in_compatibility_check():
     }
 
 
+def test_sent_hero_power_is_included_in_compatibility_check():
+    """A package that drops a power's implementation must fail closed."""
+    assert _check({}, [], [], combat_ids=["DROPPED_POWER"], powers=["DROPPED_POWER"]) == {
+        "missingData": [],
+        "unsupported": ["DROPPED_POWER"],
+    }
+
+
 def test_mapped_combat_effect_with_data_is_allowed():
     cards = {
         "SUPPORTED": {
@@ -128,6 +139,9 @@ console.log(JSON.stringify({
   packTactics: ids.has('TB_Bacon_Secrets_15'),
   tastyLobster: ids.has('BG36_202'),
   cageGnawer: ids.has('BG36_211_G'),
+  heroPowers: ['TB_BaconShop_HP_086', 'TB_BaconShop_HP_069', 'TB_BaconShop_HP_061',
+               'BG20_HERO_282p', 'BG25_HERO_103p', 'TB_BaconShop_HP_037a']
+    .every((id) => ids.has(id)),
 }));
 """
     done = subprocess.run(
@@ -142,6 +156,7 @@ console.log(JSON.stringify({
         "packTactics": True,
         "tastyLobster": True,
         "cageGnawer": True,
+        "heroPowers": True,
     }
 
 

@@ -151,6 +151,14 @@ class PlayerBoard:
     # combat — silently dropping such a power can invert the odds.
     hero_power_id: str | None = None
     hero_power_used: bool = False
+    # The combat copy of the power carries its live state: Firestone's own
+    # converter reads `used` off BACON_HERO_POWER_ACTIVATED (not EXHAUSTED,
+    # which a passive never sets) and `info`..`info6` off NUM_1..6. None means
+    # recorded before these existed — not zero, which a stored combat cannot
+    # tell apart from a real 0. See 2026-09-28-combat-hero-powers-design.md.
+    hero_power_entity_id: int = 0
+    hero_power_activated: bool | None = None
+    hero_power_nums: tuple[int, ...] | None = None
     # tribe/aura bonuses applied to minions summoned during combat; keys match
     # the simulator's BgsPlayerGlobalInfo (BloodGemAttackBonus, …)
     global_info: dict = field(default_factory=dict)
@@ -406,6 +414,13 @@ def _global_info(player) -> dict:
     return {k: tag(player, t) for k, t in src.items() if tag(player, t)}
 
 
+_SCRIPT_NUMS = (
+    GameTag.TAG_SCRIPT_DATA_NUM_1, GameTag.TAG_SCRIPT_DATA_NUM_2,
+    GameTag.TAG_SCRIPT_DATA_NUM_3, GameTag.TAG_SCRIPT_DATA_NUM_4,
+    GameTag.TAG_SCRIPT_DATA_NUM_5, GameTag.TAG_SCRIPT_DATA_NUM_6,
+)
+
+
 def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     """Project one controller's in-play hero + minions from the entity tree."""
     hero = None
@@ -488,5 +503,10 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
         ),
         hero_power_id=hero_power.card_id if hero_power else None,
         hero_power_used=bool(tag(hero_power, GameTag.EXHAUSTED)) if hero_power else False,
+        hero_power_entity_id=hero_power.id if hero_power else 0,
+        hero_power_activated=(
+            bool(tag(hero_power, GameTag.BACON_HERO_POWER_ACTIVATED)) if hero_power else None
+        ),
+        hero_power_nums=tuple(tag(hero_power, t) for t in _SCRIPT_NUMS) if hero_power else None,
         global_info=_global_info(player),
     )

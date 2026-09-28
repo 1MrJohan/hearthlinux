@@ -123,6 +123,10 @@ def board_from_json(raw: str | None) -> PlayerBoard | None:
             "trinkets": tuple(Trinket(**t) for t in d.get("trinkets", ())),
             "secrets": tuple(Secret(**s) for s in d.get("secrets", ())),
             "global_info": d.get("global_info", {}),
+            # JSON has no tuple; a list would make the frozen board unhashable.
+            "hero_power_nums": (
+                tuple(d["hero_power_nums"]) if d.get("hero_power_nums") is not None else None
+            ),
         }
     )
 
