@@ -101,9 +101,18 @@ class RoundArt(Gtk.Widget):
         A no-op when the art is already showing, so callers that refresh often
         (the rail redraws on every HP tick) don't re-trigger fetches.
         """
-        if not card_id or card_id == self._card_id:
+        if card_id == self._card_id:
             return
         self._card_id = card_id
+        # Drop the previous face now, not when the new one arrives. Rail rows
+        # are keyed by place, so after a swap the old texture is somebody
+        # else's hero beside this player's HP — and on a failed fetch it would
+        # stay there. The gradient backdrop is the honest "no art yet".
+        if self._texture is not None:
+            self._texture = None
+            self.queue_draw()
+        if not card_id:
+            return
         cached = art.cached_art(card_id, "crop")
         if cached:
             self._set_texture(cached)
@@ -116,7 +125,9 @@ class RoundArt(Gtk.Widget):
 
     async def _fetch(self, card_id: str) -> None:
         path = await art.fetch_art(card_id, "crop")
-        if path is not None:
+        # A slow fetch can land after the widget has moved on to another card
+        # (and possibly already drawn it from cache); only the current one wins.
+        if path is not None and card_id == self._card_id:
             self._set_texture(path)
 
     def _set_texture(self, path) -> None:

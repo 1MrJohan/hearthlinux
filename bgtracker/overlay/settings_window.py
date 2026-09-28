@@ -34,6 +34,30 @@ log = logging.getLogger(__name__)
 COMMIT_DELAY_MS = 400
 
 
+def _auto_overlay_scale(cfg) -> float:
+    """The scale the overlay picks for itself while `overlay_scale` is Auto.
+
+    Mirrors `OverlayWindow`: the configured monitor's height, else 1440. This
+    is where the spin button starts when Auto is switched off, so that the
+    first value committed is the size already on screen rather than the 0.5
+    floor — which would rebuild the overlay at a quarter of its size.
+    """
+    from gi.repository import Gdk
+
+    height = 1440
+    display = Gdk.Display.get_default()
+    if display is not None and cfg.overlay_monitor:
+        for monitor in display.get_monitors():
+            if monitor.get_connector() == cfg.overlay_monitor:
+                height = monitor.get_geometry().height
+                break
+    return theme.auto_scale(height)
+
+
+# Where a nullable number's spin button waits while its setting is on Auto.
+_AUTO_SEEDS = {"overlay_scale": _auto_overlay_scale}
+
+
 def _title(text: str) -> Gtk.Label:
     label = Gtk.Label(label=text, xalign=0)
     label.add_css_class("settings-section")
@@ -263,6 +287,9 @@ class SettingsWindow(Gtk.ApplicationWindow):
             spin.set_sensitive(current is not None)
             if current is not None:
                 self._quietly(spin.set_value, float(current))
+            elif setting.key in _AUTO_SEEDS:
+                seed = _AUTO_SEEDS[setting.key](self.settings.cfg)
+                self._quietly(spin.set_value, float(seed))
             elif setting.minimum is not None:
                 self._quietly(spin.set_value, float(setting.minimum))
 

@@ -345,6 +345,43 @@ def test_shop_ready_outside_combat_is_ignored():
     assert win.last("set_phase")[0] == "Hero Select"
 
 
+def test_the_first_turn_ends_hero_select():
+    """No fight precedes turn 1, so no ShopReady can flip the title."""
+    app, win = _app()
+    app.on_event(ev.GameStart(), None)
+    app.on_event(ev.HeroPicked(card_id="TB_BaconShop_HERO_34"), None)
+    assert win.last("set_phase")[0] == "Hero Select"
+    app.on_event(ev.Standings(places=(_you(hp=30, armor=12, tier=1),)), None)
+    app.on_event(ev.TurnChange(turn=1), None)
+    assert win.last("set_phase") == ("Recruit Phase", "42 HP · Tavern 1")
+
+
+def test_levelling_mid_phase_updates_the_recruit_meta():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_phase") == ("Recruit Phase", "18 HP · Tavern 3")
+    app.on_event(ev.Standings(places=(_you(hp=18, tier=4),)), None)
+    assert win.last("set_phase") == ("Recruit Phase", "18 HP · Tavern 4")
+
+
+def test_your_row_taking_damage_mid_fight_does_not_reach_the_hud():
+    """The leaderboard hero takes the damage while the fight still animates."""
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.Standings(places=(_you(hp=9, tier=3),)), None)
+    assert win.last("set_phase")[0] == "Combat Forecast"
+    assert "9 HP" not in win.last("set_phase")[1]
+    app.on_event(ev.ShopReady(), None)
+    assert win.last("set_phase") == ("Recruit Phase", "9 HP · Tavern 3")
+
+
+def _you(hp: int, tier: int | None, armor: int = 0) -> ev.Standing:
+    return ev.Standing(place=1, player_id=1, hero_card_id="TB_BaconShop_HERO_34",
+                       health=hp, armor=armor, tier=tier, you=True)
+
+
 def test_phase_meta_reports_your_hp_not_the_opponents():
     app, win = _app()
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
