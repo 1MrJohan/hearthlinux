@@ -118,26 +118,85 @@ def test_deity_secret_without_its_deity_fails_closed():
 
 
 def test_combat_hero_power_fails_closed_instead_of_returning_wrong_odds(monkeypatch):
-    """N'Zoth's Wingmen was the cause of a recorded 100%-win forecast that
-    actually lost: sending no power simulated a different fight."""
+    """Wingmen was the cause of a recorded 100%-win forecast that actually
+    lost: sending no power simulated a different fight. A power whose state is
+    not modeled (Embrace Your Rage needs the summoned minion's id) still must
+    block rather than be dropped."""
     snap = snapshot_from_synthetic()
     snap = replace(
         snap,
-        opponent=replace(snap.opponent, hero_power_id="TB_BaconShop_HP_069"),
+        opponent=replace(snap.opponent, hero_power_id="TB_BaconShop_HP_103"),
     )
     monkeypatch.setattr(
         "bgtracker.sim.mapper.cards.get",
         lambda card_id: {
             "id": card_id,
             "mechanics": ["START_OF_COMBAT", "TRIGGER_VISUAL"],
-            "text": "Start of Combat: Your edge minions attack immediately.",
+            "text": "Start of Combat: Summon and get a minion of your Tier.",
         },
     )
 
     assert simulation_blocker(snap) == (
-        "combat hero power not modeled: TB_BaconShop_HP_069"
+        "combat hero power not modeled: TB_BaconShop_HP_103"
     )
     assert to_battle_info(snap) is None
+
+
+def _with_power(snap, side, card_id, **state):
+    board = replace(getattr(snap, side), hero_power_id=card_id,
+                    hero_power_entity_id=77, **state)
+    return replace(snap, **{side: board})
+
+
+def test_stateless_combat_power_is_sent_instead_of_blocking():
+    snap = _with_power(snapshot_from_synthetic(), "opponent", "TB_BaconShop_HP_069")
+
+    assert simulation_blocker(snap) is None
+    info = to_battle_info(snap)
+    [power] = info["opponentBoard"]["player"]["heroPowers"]
+    assert power["cardId"] == "TB_BaconShop_HP_069"
+    assert power["entityId"] == 77
+    # And the package has to prove it implements it.
+    assert "TB_BaconShop_HP_069" in info["trackerCombatCardIds"]
+    assert info["playerBoard"]["player"]["heroPowers"] == []
+
+
+def test_wax_warband_carries_its_buff_and_activation():
+    """NUM_3 is the buff; without it the sim silently falls back to +1.
+
+    Used even when ACTIVATED reads False: that is your own recruit-phase
+    entity, which never carries the tag, and the power is unconditional."""
+    snap = _with_power(snapshot_from_synthetic(), "friendly", "TB_BaconShop_HP_037a",
+                       hero_power_activated=False, hero_power_nums=(7, 0, 4, 0, 0, 0))
+
+    [power] = to_battle_info(snap)["playerBoard"]["player"]["heroPowers"]
+    assert power["used"] is True
+    assert power["info3"] == 4
+
+
+def test_wax_warband_recorded_before_its_state_fails_closed():
+    snap = _with_power(snapshot_from_synthetic(), "friendly", "TB_BaconShop_HP_037a")
+
+    assert simulation_blocker(snap) == (
+        "hero power state not recorded: TB_BaconShop_HP_037a"
+    )
+    assert to_battle_info(snap) is None
+
+
+def test_rapid_reanimation_is_used_only_when_exhausted():
+    snap = snapshot_from_synthetic()
+    for used in (True, False):
+        s = _with_power(snap, "opponent", "BG25_HERO_103p", hero_power_used=used)
+        [power] = to_battle_info(s)["opponentBoard"]["player"]["heroPowers"]
+        assert power["used"] is used
+
+
+def test_snapshot_reads_the_combat_power_state():
+    snap = snapshot_from_synthetic()
+    for board in (snap.friendly, snap.opponent):
+        if board.hero_power_id:
+            assert board.hero_power_activated is not None
+            assert board.hero_power_nums is not None and len(board.hero_power_nums) == 6
 
 
 def test_recruit_only_hero_power_does_not_suppress_visible_board_odds(monkeypatch):

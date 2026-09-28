@@ -40,6 +40,7 @@ function inputEntities(input) {
             ...minions,
             ...(side.player?.trinkets ?? []),
             ...(side.player?.secrets ?? []),
+            ...(side.player?.heroPowers ?? []),
         );
         for (const minion of minions) result.push(...(minion.enchantments ?? []));
     }
