@@ -39,6 +39,12 @@ def _hero_meta(board) -> str:
     return f"{board.health + board.armor} HP · Tavern {board.tier}"
 
 
+def _standing_meta(you) -> str:
+    """The same line as `_hero_meta`, off your live leaderboard row."""
+    tier = f" · Tavern {you.tier}" if you.tier else ""
+    return f"{you.total_health} HP{tier}"
+
+
 def _combat_meta(snapshot) -> str:
     """`18 HP · vs Tickatus` — your HP and who you are up against."""
     you, opponent = snapshot.friendly, snapshot.opponent
@@ -53,6 +59,10 @@ class OverlayApp:
     # Class-level defaults so a bare __new__ (tests) still has them.
     _in_combat = False
     _shop_meta = ""
+    # Your own leaderboard row. It is re-emitted whenever your hero or tier
+    # changes, so it is what keeps the recruit meta line current after you
+    # level mid-phase — the combat snapshot only fixes it at the last fight.
+    _you: ev.Standing | None = None
     _shop_result: tuple[str | None, int] = (None, 0)
     _mmr_source: int | None = None
 
@@ -305,6 +315,11 @@ class OverlayApp:
         self._queue_flush()
         return False
 
+    def _recruit_meta(self) -> str:
+        # The combat snapshot is the fallback only: it is frozen at the last
+        # fight, so it would still say Tavern 3 after a mid-phase level up.
+        return _standing_meta(self._you) if self._you else self._shop_meta
+
     # Pipeline listener -------------------------------------------------
     def on_event(self, event: ev.Event, prediction: SimResult | None) -> None:
         # State updates must happen even before the window exists — events
@@ -316,6 +331,8 @@ class OverlayApp:
                 self._in_combat = False
                 self._current_turn = None
                 self._shop_result = (None, 0)
+                self._shop_meta = ""
+                self._you = None
                 self._clear_to_idle(st)
                 st.phase = ("Hero Select", "")
                 st.status = "Waiting — choose your hero"
@@ -325,6 +342,12 @@ class OverlayApp:
                 self._current_turn = t
                 if not self._in_combat:
                     st.turn = t
+                    # The first recruit phase has no fight before it, so no
+                    # ShopReady ends hero select; the first turn does. Not a
+                    # ShopBoard: that already fires while heroes are offered.
+                    if st.phase[0] == "Hero Select":
+                        st.phase = ("Recruit Phase", self._recruit_meta())
+                        st.status = ""
             case ev.CombatForecast(snapshot=s) if prediction is not None:
                 # A run still tightening. Same widgets, same treatment — the
                 # numbers simply firm up in place instead of appearing late.
@@ -347,6 +370,11 @@ class OverlayApp:
                 st.buffs = (e, shop, g, fr)
             case ev.Standings(places=places):
                 st.standings = places
+                self._you = next((p for p in places if p.you), self._you)
+                # Only outside combat: mid-fight, your row takes the damage
+                # while the battle is still animating, and would spoil it.
+                if not self._in_combat and st.phase[0] == "Recruit Phase":
+                    st.phase = ("Recruit Phase", self._recruit_meta())
                 self._refresh_hover_board()
             case ev.CombatEnd(snapshot=s):
                 # The engine has resolved the fight, but the client is still
@@ -361,7 +389,7 @@ class OverlayApp:
             case ev.ShopReady() if self._in_combat:
                 self._in_combat = False
                 st.turn = self._current_turn
-                st.phase = ("Recruit Phase", self._shop_meta)
+                st.phase = ("Recruit Phase", self._recruit_meta())
                 st.status = ""
                 st.combat = False
                 st.forecast_live = False

@@ -130,11 +130,13 @@ async def run(overlay, interval: float = 4.0) -> None:
     # Select, Combat Forecast and Recruit Phase is actually watchable; the
     # bookkeeping events in between pass straight through.
     script = [
-        (ev.GameStart(), None, interval),
+        (ev.GameStart(), None, 0.0),
         (_standings(), None, 0.0),
-        (ev.HeroPicked(card_id="TB_BaconShop_HERO_43"), None, 0.0),
-        (ev.TurnChange(turn=7), None, 0.0),
+        (ev.HeroPicked(card_id="TB_BaconShop_HERO_43"), None, interval),
+        # The first turn is what ends hero select — no fight precedes it, so
+        # no ShopReady can. The meta line comes off your leaderboard row.
         (buffs, None, 0.0),
+        (ev.TurnChange(turn=7), None, interval),
         (ev.CombatStart(snapshot=combat), odds, interval),
         (ev.NextOpponent(player_id=4), None, 0.0),
         (ev.CombatEnd(snapshot=combat), None, 0.0),
