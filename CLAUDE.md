@@ -69,8 +69,8 @@ interpreter — currently 3.14, above the `requires-python = ">=3.12"` floor.
 
 Tests run against synthetic `Power.log` content built by `tests/synthetic.py`, plus any
 real captured fixtures in `tests/fixtures/`. `test_sim_roundtrip.py` shells out to the
-real Node sidecar and self-skips when `node` is missing. The whole suite is ~320 tests
-in ~23s — fast enough that there is no reason to run a subset and call it done.
+real Node sidecar and self-skips when `node` is missing. The whole suite is ~560 tests
+in ~45s — fast enough that there is no reason to run a subset and call it done.
 
 ## How work gets done here
 
