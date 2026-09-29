@@ -393,6 +393,17 @@ def _minion_from(entity: Card, enchants: dict[int, list[Enchantment]]) -> Minion
     )
 
 
+# Player-level [DNT] enchantments whose running total the sim applies to
+# minions summoned mid-combat, as (NUM_1 key, NUM_2 key) in BgsPlayerGlobalInfo
+# terms — the same entities read_played_buffs shows in the Buffs panel, and the
+# same read Firestone's converter does. Undead only ever sets NUM_1 ("Give
+# Attack to Undead"). See 2026-09-29-board-buff-global-info-design.md.
+_BOARD_BUFF_ENCHANTS = {
+    "BG25_011pe": ("UndeadAttackBonus", None),
+    "BG31_808pe": ("BeetleAttackBuff", "BeetleHealthBuff"),
+}
+
+
 def _global_info(player) -> dict:
     """Tribe/aura bonuses the sim re-applies to minions summoned mid-combat.
 
@@ -430,6 +441,7 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     trinkets: list[Card] = []
     secrets: list[Card] = []
     enchants: dict[int, list[Enchantment]] = {}
+    board_buffs: dict[str, int] = {}
     for entity in game.entities:
         if not isinstance(entity, Card):
             continue
@@ -457,6 +469,13 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
         elif ctype == CardType.HERO_POWER:
             hero_power = entity
         elif ctype == CardType.ENCHANTMENT:
+            keys = _BOARD_BUFF_ENCHANTS.get(entity.card_id)
+            if keys:
+                for key, num in zip(keys, (GameTag.TAG_SCRIPT_DATA_NUM_1,
+                                           GameTag.TAG_SCRIPT_DATA_NUM_2)):
+                    if key and tag(entity, num):
+                        board_buffs[key] = tag(entity, num)
+                continue
             attached = tag(entity, _ATTACHED)
             if attached:
                 enchants.setdefault(attached, []).append(
@@ -508,5 +527,5 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
             bool(tag(hero_power, GameTag.BACON_HERO_POWER_ACTIVATED)) if hero_power else None
         ),
         hero_power_nums=tuple(tag(hero_power, t) for t in _SCRIPT_NUMS) if hero_power else None,
-        global_info=_global_info(player),
+        global_info={**_global_info(player), **board_buffs},
     )

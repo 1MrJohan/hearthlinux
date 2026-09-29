@@ -105,3 +105,44 @@ def test_no_free_reroll_enchantment_reads_zero():
     b = recruit_phase_game()
     buffs = buffs_from(b)
     assert buffs is None or buffs.free_rerolls == 0
+
+
+def _projected(b, player_id: int = 1):
+    """The board the simulator is sent, off the same log the panel reads."""
+    from bgtracker.parse.exporter import LiveGameProcessor
+    from bgtracker.state.game import project_player_board
+
+    b.tag_change("GameEntity", "TURN", 2)
+    proc = LiveGameProcessor()
+    proc.feed(b.lines)
+    return project_player_board(proc._tracks[-1].exporter.game, player_id)
+
+
+def test_undead_and_beetle_bonuses_reach_the_simulator():
+    """The sim adds these to Undead and Beetles summoned mid-combat; without
+    them every summon came in at base stats while the panel showed the buff."""
+    b = recruit_phase_game()
+    b.entity(20, "BG25_011pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=1, ATTACHED=2, TAG_SCRIPT_DATA_NUM_1=7)
+    b.entity(21, "BG31_808pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=1, ATTACHED=2, TAG_SCRIPT_DATA_NUM_1=12,
+             TAG_SCRIPT_DATA_NUM_2=8)
+    info = _projected(b).global_info
+    assert info["UndeadAttackBonus"] == 7
+    assert (info["BeetleAttackBuff"], info["BeetleHealthBuff"]) == (12, 8)
+
+
+def test_opponent_board_buffs_are_projected_for_the_opponent():
+    b = recruit_phase_game()
+    b.entity(20, "BG31_808pe", CARDTYPE="ENCHANTMENT", ZONE="PLAY",
+             CONTROLLER=2, ATTACHED=3, TAG_SCRIPT_DATA_NUM_1=83,
+             TAG_SCRIPT_DATA_NUM_2=83)
+    assert "BeetleAttackBuff" not in _projected(b, 1).global_info
+    assert _projected(b, 2).global_info["BeetleAttackBuff"] == 83
+
+
+def test_board_buff_outside_play_is_not_sent():
+    b = recruit_phase_game()
+    b.entity(20, "BG25_011pe", CARDTYPE="ENCHANTMENT", ZONE="REMOVEDFROMGAME",
+             CONTROLLER=1, ATTACHED=2, TAG_SCRIPT_DATA_NUM_1=7)
+    assert "UndeadAttackBonus" not in _projected(b).global_info
