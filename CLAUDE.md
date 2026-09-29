@@ -358,7 +358,11 @@ names the lobby's tribes, and a guessed list would exclude a real one — see
 `docs/superpowers/specs/2026-09-10-lobby-tribes-design.md`. Several tribes have
 lobby-wide accumulating buffs stored as *player-level* tags, which the code surfaces as
 the Buffs panel and forwards to the sim as `globalInfo`: Blood Gem (Quilboar), Elemental,
-Pirate, and Tavern Spell. Undead has no player counter — it is tracked per-minion.
+Pirate, and Tavern Spell. Undead attack and Beetle Army have no player *tag*, but each has
+a player-level `[DNT]` enchantment (`BG25_011pe`, `BG31_808pe`) holding the running total
+in `NUM_1/2`; those go to the sim as `UndeadAttackBonus` / `BeetleAttack/HealthBuff`, which
+it applies to every Undead and Beetle summoned mid-combat. See
+`docs/superpowers/specs/2026-09-29-board-buff-global-info-design.md`.
 
 **Tavern shop buffs** (Nomi, Dune Dweller and friends) buff minions *while they sit in
 Bob's tavern*, and are a different quantity from those counters — see the entry below.
@@ -486,11 +490,18 @@ tends to reintroduce a fixed bug.
   value is in `TAG_SCRIPT_DATA_NUM_1/2`.** These entities carry no `ATK` or `HEALTH`, so
   reading those yields a silent 0/0 rather than an error. `BG_ShopBuff_MultiRace` covers
   several tribes at once and the log never says which, so it is labelled for what it is.
-- **Hero powers are deliberately NOT sent to the simulator.** The sim needs per-power
-  `info` state; sending a bare id (info=0) makes it misapply even non-combat powers —
-  verified swinging a 16% combat to 0%. `globalInfo` is safe and *is* sent. A visible
-  power whose text acts during combat now suppresses that forecast entirely: omitting
-  it would simulate a different fight, not merely add sampling uncertainty.
+- **Hero powers are sent only from an allow-list, each with its own state.** The sim
+  reads per-power `used`/`info…info6`; a bare id with `info = 0` was seen swinging a 16%
+  combat to 0%. `_MODELED_POWERS` in `sim/mapper.py` builds the exact `BgsHeroPower` for
+  six powers (Swatting Insects, Wingmen, ALL Will Burn!, Fragrant Phylactery, Rapid
+  Reanimation, Wax Warband); any other power whose text acts during combat suppresses
+  that forecast, because omitting it simulates a different fight. Two traps: Firestone's
+  converter reads `used` off `BACON_HERO_POWER_ACTIVATED`, not `EXHAUSTED` — but the
+  *friendly* snapshot reads the recruit-phase power entity, which never carries it,
+  while the opponent's reads a combat copy that does. And a power whose state predates
+  being recorded (Wax Warband's `NUM_3`) fails closed rather than simulate at the
+  library's fallback. Sending the six lowered win Brier 0.158 → 0.082 on the 222 decided
+  fights they unblocked. See `docs/superpowers/specs/2026-09-28-combat-hero-powers-design.md`.
 - **Restarting mid-game is safe and bounded — but only because catch-up does not
   simulate.** A fresh `Tailer` records the file size already present as a stable
   historical high-water mark, then drains toward it in 256 KiB slices with a 1ms
@@ -513,10 +524,11 @@ tends to reintroduce a fixed bug.
 
 ## Odds accuracy workflow
 
-The mapper covers stats, keywords, tier, enchantments, hand, secrets, and trinkets. Recruit-only
-unmapped features are already reflected in the live snapshot and degrade accuracy at
-most. Known current-fight state is different: combat-active hero powers and card effects
-absent from the pinned Firestone package fail closed as unavailable. `bgtracker stats`
+The mapper covers stats, keywords, tier, enchantments, hand, secrets, trinkets, and six
+allow-listed combat hero powers. Recruit-only unmapped features are already reflected in
+the live snapshot and degrade accuracy at most. Known current-fight state is different:
+combat-active hero powers off the allow-list and card effects absent from the pinned
+Firestone package fail closed as unavailable. `bgtracker stats`
 prints a calibration table (predicted vs actual win rate per bucket) — that table is the
 evidence for what to map next. Every combat row in `history.db` stores both board
 snapshots as JSON alongside the prediction, so a mispredicted fight can be re-simulated
