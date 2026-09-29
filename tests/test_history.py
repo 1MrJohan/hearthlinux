@@ -195,6 +195,49 @@ def test_ghost_fights_are_excluded_whether_or_not_they_hurt(tmp_path):
     assert "(no recorded combats with predictions)" in out
 
 
+def _certain_win_fights(tmp_path, placement, outcomes):
+    """One game of fights all predicted at 95%, recorded with `outcomes`."""
+    path = tmp_path / "history.db"
+    db = HistoryDB(path)
+    game = db.start_game("g1")
+    prediction = SimResult(won_percent=95, tied_percent=0, lost_percent=5,
+                           avg_damage_won=10, avg_damage_lost=4, sims_run=8000)
+    for turn, outcome in enumerate(outcomes, start=3):
+        db.record_combat(game, BoardSnapshot(turn=turn, friendly=_board(1, 20),
+                                             opponent=_board(2, 20)), prediction, outcome)
+    db.end_game(game, placement, final_turn=3 + len(outcomes))
+    db.close()
+    return report(path)
+
+
+def test_an_unrecorded_outcome_you_survived_scores_as_a_non_loss(tmp_path):
+    """Lethal wins before the elimination fix were stored with no outcome.
+
+    The classifier returns 'loss' first whenever HP drops, so a missing
+    outcome on a fight you lived through is a proven non-loss. Dropping them
+    emptied the top bucket's wins; they belong in the loss table, not the win
+    table, since a win cannot be told from a tie.
+    """
+    out = _certain_win_fights(tmp_path, placement=5, outcomes=[None, "win", "loss"])
+    assert "1 fight(s) have no recorded outcome but did not cost HP, 1 of them" in out
+    # Win table: only the two scored fights. Loss table: all three.
+    assert "90-100%:    2 combats  win  50%" in out
+    assert "0- 10%:    3 combats, actual loss 33%" in out
+
+
+def test_the_last_fight_of_a_lost_game_without_an_outcome_stays_unknown(tmp_path):
+    """No end board is exactly what the fight that killed you looks like."""
+    out = _certain_win_fights(tmp_path, placement=6, outcomes=["win", None])
+    assert "1 fight(s) excluded with no outcome at all" in out
+    assert "0- 10%:    1 combats, actual loss 0%" in out
+
+
+def test_the_last_fight_of_a_won_game_is_survived(tmp_path):
+    out = _certain_win_fights(tmp_path, placement=1, outcomes=["win", None])
+    assert "no outcome at all" not in out
+    assert "0- 10%:    2 combats, actual loss 0%" in out
+
+
 def test_the_report_migrates_a_stale_database(tmp_path):
     """The report must not read a pre-migration schema.
 

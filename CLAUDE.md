@@ -604,6 +604,12 @@ Read the calibration table with two things in mind:
   the "certain" buckets, and data-quality bugs land there too — ghost fights and the
   `CONTROLLER`-vs-`PLAYER_ID` confusion between them accounted for more than half of the
   fights the sim called at 100% and got wrong.
+- **A missing outcome is not simply unknown.** `_classify_outcome` returns `'loss'` first
+  whenever HP drops and the end board is readable, so a fight with no outcome that you
+  are known to have survived (a later fight in the game, or a won game) did not cost
+  HP. `stats.py` scores those as non-losses in the loss table and leaves them out of the
+  win table, since a win cannot be told from a tie; only the last fight of a lost game
+  stays unknown, because no end board is exactly what the fatal fight looks like.
 
 ## Overlay
 
