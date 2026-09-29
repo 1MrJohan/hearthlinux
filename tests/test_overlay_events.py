@@ -328,13 +328,67 @@ def test_an_unavailable_shop_forecast_replaces_stale_odds():
     assert win.last("set_hover_board")[5] == "Odds unavailable for this board"
 
 
-def test_a_friendly_board_change_hides_odds_while_they_recalculate():
+def test_a_friendly_board_change_keeps_the_odds_labelled_as_recalculating():
+    """Hiding them blanked the line on every buy, sell and reposition, while
+    the board was being arranged against it. The label keeps it honest: it no
+    longer claims its age, so it cannot pass for the new board's number."""
     app, win = _app()
     _prepare_opponent_hover(app)
     app._on_hover_slot(0)
     app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
     app.on_event(ev.ShopBoard(board=SNAPSHOT.friendly, turn=8), None)
+    text = win.last("set_hover_board")[5]
+    assert text.startswith("Win 63")
+    assert text.endswith("recalculating…")
+    assert "turns old" not in text
+
+
+def test_a_failed_recalculation_does_not_leave_the_old_odds_standing():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    event = ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8)
+    app.on_event(event, ODDS)
+    app.on_event(ev.ShopBoard(board=SNAPSHOT.friendly, turn=8), None)
+    app.on_event(event, None)
+    app.on_event(ev.ShopBoard(board=SNAPSHOT.friendly, turn=8), None)
+    assert win.last("set_hover_board")[5] == "Odds unavailable for this board"
+
+
+def test_a_board_change_before_any_forecast_shows_nothing():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    app.on_event(ev.ShopBoard(board=SNAPSHOT.friendly, turn=8), None)
     assert win.last("set_hover_board")[5] is None
+
+
+def test_the_shop_forecast_is_labelled_and_carries_lethal_risk():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    lethal = SimResult(won_percent=41, tied_percent=12, lost_percent=47,
+                       avg_damage_won=6, avg_damage_lost=9, lost_lethal_percent=9.4)
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), lethal)
+    assert win.last("set_hover_board")[5] == (
+        "Win 41  ·  Tie 12  ·  Loss 47  ·  ☠ 9%  ·  2 turns old"
+    )
+
+
+def test_a_safe_board_carries_no_lethal_term():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app._on_hover_slot(0)
+    app.on_event(ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), ODDS)
+    assert "☠" not in win.last("set_hover_board")[5]
+
+
+def test_the_rail_rings_the_next_opponent_by_player_id():
+    app, win = _app()
+    _prepare_opponent_hover(app)
+    app.on_event(ev.NextOpponent(player_id=5), None)
+    app._flush()
+    assert win.last("set_next_opponent") == (5,)
 
 
 def test_shop_ready_outside_combat_is_ignored():

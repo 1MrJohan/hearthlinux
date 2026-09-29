@@ -45,6 +45,18 @@ def _standing_meta(you) -> str:
     return f"{you.total_health} HP{tier}"
 
 
+def _odds_line(prediction) -> str:
+    """`Win 41 · Tie 12 · Loss 47 · ☠ 9%` — lethal only when there is any."""
+    line = (
+        f"Win {prediction.won_percent:.0f}  ·  Tie {prediction.tied_percent:.0f}"
+        f"  ·  Loss {prediction.lost_percent:.0f}"
+    )
+    # Below 1% it would print as "☠ 0%" on every safe board.
+    if prediction.lost_lethal_percent >= 1:
+        line += f"  ·  ☠ {prediction.lost_lethal_percent:.0f}%"
+    return line
+
+
 def _combat_meta(snapshot) -> str:
     """`18 HP · vs Tickatus` — your HP and who you are up against."""
     you, opponent = snapshot.friendly, snapshot.opponent
@@ -65,6 +77,9 @@ class OverlayApp:
     _you: ev.Standing | None = None
     _shop_result: tuple[str | None, int] = (None, 0)
     _mmr_source: int | None = None
+    # The odds half of the next-opponent line, kept apart from its age so a
+    # recalculation can relabel it without re-parsing the text.
+    _next_odds: str | None = None
 
     def __init__(self, settings=None):
         from gi.repository import Gio
@@ -327,6 +342,7 @@ class OverlayApp:
         st = self.state
         match event:
             case ev.GameStart():
+                self._next_odds = None
                 self._hide_mmr_prompt()
                 self._in_combat = False
                 self._current_turn = None
@@ -408,14 +424,17 @@ class OverlayApp:
                 # opponent-memory lookup below can run.
                 st.next_opponent_id = pid
                 st.next_forecast = None
+                self._next_odds = None
                 self._refresh_hover_board()
             case ev.ShopBoard():
                 # The number belongs to the exact friendly board submitted to
-                # the simulator. Hide it during debounce/recalculation after a
-                # buy, sell or reposition instead of captioning the new board
-                # with the old board's probability.
-                st.next_forecast = None
-                self._refresh_hover_board()
+                # the simulator, so it must not caption the new board as if it
+                # were its own. It used to be hidden until the re-run landed,
+                # which blanked it on every buy, sell and reposition — while
+                # the board was being arranged against it. Keep it, labelled.
+                if self._next_odds:
+                    st.next_forecast = f"{self._next_odds}  ·  recalculating…"
+                    self._refresh_hover_board()
             case ev.ShopForecast(opponent_id=pid, seen_turn=seen_turn, turn=turn) \
                     if prediction is not None:
                 # The derived event belongs to the pipeline's current opponent.
@@ -429,18 +448,19 @@ class OverlayApp:
                         "current" if age <= 0
                         else f"{age} turn{'s' if age > 1 else ''} old"
                     )
-                    st.next_forecast = (
-                        f"{prediction.won_percent:.0f} / {prediction.tied_percent:.0f}"
-                        f" / {prediction.lost_percent:.0f}  ·  {staleness}"
-                    )
+                    self._next_odds = _odds_line(prediction)
+                    st.next_forecast = f"{self._next_odds}  ·  {staleness}"
                     self._refresh_hover_board()
             case ev.ShopForecast(opponent_id=pid) if prediction is None:
                 if st.next_opponent_id is None:
                     st.next_opponent_id = pid
                 if pid == st.next_opponent_id:
+                    # A failed recompute must not leave the old number standing.
+                    self._next_odds = None
                     st.next_forecast = "Odds unavailable for this board"
                     self._refresh_hover_board()
             case ev.GameEnd(placement=p):
+                self._next_odds = None
                 self._in_combat = False
                 self._current_turn = None
                 self._shop_result = (None, 0)

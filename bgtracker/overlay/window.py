@@ -607,5 +607,8 @@ class OverlayWindow(Gtk.Window):
         self.rail.set_standings(standings)
         self._set_content("rail", bool(standings))
 
+    def set_next_opponent(self, player_id: int | None) -> None:
+        self.rail.set_next_opponent(player_id)
+
     def set_hot_place(self, place: int | None) -> None:
         self.rail.set_hot(place)

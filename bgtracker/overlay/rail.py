@@ -69,8 +69,13 @@ class _Row(Gtk.Box):
         status.append(self.tier)
         self.append(status)
 
+    player_id: int | None = None
+    dead: bool = False
+
     def update(self, standing: Standing | None) -> None:
         self.set_visible(standing is not None)
+        self.player_id = standing.player_id if standing else None
+        self.dead = bool(standing and standing.dead)
         if standing is None:
             return
         self.orb.load(standing.hero_card_id)
@@ -96,6 +101,12 @@ class _Row(Gtk.Box):
             self.hp.add_css_class("dead")
             self.tier.add_css_class("dead")
 
+    def set_next(self, is_next: bool) -> None:
+        if is_next:
+            self.orb.add_css_class("next")
+        else:
+            self.orb.remove_css_class("next")
+
 
 class LeaderboardRail(Gtk.Box):
     def __init__(self, scale: float = 1.0):
@@ -106,6 +117,7 @@ class LeaderboardRail(Gtk.Box):
             row.set_visible(False)
             self.append(row)
         self._places: list[int] = []
+        self._next: int | None = None
 
     def set_standings(self, standings: tuple[Standing, ...]) -> None:
         ordered = sorted(standings, key=lambda s: s.place)[:SLOTS]
@@ -114,6 +126,20 @@ class LeaderboardRail(Gtk.Box):
         for row in self._rows[len(ordered):]:
             row.update(None)
         self._places = [s.place for s in ordered]
+        # Rows are keyed by place, so a reorder moves the opponent to another
+        # row; re-resolve the marker against PLAYER_ID every time.
+        self._apply_next()
+
+    def set_next_opponent(self, player_id: int | None) -> None:
+        """Ring the row of the player you fight next (PLAYER_ID), or none."""
+        self._next = player_id
+        self._apply_next()
+
+    def _apply_next(self) -> None:
+        for row in self._rows:
+            row.set_next(
+                self._next is not None and row.player_id == self._next and not row.dead
+            )
 
     def set_hot(self, place: int | None) -> None:
         """Highlight the row for `place` (1-based), or none."""
