@@ -246,3 +246,13 @@ def test_game_detail_in_turn_order(db):
 
 def test_game_detail_unknown_game_is_empty(db):
     assert review.game_detail(db, 12345) == []
+
+
+def test_a_rate_is_over_finished_games_not_all_started(db):
+    """Games abandoned at hero select have no placement to be top 4 or not;
+    counting them in the denominator understated every top-4 rate."""
+    _game(db, "2026-09-30T10:00:00+00:00", placement=2)
+    _game(db, "2026-09-30T11:00:00+00:00", placement=6)
+    _game(db, "2026-09-30T12:00:00+00:00", ended=False)
+    [row] = review.period_stats(db, "day", tz=UTC)
+    assert (row.games, row.placed, row.top4) == (3, 2, 1)

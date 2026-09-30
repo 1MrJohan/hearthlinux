@@ -28,6 +28,7 @@ BUCKETS = ("day", "week", "month")
 class PeriodRow:
     period: str            # '2026-07-21' | '2026-W30' | '2026-07'
     games: int             # all games started in the period, finished or not
+    placed: int            # finished games — the denominator for any rate
     avg_placement: float | None   # over finished games only
     top4: int
     firsts: int
@@ -109,7 +110,7 @@ def _period_bounds(moment: datetime, bucket: str) -> tuple[datetime, datetime]:
     return start, next_month
 
 
-def _net_mmr(
+def net_mmr(
     readings: list[tuple[datetime, int]], start: datetime, end: datetime
 ) -> int | None:
     """Rating movement the readings can vouch for over [start, end).
@@ -151,10 +152,11 @@ def period_stats(db: HistoryDB, bucket: str, tz: tzinfo | None = None) -> list[P
         rows.append(PeriodRow(
             period=key,
             games=len(members),
+            placed=len(placed),
             avg_placement=sum(placed) / len(placed) if placed else None,
             top4=sum(1 for p in placed if p <= 4),
             firsts=sum(1 for p in placed if p == 1),
-            net_mmr=_net_mmr(readings, start, end),
+            net_mmr=net_mmr(readings, start, end),
         ))
     return sorted(rows, key=lambda r: r.period, reverse=True)
 
