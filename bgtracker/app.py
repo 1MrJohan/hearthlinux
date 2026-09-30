@@ -17,7 +17,7 @@ from bgtracker.headless import print_event, render_board_line
 from bgtracker.history.db import HistoryDB
 from bgtracker.parse import events as ev
 from bgtracker.screen.rating import RatingReader
-from bgtracker.sim.client import SimClient, SimResult
+from bgtracker.sim.client import SimClient, SimResult, UnsupportedCombatCardsError
 from bgtracker.sim.mapper import simulation_blocker, to_battle_info
 from bgtracker.state.game import BoardSnapshot, PlayerBoard, is_ghost
 from bgtracker.state.opponents import OpponentMemory
@@ -96,8 +96,10 @@ class Pipeline:
                     self._cancel_shop_forecast()
                     self._shop_board = None
                     self.memory.record(snap.turn, snap.opponent)
-                    prediction = await self._simulate(snap, historical)
+                    prediction, reason = await self._simulate(snap, historical)
                     self._pending = (snap, prediction)
+                    if prediction is None:
+                        derived = ev.OddsUnavailable(reason=reason)
                 case ev.CombatEnd(snapshot=end_snap, eliminated=eliminated):
                     derived = self._finish_combat(end_snap, eliminated)
                 case ev.NextOpponent(player_id=pid):
@@ -246,16 +248,26 @@ class Pipeline:
         for listener in self.listeners:
             listener(event, None)
 
-    async def _simulate(self, snapshot: BoardSnapshot, historical: bool = False) -> SimResult | None:
+    async def _simulate(
+        self, snapshot: BoardSnapshot, historical: bool = False
+    ) -> tuple[SimResult | None, str]:
+        """The forecast, or None and a short reason the HUD can show."""
         # A combat that already happened cannot be forecast, and the player is
         # not waiting on it. Ahead of the board check so a catch-up prints
         # nothing at all.
-        if self.sim is None or historical:
-            return None
+        if historical:
+            return None, "tracker started mid-fight"
+        if self.sim is None:
+            return None, "simulator not running"
         info = to_battle_info(snapshot)
         if info is None:
-            print(f"  odds: n/a ({simulation_blocker(snapshot) or 'unsupported combat state'})")
-            return None
+            blocker = simulation_blocker(snapshot) or "unsupported combat state"
+            print(f"  odds: n/a ({blocker})")
+            return None, describe_blocker(blocker)
+        # Before the await: the run can take seconds, and until something says
+        # combat began the HUD would still show the recruit phase.
+        for listener in self.listeners:
+            listener(ev.CombatSimulating(snapshot=snapshot), None)
         def show_partial(provisional: SimResult) -> None:
             # A heavy 7v7 board takes seconds; this puts a usable number on
             # screen in a fraction of that and tightens it in place.
@@ -281,11 +293,11 @@ class Pipeline:
                 f"(dmg dealt {result.damage_dealt_text} / taken {result.damage_taken_text}{cap_note})"
                 f"  [{sample}]{lethal}"
             )
-            return result
+            return result, ""
         except Exception as exc:
             log.warning("simulation failed: %r", exc)
             print("  odds: unavailable")
-            return None
+            return None, describe_failure(exc)
 
     def _finish_combat(
         self, end_snap: BoardSnapshot, eliminated: frozenset[int] = frozenset()
@@ -302,6 +314,37 @@ class Pipeline:
             outcome=outcome,
             damage=_combat_damage(start_snap, end_snap),
         )
+
+
+def describe_blocker(blocker: str) -> str:
+    """`simulation_blocker`'s wording, for a player rather than a log."""
+    def powers(text: str) -> str:
+        return ", ".join(cards.name(p.strip()) for p in text.split(","))
+
+    for prefix, render in (
+        ("combat hero power not modeled: ", lambda rest: f"{powers(rest)} isn't simulated yet"),
+        ("hero power state not recorded: ", lambda rest: f"{powers(rest)} state not recorded"),
+    ):
+        if blocker.startswith(prefix):
+            return render(blocker[len(prefix):])
+    return {
+        "combat secret identity hidden": "a secret is hidden",
+        "deity secret incomplete": "Old God secret incomplete",
+        "board incomplete": "a board isn't fully visible",
+    }.get(blocker, blocker)
+
+
+def describe_failure(exc: Exception) -> str:
+    """Why a run that did start produced nothing, in a few words."""
+    if isinstance(exc, UnsupportedCombatCardsError):
+        names = [cards.name(c) for c in exc.card_ids]
+        shown = ", ".join(names[:2]) + ("…" if len(names) > 2 else "")
+        return f"simulator can't model {shown}" if names else "simulator can't model this board"
+    if isinstance(exc, TimeoutError):
+        return "simulator timed out"
+    if "died" in str(exc):
+        return "simulator crashed"
+    return "simulator error"
 
 
 def _combat_damage(start: BoardSnapshot, end: BoardSnapshot) -> int:

@@ -80,6 +80,9 @@ class OverlayApp:
     # The odds half of the next-opponent line, kept apart from its age so a
     # recalculation can relabel it without re-parsing the text.
     _next_odds: str | None = None
+    # Turn of the fight whose partial odds are on screen, so a run that then
+    # fails can keep them as provisional instead of wiping real numbers.
+    _partial_turn: int | None = None
 
     def __init__(self, settings=None):
         from gi.repository import Gio
@@ -364,11 +367,23 @@ class OverlayApp:
                     if st.phase[0] == "Hero Select":
                         st.phase = ("Recruit Phase", self._recruit_meta())
                         st.status = ""
+            case ev.CombatSimulating(snapshot=s):
+                # Combat began and a run is under way. Enter the combat view
+                # now: until the first partial, the HUD would otherwise keep
+                # the recruit title and the previous fight's result.
+                self._in_combat = True
+                self._current_turn = s.turn
+                self._partial_turn = None
+                self._enter_combat(st, s)
+                self._clear_forecast(st)
+                st.status = "Simulating…"
+                self._refresh_hover_board()
             case ev.CombatForecast(snapshot=s) if prediction is not None:
                 # A run still tightening. Same widgets, same treatment — the
                 # numbers simply firm up in place instead of appearing late.
                 self._in_combat = True
                 self._current_turn = s.turn
+                self._partial_turn = s.turn
                 self._enter_combat(st, s)
                 self._set_forecast(st, prediction)
                 self._refresh_hover_board()
@@ -378,10 +393,19 @@ class OverlayApp:
                 self._enter_combat(st, s)
                 if prediction is not None:
                     self._set_forecast(st, prediction)
+                elif self._partial_turn == s.turn:
+                    # The run failed after partials: they are real numbers
+                    # from this fight, so keep them and say what they are.
+                    st.status = "Provisional"
                 else:
                     self._clear_forecast(st)
-                    st.status = "Odds unavailable for this combat"
+                    st.status = "No odds"
+                self._partial_turn = None
                 self._refresh_hover_board()
+            case ev.OddsUnavailable(reason=reason) if self._in_combat:
+                # Follows the CombatStart above; names the cause the log has.
+                prefix = st.status or "No odds"
+                st.status = f"{prefix} · {reason}" if reason else prefix
             case ev.Buffs(entries=e, shop=shop, gold_next_turn=g, free_rerolls=fr):
                 st.buffs = (e, shop, g, fr)
             case ev.Standings(places=places):

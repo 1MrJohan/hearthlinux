@@ -139,6 +139,8 @@ async def run(overlay, interval: float = 4.0) -> None:
         # no ShopReady can. The meta line comes off your leaderboard row.
         (buffs, None, 0.0),
         (ev.TurnChange(turn=7), None, interval),
+        # The run under way: the HUD leaves the recruit phase before any odds.
+        (ev.CombatSimulating(snapshot=combat), None, interval),
         (ev.CombatStart(snapshot=combat), odds, interval),
         (ev.NextOpponent(player_id=4), None, 0.0),
         (ev.CombatEnd(snapshot=combat), None, 0.0),
@@ -154,6 +156,10 @@ async def run(overlay, interval: float = 4.0) -> None:
         # becomes an unavailable label instead of resurrecting stale odds.
         (ev.ShopBoard(board=you, turn=8), None, 0.0),
         (ev.ShopForecast(opponent_id=4, seen_turn=6, turn=8), None, interval),
+        # A fight the simulator cannot model says why, instead of a generic
+        # "unavailable" — the reason the log already had.
+        (ev.CombatStart(snapshot=combat), None, 0.0),
+        (ev.OddsUnavailable(reason="Embrace Your Rage isn't simulated yet"), None, interval),
         # Game over, read off the end screen: the rating lands in the status
         # line and nothing asks for it.
         (ev.GameEnd(placement=3), None, 0.0),

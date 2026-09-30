@@ -521,7 +521,47 @@ def test_combat_without_a_prediction_clears_stale_odds():
     app.on_event(ev.CombatEnd(snapshot=SNAPSHOT), None)
     app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
     assert win.last("set_odds") == (None, None, None)
-    assert win.last("set_status") == ("Odds unavailable for this combat",)
+    assert win.last("set_status") == ("No odds",)
+
+
+def test_simulating_leaves_the_recruit_phase_and_the_last_result_behind():
+    """Until the first partial, the HUD kept the previous fight's pinned result."""
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatResult(turn=7, outcome="win", damage=14), None)
+    app.on_event(ev.ShopReady(), None)
+    app.on_event(ev.CombatSimulating(snapshot=SNAPSHOT), None)
+    assert win.last("set_phase")[0] == "Combat Forecast"
+    assert win.last("set_status") == ("Simulating…",)
+    assert win.last("set_result") == (None, 0)
+    assert win.last("set_odds") == (None, None, None)
+
+
+def test_the_hud_names_why_a_fight_has_no_odds():
+    app, win = _app()
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
+    app.on_event(ev.OddsUnavailable(reason="Embrace Your Rage isn't simulated yet"), None)
+    assert win.last("set_status") == ("No odds · Embrace Your Rage isn't simulated yet",)
+
+
+def test_a_failed_run_keeps_its_partial_odds_as_provisional():
+    app, win = _app()
+    app.on_event(ev.CombatSimulating(snapshot=SNAPSHOT), None)
+    app.on_event(ev.CombatForecast(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
+    app.on_event(ev.OddsUnavailable(reason="simulator crashed"), None)
+    assert win.last("set_odds") == (63, 9, 28)
+    assert win.last("set_status") == ("Provisional · simulator crashed",)
+
+
+def test_the_next_fight_does_not_inherit_provisional_odds():
+    app, win = _app()
+    app.on_event(ev.CombatForecast(snapshot=SNAPSHOT), ODDS)
+    app.on_event(ev.CombatStart(snapshot=SNAPSHOT), None)
+    later = BoardSnapshot(turn=8, friendly=SNAPSHOT.friendly, opponent=SNAPSHOT.opponent)
+    app.on_event(ev.CombatStart(snapshot=later), None)
+    assert win.last("set_odds") == (None, None, None)
+    assert win.last("set_status") == ("No odds",)
 
 
 def test_a_later_supported_combat_clears_the_unavailable_message():

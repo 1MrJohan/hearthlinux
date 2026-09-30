@@ -52,6 +52,30 @@ class CombatForecast:
 
 
 @dataclass(frozen=True)
+class CombatSimulating:
+    """A run has started for this fight; odds are on the way.
+
+    Derived by the pipeline, fanned out before it awaits the simulator, and
+    only when a run will actually start. It is what lets the HUD leave the
+    recruit phase — and the previous fight's result — the moment combat
+    begins, rather than when the first partial lands.
+    """
+
+    snapshot: BoardSnapshot
+
+
+@dataclass(frozen=True)
+class OddsUnavailable:
+    """This fight gets no forecast, and why — short enough for the HUD.
+
+    Derived by the pipeline right after a `CombatStart` that carries no
+    prediction. See docs/superpowers/specs/2026-09-30-odds-states-design.md.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class CombatResult:
     """How the fight the tracker just forecast actually went.
 
@@ -180,6 +204,8 @@ Event = (
     | TurnChange
     | CombatStart
     | CombatForecast
+    | CombatSimulating
+    | OddsUnavailable
     | CombatEnd
     | CombatResult
     | ShopReady
