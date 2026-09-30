@@ -13,8 +13,10 @@ unlinked file, and the window re-queries whenever it becomes the active window
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
+import cairo
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -28,7 +30,7 @@ from . import theme  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-CHART_H = 200
+CHART_H = 260
 RANGES = (("7 days", 7), ("14 days", 14), ("30 days", 30),
           ("90 days", 90), ("All", None))
 
@@ -36,6 +38,20 @@ RANGES = (("7 days", 7), ("14 days", 14), ("30 days", 30),
 def _rgb(hex_colour: str) -> tuple[float, float, float]:
     value = hex_colour.lstrip("#")
     return tuple(int(value[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+
+def _nice_ticks(lo: float, hi: float, target: int = 4) -> list[float]:
+    """Round gridline values spanning [lo, hi] — 6,200 / 6,400, not 6,266 / 6,719."""
+    if hi == lo:
+        lo, hi = lo - 50, hi + 50
+    # At least 1: ratings are whole numbers, and a sub-1 step over a tight
+    # spread (6143..6145) prints the same rounded label several times over.
+    raw = max((hi - lo) / target, 1)
+    magnitude = 10 ** math.floor(math.log10(raw))
+    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= raw)
+    start = math.floor(lo / step) * step
+    count = math.ceil(hi / step) - math.floor(lo / step)
+    return [start + k * step for k in range(count + 1)]
 
 
 def _title(text: str) -> Gtk.Label:
@@ -105,6 +121,9 @@ class HistoryWindow(Gtk.ApplicationWindow):
         self._range_days: int | None = 30
         self._bucket = "day"
         self._expanded: set[int] = set()
+        self._hover: int | None = None
+        # (left pad, x step, point count) of the last draw, for hover hit-testing
+        self._chart_layout: tuple[float, float, int] | None = None
 
         self.set_title("Match History")
         self.set_default_size(920, 720)
@@ -174,8 +193,13 @@ class HistoryWindow(Gtk.ApplicationWindow):
         self._chart.set_hexpand(True)
         self._chart.add_css_class("history-chart")
         self._chart.set_draw_func(self._draw_chart)
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_chart_motion)
+        motion.connect("leave", self._on_chart_leave)
+        self._chart.add_controller(motion)
         box.append(self._chart)
 
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         ranges = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         ranges.add_css_class("linked")
         group = None
@@ -189,7 +213,12 @@ class HistoryWindow(Gtk.ApplicationWindow):
             button.set_active(days == self._range_days)
             button.connect("toggled", self._on_range, days)
             ranges.append(button)
-        box.append(ranges)
+        controls.append(ranges)
+        self._range_delta = Gtk.Label(label="", xalign=1)
+        self._range_delta.set_hexpand(True)
+        self._range_delta.add_css_class("history-cell")
+        controls.append(self._range_delta)
+        box.append(controls)
         return box
 
     def _periods_section(self) -> Gtk.Widget:
@@ -231,6 +260,8 @@ class HistoryWindow(Gtk.ApplicationWindow):
             self._rating_note.set_label("Could not read the history database.")
             return
         self._render_rating()
+        self._render_range_delta()
+        self._hover = None
         self._chart.queue_draw()
         self._render_periods(periods)
         self._render_games(games, details)
@@ -274,10 +305,18 @@ class HistoryWindow(Gtk.ApplicationWindow):
         return [p for p in self._series if p[0] >= cutoff]
 
     def _draw_chart(self, _area, ctx, width, height) -> None:
+        """One step per reading, not per unit of time.
+
+        Ratings arrive in bursts — a dozen in an evening, then nothing for a
+        week — so a time axis crushes each session into a blob and spends the
+        width on the gaps between them. Spacing readings evenly gives every
+        game the same room; day boundaries are drawn as faint rules instead.
+        """
         points = self._visible_series()
-        pad_x, pad_y = 56, 22
+        self._chart_layout = None
+        pad_l, pad_r, pad_t, pad_b = 52, 18, 16, 26
         ctx.select_font_face("sans")
-        ctx.set_font_size(11)
+        ctx.set_font_size(12)
         if len(points) < 2:
             ctx.set_source_rgba(*_rgb(theme.DIM), 0.9)
             message = (
@@ -289,50 +328,145 @@ class HistoryWindow(Gtk.ApplicationWindow):
             ctx.show_text(message)
             return
 
-        times = [p[0].timestamp() for p in points]
         values = [p[1] for p in points]
-        t0, t1 = min(times), max(times)
-        lo, hi = min(values), max(values)
-        if hi == lo:
-            lo, hi = lo - 50, hi + 50
-        span_t = t1 - t0 or 1.0
+        ticks = _nice_ticks(min(values), max(values))
+        lo, hi = ticks[0], ticks[-1]
+        step = (width - pad_l - pad_r) / (len(points) - 1)
+        bottom = height - pad_b
+        self._chart_layout = (pad_l, step, len(points))
 
-        def x(t: float) -> float:
-            return pad_x + (t - t0) / span_t * (width - pad_x - 14)
+        def x(i: int) -> float:
+            return pad_l + i * step
 
         def y(v: float) -> float:
-            return pad_y + (hi - v) / (hi - lo) * (height - 2 * pad_y)
+            return pad_t + (hi - v) / (hi - lo) * (bottom - pad_t)
 
-        # gridlines at min / mid / max, labelled
+        # horizontal gridlines on round values
         ctx.set_line_width(1)
-        for value in (lo, (lo + hi) / 2, hi):
-            ctx.set_source_rgba(*_rgb("#d4af37"), 0.14)
-            ctx.move_to(pad_x, y(value))
-            ctx.line_to(width - 14, y(value))
+        for value in ticks:
+            ctx.set_source_rgba(*_rgb(theme.GOLD), 0.12)
+            ctx.move_to(pad_l, round(y(value)) + 0.5)
+            ctx.line_to(width - pad_r, round(y(value)) + 0.5)
             ctx.stroke()
-            ctx.set_source_rgba(*_rgb(theme.DIM), 0.9)
-            ctx.move_to(8, y(value) + 4)
-            ctx.show_text(f"{value:.0f}")
+            label = f"{value:,.0f}"
+            extents = ctx.text_extents(label)
+            ctx.set_source_rgba(*_rgb(theme.DIM), 0.95)
+            ctx.move_to(pad_l - 8 - extents.width, y(value) + 4)
+            ctx.show_text(label)
 
-        # date range along the bottom
-        ctx.set_source_rgba(*_rgb(theme.DIM), 0.9)
-        ctx.move_to(pad_x, height - 6)
-        ctx.show_text(points[0][0].strftime("%b %d"))
-        last = points[-1][0].strftime("%b %d")
-        extents = ctx.text_extents(last)
-        ctx.move_to(width - 14 - extents.width, height - 6)
-        ctx.show_text(last)
+        # a faint rule where each new day starts, labelled when there is room
+        label_right = -1.0
+        for i, (at, _v) in enumerate(points):
+            if i and at.date() == points[i - 1][0].date():
+                continue
+            if i:
+                rule_x = round(x(i) - step / 2) + 0.5
+                ctx.set_source_rgba(*_rgb(theme.GOLD), 0.10)
+                ctx.move_to(rule_x, pad_t)
+                ctx.line_to(rule_x, bottom)
+                ctx.stroke()
+            label = at.strftime("%b %d")
+            extents = ctx.text_extents(label)
+            left = min(max(x(i) - extents.width / 2, pad_l - 12),
+                       width - pad_r - extents.width)
+            if left > label_right + 10:
+                ctx.set_source_rgba(*_rgb(theme.DIM), 0.95)
+                ctx.move_to(left, height - 8)
+                ctx.show_text(label)
+                label_right = left + extents.width
 
-        # the trend itself
+        # soft fill under the trend, then the trend itself
+        ctx.move_to(x(0), y(values[0]))
+        for i, v in enumerate(values[1:], 1):
+            ctx.line_to(x(i), y(v))
+        path = ctx.copy_path()
+        ctx.line_to(x(len(values) - 1), bottom)
+        ctx.line_to(x(0), bottom)
+        ctx.close_path()
+        fill = cairo.LinearGradient(0, pad_t, 0, bottom)
+        fill.add_color_stop_rgba(0, *_rgb(theme.GOLD), 0.28)
+        fill.add_color_stop_rgba(1, *_rgb(theme.GOLD), 0.0)
+        ctx.set_source(fill)
+        ctx.fill()
+
+        ctx.new_path()
+        ctx.append_path(path)
         ctx.set_source_rgb(*_rgb(theme.GOLD))
-        ctx.set_line_width(2)
-        ctx.move_to(x(times[0]), y(values[0]))
-        for t, v in zip(times[1:], values[1:]):
-            ctx.line_to(x(t), y(v))
+        ctx.set_line_width(2.5)
+        ctx.set_line_join(cairo.LINE_JOIN_ROUND)
         ctx.stroke()
-        for t, v in zip(times, values):
-            ctx.arc(x(t), y(v), 3, 0, 6.2832)
-            ctx.fill()
+
+        # dots only while they stay distinct; the latest reading always gets one
+        if step >= 9:
+            for i, v in enumerate(values):
+                ctx.arc(x(i), y(v), 2.5, 0, 2 * math.pi)
+                ctx.fill()
+        last = len(values) - 1
+        ctx.arc(x(last), y(values[last]), 4.5, 0, 2 * math.pi)
+        ctx.fill()
+
+        hover = self._hover
+        if hover is not None and hover < len(points):
+            self._draw_hover(ctx, points, hover, x(hover), y(values[hover]),
+                             width, pad_t, bottom)
+
+    def _draw_hover(self, ctx, points, i, px, py, width, top, bottom) -> None:
+        ctx.set_source_rgba(*_rgb(theme.INK), 0.35)
+        ctx.set_line_width(1)
+        ctx.move_to(round(px) + 0.5, top)
+        ctx.line_to(round(px) + 0.5, bottom)
+        ctx.stroke()
+        ctx.set_source_rgb(*_rgb(theme.INK))
+        ctx.arc(px, py, 5, 0, 2 * math.pi)
+        ctx.fill()
+
+        at, rating = points[i]
+        head = f"{rating:,}"
+        sub = at.strftime("%b %d, %H:%M")
+        delta = rating - points[i - 1][1] if i else None
+        ctx.set_font_size(14)
+        head_w = ctx.text_extents(head).x_advance
+        ctx.set_font_size(12)
+        delta_text = f"  {delta:+d}" if delta is not None else ""
+        delta_w = ctx.text_extents(delta_text).x_advance
+        sub_w = ctx.text_extents(sub).x_advance
+        box_w = max(head_w + delta_w, sub_w) + 20
+        box_h = 44
+        left = px + 12 if px + 12 + box_w <= width - 4 else px - 12 - box_w
+        top_y = min(max(py - box_h / 2, 4), bottom - box_h)
+
+        ctx.rectangle(left, top_y, box_w, box_h)
+        ctx.set_source_rgba(0.07, 0.05, 0.02, 0.94)
+        ctx.fill_preserve()
+        ctx.set_source_rgba(*_rgb(theme.GOLD), 0.6)
+        ctx.stroke()
+
+        ctx.set_font_size(14)
+        ctx.set_source_rgb(*_rgb(theme.GOLD))
+        ctx.move_to(left + 10, top_y + 19)
+        ctx.show_text(head)
+        if delta is not None:
+            ctx.set_font_size(12)
+            ctx.set_source_rgb(*_rgb(theme.WIN if delta >= 0 else theme.LOSS))
+            ctx.show_text(delta_text)
+        ctx.set_font_size(12)
+        ctx.set_source_rgb(*_rgb(theme.DIM))
+        ctx.move_to(left + 10, top_y + 36)
+        ctx.show_text(sub)
+
+    def _render_range_delta(self) -> None:
+        points = self._visible_series()
+        label = self._range_delta
+        for name in ("history-delta-up", "history-delta-down"):
+            label.remove_css_class(name)
+        if len(points) < 2:
+            label.set_label("")
+            return
+        delta = points[-1][1] - points[0][1]
+        span = next(name for name, days in RANGES if days == self._range_days)
+        span = "all time" if self._range_days is None else f"last {span}"
+        label.set_label(f"{delta:+,d} over {span} · {len(points)} readings")
+        label.add_css_class("history-delta-up" if delta >= 0 else "history-delta-down")
 
     def _render_periods(self, rows: list[review.PeriodRow]) -> None:
         grid = self._period_grid
@@ -446,6 +580,22 @@ class HistoryWindow(Gtk.ApplicationWindow):
     def _on_range(self, button: Gtk.ToggleButton, days: int | None) -> None:
         if button.get_active():
             self._range_days = days
+            self._hover = None
+            self._render_range_delta()
+            self._chart.queue_draw()
+
+    def _on_chart_motion(self, _ctrl, mx: float, _my: float) -> None:
+        if self._chart_layout is None:
+            return
+        pad_l, step, count = self._chart_layout
+        index = min(max(round((mx - pad_l) / step), 0), count - 1)
+        if index != self._hover:
+            self._hover = index
+            self._chart.queue_draw()
+
+    def _on_chart_leave(self, _ctrl) -> None:
+        if self._hover is not None:
+            self._hover = None
             self._chart.queue_draw()
 
     def _on_bucket(self, dropdown, _param) -> None:
