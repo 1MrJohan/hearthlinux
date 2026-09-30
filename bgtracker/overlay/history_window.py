@@ -54,6 +54,21 @@ def _nice_ticks(lo: float, hi: float, target: int = 4) -> list[float]:
     return [start + k * step for k in range(count + 1)]
 
 
+def _segments(points, breaks) -> list[list[int]]:
+    """Indices of `points` split wherever a reading is a break.
+
+    A line drawn straight across a break would claim a history nobody
+    recorded — untracked games happened there — so the trend stops and
+    restarts instead of interpolating the gap.
+    """
+    runs: list[list[int]] = []
+    for i, (at, _rating) in enumerate(points):
+        if not runs or at in breaks:
+            runs.append([])
+        runs[-1].append(i)
+    return runs
+
+
 def _title(text: str) -> Gtk.Label:
     label = Gtk.Label(label=text, xalign=0)
     label.add_css_class("settings-section")
@@ -118,6 +133,9 @@ class HistoryWindow(Gtk.ApplicationWindow):
     def __init__(self, application):
         super().__init__(application=application)
         self._series: list[tuple[datetime, int]] = []
+        # Readings the chain of screen deltas does not join up to: untracked
+        # games happened just before them (review.mmr_breaks).
+        self._breaks: set[datetime] = set()
         self._range_days: int | None = 30
         self._bucket = "day"
         self._expanded: set[int] = set()
@@ -250,6 +268,7 @@ class HistoryWindow(Gtk.ApplicationWindow):
             db = HistoryDB()
             try:
                 self._series = review.mmr_series(db)
+                self._breaks = set(review.mmr_breaks(db))
                 periods = review.period_stats(db, self._bucket)
                 games = review.game_list(db)
                 details = {g.id: review.game_detail(db, g.id) for g in games}
@@ -298,10 +317,15 @@ class HistoryWindow(Gtk.ApplicationWindow):
         self._refresh()
 
     # -- rendering ---------------------------------------------------------
-    def _visible_series(self) -> list[tuple[datetime, int]]:
+    def _cutoff(self) -> datetime | None:
         if self._range_days is None:
+            return None
+        return datetime.now(timezone.utc).astimezone() - timedelta(days=self._range_days)
+
+    def _visible_series(self) -> list[tuple[datetime, int]]:
+        cutoff = self._cutoff()
+        if cutoff is None:
             return self._series
-        cutoff = datetime.now(timezone.utc).astimezone() - timedelta(days=self._range_days)
         return [p for p in self._series if p[0] >= cutoff]
 
     def _draw_chart(self, _area, ctx, width, height) -> None:
@@ -375,26 +399,34 @@ class HistoryWindow(Gtk.ApplicationWindow):
                 ctx.show_text(label)
                 label_right = left + extents.width
 
-        # soft fill under the trend, then the trend itself
-        ctx.move_to(x(0), y(values[0]))
-        for i, v in enumerate(values[1:], 1):
-            ctx.line_to(x(i), y(v))
-        path = ctx.copy_path()
-        ctx.line_to(x(len(values) - 1), bottom)
-        ctx.line_to(x(0), bottom)
-        ctx.close_path()
+        # soft fill under the trend, then the trend itself — one run per
+        # stretch the readings vouch for, broken where untracked games sit
         fill = cairo.LinearGradient(0, pad_t, 0, bottom)
         fill.add_color_stop_rgba(0, *_rgb(theme.GOLD), 0.28)
         fill.add_color_stop_rgba(1, *_rgb(theme.GOLD), 0.0)
-        ctx.set_source(fill)
-        ctx.fill()
+        for run in _segments(points, self._breaks):
+            ctx.new_path()
+            ctx.move_to(x(run[0]), y(values[run[0]]))
+            for i in run[1:]:
+                ctx.line_to(x(i), y(values[i]))
+            path = ctx.copy_path()
+            ctx.line_to(x(run[-1]), bottom)
+            ctx.line_to(x(run[0]), bottom)
+            ctx.close_path()
+            ctx.set_source(fill)
+            ctx.fill()
 
+            ctx.new_path()
+            ctx.append_path(path)
+            ctx.set_source_rgb(*_rgb(theme.GOLD))
+            ctx.set_line_width(2.5)
+            ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+            ctx.stroke()
+            if len(run) == 1:
+                # A lone reading between two breaks draws no line at all.
+                ctx.arc(x(run[0]), y(values[run[0]]), 3, 0, 2 * math.pi)
+                ctx.fill()
         ctx.new_path()
-        ctx.append_path(path)
-        ctx.set_source_rgb(*_rgb(theme.GOLD))
-        ctx.set_line_width(2.5)
-        ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-        ctx.stroke()
 
         # dots only while they stay distinct; the latest reading always gets one
         if step >= 9:
@@ -423,7 +455,14 @@ class HistoryWindow(Gtk.ApplicationWindow):
         at, rating = points[i]
         head = f"{rating:,}"
         sub = at.strftime("%b %d, %H:%M")
-        delta = rating - points[i - 1][1] if i else None
+        # A difference of readings, not a game's change: several games can
+        # sit between two readings, and across a break untracked ones do.
+        broken = at in self._breaks
+        delta = rating - points[i - 1][1] if i and not broken else None
+        if broken:
+            sub += " · untracked games before"
+        elif delta is not None:
+            sub += " · since last reading"
         ctx.set_font_size(14)
         head_w = ctx.text_extents(head).x_advance
         ctx.set_font_size(12)
@@ -459,13 +498,23 @@ class HistoryWindow(Gtk.ApplicationWindow):
         label = self._range_delta
         for name in ("history-delta-up", "history-delta-down"):
             label.remove_css_class(name)
-        if len(points) < 2:
+        cutoff = self._cutoff()
+        # The Results table's rule (review.net_mmr): the baseline is the last
+        # reading *before* the range, so the games that moved the first
+        # reading inside it count. Diffing the visible points instead left
+        # this label disagreeing with the Net MMR column on the same screen.
+        delta = review.net_mmr(
+            self._series,
+            cutoff or datetime.min.replace(tzinfo=timezone.utc),
+            datetime.max.replace(tzinfo=timezone.utc),
+        )
+        if delta is None or not points:
             label.set_label("")
             return
-        delta = points[-1][1] - points[0][1]
         span = next(name for name, days in RANGES if days == self._range_days)
         span = "all time" if self._range_days is None else f"last {span}"
-        label.set_label(f"{delta:+,d} over {span} · {len(points)} readings")
+        count = f"{len(points)} reading{'' if len(points) == 1 else 's'}"
+        label.set_label(f"{delta:+,d} over {span} · {count}")
         label.add_css_class("history-delta-up" if delta >= 0 else "history-delta-down")
 
     def _render_periods(self, rows: list[review.PeriodRow]) -> None:
@@ -484,7 +533,10 @@ class HistoryWindow(Gtk.ApplicationWindow):
             head.add_css_class("history-head")
             grid.attach(head, col, 0, 1, 1)
         for r, row in enumerate(rows, start=1):
-            top4 = f"{row.top4} ({100 * row.top4 / row.games:.0f}%)"
+            # Over finished games: an unfinished one (abandoned at hero
+            # select, tracker stopped) has no placement to be top 4 or not.
+            top4 = (f"{row.top4} ({100 * row.top4 / row.placed:.0f}%)"
+                    if row.placed else "—")
             avg = f"{row.avg_placement:.2f}" if row.avg_placement is not None else "—"
             grid.attach(_cell(row.period), 0, r, 1, 1)
             grid.attach(_cell(str(row.games)), 1, r, 1, 1)
