@@ -671,3 +671,28 @@ def test_a_lobby_reading_shows_the_rating_alone():
     app.on_event(ev.RatingRead(rating=6069), None)
     assert app.state.status == "MMR 6069"
     assert win.last("set_mmr_prompt") is None
+
+
+def test_a_tracker_notice_shows_while_idle():
+    """The tracker is launched by the game; its console is read by nobody."""
+    app, win = _app()
+    app.on_event(ev.TrackerNotice(kind="sim", text="Combat simulator not running — odds are off"), None)
+    assert win.last("set_status") == ("Combat simulator not running — odds are off",)
+
+
+def test_a_missing_log_outranks_a_missing_simulator():
+    app, win = _app()
+    app.on_event(ev.TrackerNotice(kind="sim", text="sim down"), None)
+    app.on_event(ev.TrackerNotice(kind="log", text="restart Hearthstone"), None)
+    assert win.last("set_status") == ("restart Hearthstone",)
+    app.on_event(ev.TrackerNotice(kind="log", text=None), None)
+    assert win.last("set_status") == ("sim down",)
+    app.on_event(ev.TrackerNotice(kind="sim", text=None), None)
+    assert win.last("set_status") == ("waiting for game…",)
+
+
+def test_a_notice_never_overwrites_a_game_in_progress():
+    app, win = _app()
+    app.on_event(ev.GameStart(), None)
+    app.on_event(ev.TrackerNotice(kind="sim", text="sim down"), None)
+    assert win.last("set_status") == ("Waiting — choose your hero",)

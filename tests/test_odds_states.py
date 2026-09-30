@@ -88,3 +88,45 @@ def test_every_blocker_gets_a_player_facing_reason(monkeypatch):
     ):
         text = describe_blocker(blocker)
         assert text != blocker and ":" not in text and "_" not in text, text
+
+
+def test_a_down_simulator_raises_a_notice_that_a_working_run_clears():
+    from bgtracker.sim.client import SimulatorUnavailable
+
+    class FlakySim(StubSim):
+        down = True
+
+        async def simulate(self, battle_info, on_partial=None, sims=None, background=False):
+            if self.down:
+                raise SimulatorUnavailable("simulator failed to start")
+            return await super().simulate(battle_info, on_partial, sims, background)
+
+    sim = FlakySim()
+    pipe = Pipeline(sim=sim, db=None)
+    seen: list = []
+    pipe.listeners.append(lambda e, p: seen.append(e))
+    asyncio.run(pipe.handle([ev.CombatStart(snapshot=SNAP)]))
+    assert ev.TrackerNotice(kind="sim", text=Pipeline.SIM_DOWN) in seen
+    assert ev.OddsUnavailable(reason="simulator not running") in seen
+    sim.down = False
+    asyncio.run(pipe.handle([ev.CombatStart(snapshot=SNAP)]))
+    assert seen[-1] != ev.TrackerNotice(kind="sim", text=Pipeline.SIM_DOWN)
+    assert ev.TrackerNotice(kind="sim", text=None) in seen
+
+
+def test_a_repeated_notice_is_fanned_out_once():
+    pipe = Pipeline(sim=None, db=None)
+    seen: list = []
+    pipe.listeners.append(lambda e, p: seen.append(e))
+    pipe.notice("sim", "down")
+    pipe.notice("sim", "down")
+    assert seen == [ev.TrackerNotice(kind="sim", text="down")]
+
+
+def test_a_game_in_the_log_clears_the_log_notice():
+    pipe = Pipeline(sim=None, db=None)
+    seen: list = []
+    pipe.listeners.append(lambda e, p: seen.append(e))
+    pipe.notice("log", "restart Hearthstone")
+    asyncio.run(pipe.handle([ev.GameStart(log_id="g")]))
+    assert ev.TrackerNotice(kind="log", text=None) in seen

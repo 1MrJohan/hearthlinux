@@ -132,6 +132,11 @@ async def run(overlay, interval: float = 4.0) -> None:
     # Select, Combat Forecast and Recruit Phase is actually watchable; the
     # bookkeeping events in between pass straight through.
     script = [
+        # Before any game: a tracker problem the console alone would hide.
+        # Only the first cycle shows it — later ones start from "Game Over".
+        (ev.TrackerNotice(kind="log", text="Restart Hearthstone once to turn on its game log"),
+         None, interval),
+        (ev.TrackerNotice(kind="log", text=None), None, 0.0),
         (ev.GameStart(), None, 0.0),
         (_standings(), None, 0.0),
         (ev.HeroPicked(card_id="TB_BaconShop_HERO_43"), None, interval),
