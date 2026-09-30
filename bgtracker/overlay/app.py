@@ -83,6 +83,9 @@ class OverlayApp:
     # Turn of the fight whose partial odds are on screen, so a run that then
     # fails can keep them as provisional instead of wiping real numbers.
     _partial_turn: int | None = None
+    # Tracker notices by kind. Replaced, never mutated, so the class-level
+    # default is safe to share across bare __new__ instances in tests.
+    _notices: dict[str, str | None] = {}
 
     def __init__(self, settings=None):
         from gi.repository import Gio
@@ -333,6 +336,13 @@ class OverlayApp:
         self._queue_flush()
         return False
 
+    def _notice_text(self) -> str | None:
+        # A missing log outranks a missing simulator: nothing works without it.
+        for kind in ("log", "sim"):
+            if self._notices.get(kind):
+                return self._notices[kind]
+        return None
+
     def _recruit_meta(self) -> str:
         # The combat snapshot is the fallback only: it is frozen at the last
         # fight, so it would still say Tavern 3 after a mid-phase level up.
@@ -402,6 +412,12 @@ class OverlayApp:
                     st.status = "No odds"
                 self._partial_turn = None
                 self._refresh_hover_board()
+            case ev.TrackerNotice(kind=kind, text=text):
+                self._notices = {**self._notices, kind: text}
+                # Idle only: in a game the per-fight reasons already say what
+                # is wrong, and a notice must not overwrite the phase status.
+                if st.phase[0] == "":
+                    st.status = self._notice_text() or "waiting for game…"
             case ev.OddsUnavailable(reason=reason) if self._in_combat:
                 # Follows the CombatStart above; names the cause the log has.
                 prefix = st.status or "No odds"

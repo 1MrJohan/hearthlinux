@@ -76,6 +76,19 @@ class OddsUnavailable:
 
 
 @dataclass(frozen=True)
+class TrackerNotice:
+    """A problem with the tracker itself, for a player who never sees its console.
+
+    Derived by the pipeline. `kind` groups notices that clear together ('log',
+    'sim'); `text = None` clears that kind. See
+    docs/superpowers/specs/2026-09-30-tracker-notices-design.md.
+    """
+
+    kind: str
+    text: str | None
+
+
+@dataclass(frozen=True)
 class CombatResult:
     """How the fight the tracker just forecast actually went.
 
@@ -206,6 +219,7 @@ Event = (
     | CombatForecast
     | CombatSimulating
     | OddsUnavailable
+    | TrackerNotice
     | CombatEnd
     | CombatResult
     | ShopReady

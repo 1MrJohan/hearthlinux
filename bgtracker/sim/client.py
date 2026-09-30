@@ -24,6 +24,17 @@ log = logging.getLogger(__name__)
 SIDECAR_DIR = Path(__file__).resolve().parent.parent.parent / "sidecar"
 
 
+# How long a failed sidecar start is trusted before trying again. Long enough
+# that a broken install costs one spawn per half minute rather than one per
+# fight and per debounced shop forecast; short enough that odds come back on
+# their own soon after the install is fixed.
+RETRY_AFTER_SECONDS = 30.0
+
+
+class SimulatorUnavailable(RuntimeError):
+    """The sidecar could not be started (or recently could not be)."""
+
+
 class UnsupportedCombatCardsError(RuntimeError):
     """The installed simulator cannot model combat behavior in this board."""
 
@@ -142,6 +153,8 @@ class SimClient:
         # in it), so doctor and the diagnostics bundle surface it rather than
         # throwing it away after the log line.
         self.sidecar_version: str | None = None
+        # Monotonic time before which a start is not re-attempted.
+        self._down_until = 0.0
 
     @classmethod
     def from_config(cls, cfg, **overrides) -> "SimClient":
@@ -167,29 +180,44 @@ class SimClient:
 
     async def _ensure_proc(self) -> asyncio.subprocess.Process:
         if self._proc is None or self._proc.returncode is not None:
-            env = None
-            if self.workers:
-                env = {**os.environ, "BGTRACKER_SIM_WORKERS": str(self.workers)}
-            self._proc = await asyncio.create_subprocess_exec(
-                "node",
-                str(self.sidecar_dir / "server.mjs"),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-                env=env,
-                # Applied in the child between fork and exec, so every worker
-                # thread the sidecar creates — including ones retireWorker
-                # spawns mid-game — inherits it. Always set: even with the CPU
-                # policy off it installs PR_SET_PDEATHSIG.
-                preexec_fn=spawn_preexec(self.cpu_policy),
-            )
-            ready = await asyncio.wait_for(self._proc.stdout.readline(), timeout=60)
-            info = json.loads(ready)
-            self.sidecar_version = info.get("simulator")
-            log.info(
-                "simulator sidecar ready (v%s, %s worker(s))",
-                info.get("simulator"), info.get("workers", 1),
-            )
+            if time.monotonic() < self._down_until:
+                raise SimulatorUnavailable("simulator failed to start recently")
+            try:
+                return await self._start_proc()
+            except Exception as exc:
+                # One bad start used to disable odds until a restart. Remember
+                # it instead, and try again once the backoff has passed.
+                self._down_until = time.monotonic() + RETRY_AFTER_SECONDS
+                await self._stop()
+                raise SimulatorUnavailable(f"simulator failed to start: {exc!r}") from exc
+        return self._proc
+
+    async def _start_proc(self) -> asyncio.subprocess.Process:
+        env = None
+        if self.workers:
+            env = {**os.environ, "BGTRACKER_SIM_WORKERS": str(self.workers)}
+        self._proc = await asyncio.create_subprocess_exec(
+            "node",
+            str(self.sidecar_dir / "server.mjs"),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+            # Applied in the child between fork and exec, so every worker
+            # thread the sidecar creates — including ones retireWorker
+            # spawns mid-game — inherits it. Always set: even with the CPU
+            # policy off it installs PR_SET_PDEATHSIG.
+            preexec_fn=spawn_preexec(self.cpu_policy),
+        )
+        ready = await asyncio.wait_for(self._proc.stdout.readline(), timeout=60)
+        if not ready:
+            raise RuntimeError("sidecar exited before it was ready")
+        info = json.loads(ready)
+        self.sidecar_version = info.get("simulator")
+        log.info(
+            "simulator sidecar ready (v%s, %s worker(s))",
+            info.get("simulator"), info.get("workers", 1),
+        )
         return self._proc
 
     async def _request(self, payload: dict, timeout: float, on_partial=None) -> dict:
@@ -304,6 +332,8 @@ class SimClient:
             self.workers = workers
             self.cpu_policy = cpu_policy
             await self._stop()
+            # A deliberate settings change is worth a fresh attempt now.
+            self._down_until = 0.0
             await self._ensure_proc()
         return True
 

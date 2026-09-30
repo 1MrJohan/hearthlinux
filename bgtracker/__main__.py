@@ -39,21 +39,27 @@ TAIL_READ_BYTES = 256 * 1024
 BACKLOG_YIELD_SECONDS = 0.001
 
 
-async def start_sim(cfg) -> SimClient | None:
+async def start_sim(cfg) -> tuple[SimClient, bool]:
+    """The client, and whether it answered at startup.
+
+    Always returned, even when the first ping fails: the client retries on a
+    later request (after a backoff), so a broken node that gets fixed mid-
+    session brings odds back without a restart. Returning None used to
+    disable them until then — two whole games on 2026-09-30.
+    """
     sim = SimClient.from_config(cfg)
     if await sim.ping():
         status.sidecar_up = True
         status.sidecar_workers = cfg.sim_workers or None
-        return sim
+        return sim, True
     status.sidecar_up = False
-    log.warning("combat simulator unavailable (node/sidecar missing?) — odds disabled")
-    await sim.close()
-    return None
+    log.warning("combat simulator unavailable (node/sidecar missing?) — will retry")
+    return sim, False
 
 
 async def replay(settings: SettingsService, path: Path, with_odds: bool, record: bool) -> None:
     cfg = settings.cfg
-    sim = await start_sim(cfg) if with_odds else None
+    sim = (await start_sim(cfg))[0] if with_odds else None
     pipeline = Pipeline(sim=sim, db=HistoryDB() if record else None)
     processor = LiveGameProcessor()
     try:
@@ -70,7 +76,11 @@ async def replay(settings: SettingsService, path: Path, with_odds: bool, record:
             await sim.close()
 
 
-def _target_logs_dir(cfg, strict: bool = False) -> Path | None:
+LOG_CONFIG_NOTICE = "Restart Hearthstone once to turn on its game log"
+NO_LOG_NOTICE = "No game log yet — if you're in a match, restart Hearthstone"
+
+
+def _target_logs_dir(cfg, strict: bool = False, notice=None) -> Path | None:
     """Resolve the install dir, switch logging on in it, and prune old sessions.
 
     Shared by startup and the runtime re-target. `strict` lets the startup path
@@ -88,6 +98,8 @@ def _target_logs_dir(cfg, strict: bool = False) -> Path | None:
     _, changed = discovery.ensure_log_config(hs_dir)
     if changed:
         print("log.config written — restart Hearthstone for logging to take effect")
+        if notice is not None:
+            notice("log", LOG_CONFIG_NOTICE)
     logs_dir = hs_dir / "Logs"
     removed = prune_old_sessions(logs_dir, cfg.log_keep_days, cfg.log_keep_min)
     if removed:
@@ -105,12 +117,20 @@ def _rating_reader() -> RatingReader | None:
 
 async def live(settings: SettingsService, overlay=None) -> None:
     cfg = settings.cfg
-    logs_dir = _target_logs_dir(cfg, strict=True)
-    sim = await start_sim(cfg)
+    # Discovery first, so a missing install fails before a sidecar is spawned;
+    # its notice is held until there is a pipeline to carry it.
+    held: list[tuple[str, str]] = []
+    logs_dir = _target_logs_dir(cfg, strict=True, notice=lambda *n: held.append(n))
+    sim, sim_up = await start_sim(cfg)
     pipeline = Pipeline(sim=sim, db=HistoryDB(), rating_reader=_rating_reader(), cfg=cfg)
     if overlay is not None:
         overlay.pipeline = pipeline
         pipeline.listeners.append(overlay.on_event)
+    # After the listeners: these are for a player who never sees the console.
+    for kind, text in held:
+        pipeline.notice(kind, text)
+    if not sim_up:
+        pipeline.notice("sim", Pipeline.SIM_DOWN)
 
     if sim is not None:
         settings.subscribe(SIM, lambda _keys: sim.apply_config(cfg))
@@ -140,7 +160,7 @@ async def live(settings: SettingsService, overlay=None) -> None:
         while True:
             if retarget.is_set():
                 retarget.clear()
-                relocated = _target_logs_dir(cfg)
+                relocated = _target_logs_dir(cfg, notice=pipeline.notice)
                 if relocated is not None and relocated != logs_dir:
                     logs_dir = relocated
                     # Drop the old session so the block below rebuilds against
@@ -174,6 +194,7 @@ async def live(settings: SettingsService, overlay=None) -> None:
                     and asyncio.get_running_loop().time() - session_started > 90
                 ):
                     warned_no_log = True
+                    pipeline.notice("log", NO_LOG_NOTICE)
                     print(
                         "note: no Power.log yet this session — normal if you haven't "
                         "entered a match. If it stays missing during a game, logging "

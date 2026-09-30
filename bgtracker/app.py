@@ -17,7 +17,12 @@ from bgtracker.headless import print_event, render_board_line
 from bgtracker.history.db import HistoryDB
 from bgtracker.parse import events as ev
 from bgtracker.screen.rating import RatingReader
-from bgtracker.sim.client import SimClient, SimResult, UnsupportedCombatCardsError
+from bgtracker.sim.client import (
+    SimClient,
+    SimResult,
+    SimulatorUnavailable,
+    UnsupportedCombatCardsError,
+)
 from bgtracker.sim.mapper import simulation_blocker, to_battle_info
 from bgtracker.state.game import BoardSnapshot, PlayerBoard, is_ghost
 from bgtracker.state.opponents import OpponentMemory
@@ -60,6 +65,22 @@ class Pipeline:
         self._shop_board: PlayerBoard | None = None
         self._shop_task: asyncio.Task | None = None
         self._rating_task: asyncio.Task | None = None
+        # The notice currently raised per kind, so each is fanned out once.
+        self._notices: dict[str, str | None] = {}
+
+    SIM_DOWN = "Combat simulator not running — odds are off"
+
+    def notice(self, kind: str, text: str | None) -> None:
+        """Raise (or, with None, clear) a tracker notice for the overlay.
+
+        Deduplicated per kind, so a retry loop that keeps failing does not
+        re-render the same line every half minute.
+        """
+        if self._notices.get(kind) == text:
+            return
+        self._notices[kind] = text
+        for listener in self.listeners:
+            listener(ev.TrackerNotice(kind=kind, text=text), None)
 
     async def handle(self, events: list[ev.Event], historical: bool = False) -> None:
         """Fan events out. `historical` marks a batch the tracker did not watch
@@ -76,6 +97,8 @@ class Pipeline:
             derived: ev.Event | None = None
             match event:
                 case ev.GameStart(log_id=log_id):
+                    # A game in the log proves logging works.
+                    self.notice("log", None)
                     self.memory.reset()
                     self._pending = None
                     self._cancel_shop_forecast()
@@ -277,6 +300,8 @@ class Pipeline:
 
         try:
             result = await self.sim.simulate(info, on_partial=show_partial)
+            status.sidecar_up = True
+            self.notice("sim", None)
             _apply_damage_cap(result, snapshot)
             status.note_sim(result)
             cap_note = f", cap {snapshot.damage_cap}" if snapshot.damage_cap else ""
@@ -297,6 +322,9 @@ class Pipeline:
         except Exception as exc:
             log.warning("simulation failed: %r", exc)
             print("  odds: unavailable")
+            if isinstance(exc, SimulatorUnavailable):
+                status.sidecar_up = False
+                self.notice("sim", self.SIM_DOWN)
             return None, describe_failure(exc)
 
     def _finish_combat(
@@ -336,6 +364,8 @@ def describe_blocker(blocker: str) -> str:
 
 def describe_failure(exc: Exception) -> str:
     """Why a run that did start produced nothing, in a few words."""
+    if isinstance(exc, SimulatorUnavailable):
+        return "simulator not running"
     if isinstance(exc, UnsupportedCombatCardsError):
         names = [cards.name(c) for c in exc.card_ids]
         shown = ", ".join(names[:2]) + ("…" if len(names) > 2 else "")
