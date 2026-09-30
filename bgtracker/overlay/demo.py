@@ -108,6 +108,8 @@ async def run(overlay, interval: float = 4.0) -> None:
     shop_odds = SimResult(
         won_percent=41, tied_percent=12, lost_percent=47,
         avg_damage_won=9, avg_damage_lost=11, sims_run=2000,
+        # Nonzero so the popout's lethal term has something to show.
+        lost_lethal_percent=9.0,
     )
     buffs = ev.Buffs(
         entries=(

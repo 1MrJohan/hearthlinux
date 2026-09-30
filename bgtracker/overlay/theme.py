@@ -361,6 +361,12 @@ $pip_rules
     border: ${b2}px solid $gold;
     box-shadow: 0 0 ${p10}px rgba(244,212,122,.7);
 }
+/* The player you fight next: the "you" ring in the Loss colour, since gold
+   already marks both your own row and the hovered one. */
+.orb.next {
+    border: ${b2}px solid $loss;
+    box-shadow: 0 0 ${p10}px rgba(227,122,92,.7);
+}
 .orb.dead { filter: grayscale(1); opacity: 0.5; }
 .rank {
     min-width: ${rank}px;

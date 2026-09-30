@@ -127,6 +127,9 @@ def render(window, state: OverlayState, previous: OverlayState | None = None) ->
         window.set_standings(state.standings)
     if changed("buffs"):
         window.set_buffs(*state.buffs)
+    # After standings: the rail resolves the marker against the rows it has.
+    if changed("next_opponent_id"):
+        window.set_next_opponent(state.next_opponent_id)
     if changed("hot_place"):
         window.set_hot_place(state.hot_place)
     if changed("mmr_prompt"):

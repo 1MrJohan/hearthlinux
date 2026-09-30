@@ -66,3 +66,36 @@ def test_losing_the_card_clears_the_face(art):
         assert portrait._texture is None
 
     asyncio.run(run())
+
+
+def _standing(place, player_id, dead=False):
+    from bgtracker.parse.events import Standing
+
+    return Standing(place=place, player_id=player_id, hero_card_id=None, health=20, dead=dead)
+
+
+def _ringed(rail) -> list[int]:
+    return [row.player_id for row in rail._rows if row.orb.has_css_class("next")]
+
+
+def test_the_next_opponent_ring_follows_the_player_across_a_reorder():
+    """Rows are keyed by place; the ring is keyed by PLAYER_ID."""
+    from bgtracker.overlay.rail import LeaderboardRail
+
+    rail = LeaderboardRail()
+    rail.set_standings((_standing(1, 4), _standing(2, 5), _standing(3, 6)))
+    rail.set_next_opponent(5)
+    assert _ringed(rail) == [5]
+    rail.set_standings((_standing(1, 5), _standing(2, 4), _standing(3, 6)))
+    assert _ringed(rail) == [5]
+    rail.set_next_opponent(None)
+    assert _ringed(rail) == []
+
+
+def test_a_dead_player_is_never_ringed():
+    from bgtracker.overlay.rail import LeaderboardRail
+
+    rail = LeaderboardRail()
+    rail.set_standings((_standing(1, 4), _standing(8, 5, dead=True)))
+    rail.set_next_opponent(5)
+    assert _ringed(rail) == []
