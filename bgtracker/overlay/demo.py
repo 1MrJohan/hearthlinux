@@ -143,7 +143,12 @@ async def run(overlay, interval: float = 4.0) -> None:
         # The first turn is what ends hero select — no fight precedes it, so
         # no ShopReady can. The meta line comes off your leaderboard row.
         (buffs, None, 0.0),
+        # Tribes arrive as Bob offers them, so the panel starts partial and
+        # fills in; Aberration is here because its icon is the newest one.
+        (ev.LobbyTribes(tribes=("DEMON", "MECHANICAL", "UNDEAD")), None, 0.0),
         (ev.TurnChange(turn=7), None, interval),
+        (ev.LobbyTribes(tribes=("ABERRATION", "DEMON", "MECHANICAL", "MURLOC", "UNDEAD")),
+         None, 0.0),
         # The run under way: the HUD leaves the recruit phase before any odds.
         (ev.CombatSimulating(snapshot=combat), None, interval),
         (ev.CombatStart(snapshot=combat), odds, interval),

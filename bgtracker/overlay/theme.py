@@ -128,6 +128,7 @@ def clamp_scale(scale: float) -> float:
 # Panel widths from the 1180x707 prototype stage, scaled to the monitor.
 HUD_W = 300
 BUFFS_W = 176
+TRIBES_W = 176
 RAIL_W = 98
 BOARD_MAX_W = 640
 HOVER_MAX_W = 560
@@ -135,6 +136,7 @@ PANEL_PAD_X = 13
 TILE_W = 80
 PORTRAIT_D = 52
 ORB_D = 40
+TRIBE_D = 28
 HOVER_ORB_D = 38
 
 
@@ -402,6 +404,17 @@ $pip_rules
 }
 .rail-tier.you  { color: $gold; opacity: 0.7; }
 .rail-tier.dead { opacity: 0.55; }
+
+/* ---- lobby tribes ------------------------------------------------ */
+/* The portrait ring at icon size: the art is a full square tile, so it is
+   drawn unzoomed and the ring does the framing. */
+.tribe-icon {
+    border-radius: ${tribe}px;
+    border: ${b2}px solid rgba(212,175,55,.55);
+    background-image: radial-gradient(circle at 38% 30%,
+        rgba(255,255,255,.22), rgba(58,42,26,.9) 55%, rgba(0,0,0,.6));
+    box-shadow: 0 ${b1}px ${p4}px rgba(0,0,0,.6);
+}
 
 /* ---- tavern buffs ------------------------------------------------ */
 .buff-dot {
@@ -705,6 +718,7 @@ def _dims(scale: float) -> dict[str, int]:
         "pad_x": 13, "pad_y": 11, "sh_y": 12, "sh_b": 34,
         "med": 58, "bar": 9, "tile": TILE_W, "portrait": PORTRAIT_D,
         "gem": 25, "pip": 13, "orb": ORB_D, "rank": 17, "dot": 8,
+        "tribe": TRIBE_D,
         # Deliberately small: it is a hole in the overlay's click-through.
         "gear": 22,
     }

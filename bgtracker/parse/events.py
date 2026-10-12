@@ -193,6 +193,19 @@ class RatingMissed:
 
 
 @dataclass(frozen=True)
+class LobbyTribes:
+    """Tribes confirmed in this lobby so far, sorted, as the card DB names them.
+
+    Only ever grows within a game: a tribe is added the first time Bob offers
+    a single-tribe pool minion of it. The log never states the lobby's tribes,
+    so a tribe not offered yet is simply absent, never guessed. See
+    docs/superpowers/specs/2026-10-12-lobby-tribes-panel-design.md.
+    """
+
+    tribes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Buffs:
     """Friendly player's curated buffs and turn economy.
 
@@ -231,4 +244,5 @@ Event = (
     | RatingRead
     | RatingMissed
     | Buffs
+    | LobbyTribes
 )

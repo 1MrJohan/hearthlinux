@@ -22,6 +22,7 @@ from hslog import LogParser
 from hslog import packets as hspackets
 from hslog.export import EntityTreeExporter
 
+from bgtracker.data import cards
 from bgtracker.parse import events as ev
 from bgtracker.state.game import (
     BoardSnapshot,
@@ -63,6 +64,11 @@ _SHOP_BOARD_TAGS = frozenset({
     GameTag.POISONOUS, GameTag.VENOMOUS, GameTag.WINDFURY, GameTag.MEGA_WINDFURY,
     GameTag.REBORN, GameTag.STEALTH, GameTag.PREMIUM, GameTag.TECH_LEVEL,
 })
+
+# Tags that can make an existing entity a fresh tavern offer. The card id is
+# often revealed later than the zone, by SHOW_ENTITY rather than a tag, which
+# is why that handler checks too.
+_OFFER_TAGS = frozenset({GameTag.ZONE, GameTag.CONTROLLER, GameTag.IS_BACON_POOL_MINION})
 
 # Power.log carries two streams. GameState is the authoritative game state and
 # is what hslog parses; it flips out of combat about a second after flipping
@@ -114,6 +120,8 @@ class BGExporter(EntityTreeExporter):
         # unbuffed player doesn't look like a change and emit a no-op Buffs
         # event.
         self._buffs: tuple = ((), (), 0, 0)
+        # Tribes confirmed by Bob's offers. Per exporter, so per game.
+        self._lobby_tribes: set[str] = set()
 
     # -- friendly player detection -------------------------------------
     # Only the local player's cards are revealed in their HAND zone (hero
@@ -219,10 +227,53 @@ class BGExporter(EntityTreeExporter):
         self._hero_emitted = hero.card_id
         self._emit(ev.HeroPicked(card_id=hero.card_id))
 
+    # -- lobby tribes ----------------------------------------------------
+    def _note_offer(self, entity) -> None:
+        """Confirm a tribe from a minion Bob just put in the tavern.
+
+        The log never names the lobby's tribes, but everything Bob offers is
+        drawn from the lobby's pool. Only a *single*-tribe pool minion counts:
+        a dual-tribe one may need only one of its tribes in the lobby, and
+        `IS_BACON_POOL_MINION = 0` offers are put there by effects, not drawn.
+        Over 31 games that read exactly five tribes every time, never six.
+        Checks just the entity this packet touched, so it stays O(1) per packet.
+        See docs/superpowers/specs/2026-10-12-lobby-tribes-panel-design.md.
+        """
+        if (
+            self._board_state != SHOP
+            or not isinstance(entity, Card)
+            or not entity.card_id
+            or entity.type != CardType.MINION
+            or tag(entity, GameTag.ZONE) != Zone.PLAY
+            or not tag(entity, GameTag.IS_BACON_POOL_MINION)
+        ):
+            return
+        fid = self.friendly_player_id()
+        controller = tag(entity, GameTag.CONTROLLER)
+        if fid is None or not controller or controller == fid:
+            return  # ours, or nobody's yet — a bought minion is not an offer
+        tribes = cards.tribes(entity.card_id)
+        if len(tribes) != 1 or tribes[0] == "ALL" or tribes[0] in self._lobby_tribes:
+            return
+        self._lobby_tribes.add(tribes[0])
+        self._emit(ev.LobbyTribes(tribes=tuple(sorted(self._lobby_tribes))))
+
+    def handle_full_entity(self, packet):
+        entity = super().handle_full_entity(packet)
+        self._note_offer(entity)
+        return entity
+
+    def handle_show_entity(self, packet):
+        entity = super().handle_show_entity(packet)
+        self._note_offer(entity)
+        return entity
+
     # -- tag-change hooks ----------------------------------------------
     def handle_tag_change(self, packet):
         entity = super().handle_tag_change(packet)
         gametag, value = packet.tag, packet.value
+        if gametag in _OFFER_TAGS:
+            self._note_offer(entity)
 
         if isinstance(entity, Game):
             if gametag == GameTag.TURN:

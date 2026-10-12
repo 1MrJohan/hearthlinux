@@ -1,11 +1,14 @@
 """Card and hero art from HearthstoneJSON, cached on disk.
 
-Two kinds are available:
+Three kinds are available:
 
 * ``crop``   — the square illustration with no card frame. This is what the
   overlay's circular minion portraits and hero orbs use, and it has the
   broadest CDN coverage (new sets and goldens land here first).
 * ``render`` — the full rendered card (frame + art + name + printed stats).
+* ``tribe``  — a Battlegrounds tribe's icon, keyed by its lowercased name
+  (``mech``, ``quilboar``). Blizzard's own tribe art tiles, as HDT ships them;
+  no HearthstoneJSON endpoint serves these.
 
 Downloads happen in an executor so the UI loop never blocks; a miss just
 renders as text until the art arrives.
@@ -26,15 +29,22 @@ log = logging.getLogger(__name__)
 ART_DIR = CACHE_DIR / "art"
 CROP_DIR = ART_DIR / "crops"
 CARD_DIR = ART_DIR / "cards"
+TRIBE_DIR = ART_DIR / "tribes"
 
 # Full rendered card (frame + art + name + printed stats), 256px wide.
 RENDER_URL = "https://art.hearthstonejson.com/v1/render/latest/enUS/256x/{card_id}.png"
 # Art crop (illustration only, no frame), 256x256.
 ARTCROP_URL = "https://art.hearthstonejson.com/v1/256x/{card_id}.jpg"
+# Tribe icon, 256x256.
+TRIBE_URL = (
+    "https://raw.githubusercontent.com/HearthSim/Hearthstone-Deck-Tracker/master/"
+    "Hearthstone%20Deck%20Tracker/Resources/TribeIcons/{card_id}.jpg"
+)
 
 _KINDS = {
     "crop": (CROP_DIR, ".jpg"),
     "render": (CARD_DIR, ".png"),
+    "tribe": (TRIBE_DIR, ".jpg"),
 }
 _UA = {"User-Agent": "hs-bg-tracker/0.1 (personal Linux BG tracker)"}
 
@@ -110,6 +120,8 @@ def _urls(card_id: str, kind: str) -> list[str]:
     Goldens (`…_G`) frequently have no art of their own; the base card's is
     visually identical bar the animation, so it stands in.
     """
+    if kind == "tribe":
+        return [TRIBE_URL.format(card_id=card_id)]
     base = card_id[:-2] if card_id.endswith("_G") else None
     ids = [card_id] + ([base] if base else [])
     if kind == "render":

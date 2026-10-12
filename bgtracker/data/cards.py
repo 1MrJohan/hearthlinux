@@ -58,6 +58,39 @@ def get(card_id: str) -> dict | None:
     return _by_id.get(card_id)
 
 
+# Battlegrounds tribes, card-DB name -> the name the game uses. The display name
+# lowercased is also the tribe's icon file name (data/art.py).
+TRIBE_NAMES = {
+    "ABERRATION": "Aberration",
+    "BEAST": "Beast",
+    "DEMON": "Demon",
+    "DRAGON": "Dragon",
+    "ELEMENTAL": "Elemental",
+    "MECHANICAL": "Mech",
+    "MURLOC": "Murloc",
+    "NAGA": "Naga",
+    "PIRATE": "Pirate",
+    "QUILBOAR": "Quilboar",
+    "UNDEAD": "Undead",
+}
+
+
+def tribe_name(tribe: str) -> str:
+    return TRIBE_NAMES.get(tribe, tribe.title())
+
+
+def tribes(card_id: str | None) -> tuple[str, ...]:
+    """A card's tribes as the DB names them (`MECHANICAL`, `QUILBOAR`, `ALL`, …).
+
+    Empty for an unknown card or an unloaded DB. `races` is the full list for
+    dual-tribe minions; older entries carry only the singular `race`.
+    """
+    card = _by_id.get(card_id) if card_id else None
+    if not card:
+        return ()
+    return tuple(card.get("races") or ([card["race"]] if card.get("race") else ()))
+
+
 def pool_spell_ids() -> set[str]:
     """Card ids of Battlegrounds pool spells (Easterly Winds & co).
 

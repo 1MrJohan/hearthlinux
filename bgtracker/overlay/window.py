@@ -23,11 +23,12 @@ gi.require_version("Gtk4LayerShell", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
 
 from bgtracker.config import Config, update_config_values  # noqa: E402
+from bgtracker.data import cards  # noqa: E402
 
 from . import theme  # noqa: E402
 from .hud import HudPanel  # noqa: E402
 from .rail import LeaderboardRail  # noqa: E402
-from .widgets import BoardPanel  # noqa: E402
+from .widgets import BoardPanel, RoundArt  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,13 @@ class OverlayWindow(Gtk.Window):
         self._make_panel("buffs", "Buffs", [buffs_title, self.buffs], width=theme.BUFFS_W)
         self._buff_rows: list[Gtk.Widget] = []
 
+        # -- tribes panel: the lobby's tribes, as Bob's offers confirm them --
+        self.tribes = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=theme.px(4, scale))
+        tribes_title = Gtk.Label(label="Tribes", xalign=0)
+        tribes_title.add_css_class("title")
+        self._make_panel("tribes", "Tribes", [tribes_title, self.tribes], width=theme.TRIBES_W)
+        self._tribe_icons: list[Gtk.Widget] = []
+
         # -- scout popout: last-seen board of a leaderboard portrait --------
         # The upcoming opponent and its shop forecast use this same popout;
         # there is no second, permanently visible copy of that board.
@@ -139,6 +147,7 @@ class OverlayWindow(Gtk.Window):
             "board": (self._mon_w // 2 - int(320 * scale), int(12 * scale)),
             "hover": (int(self._mon_w * 0.13), int(self._mon_h * 0.30)),
             "buffs": (int(self._mon_w * 0.34), int(40)),
+            "tribes": (int(self._mon_w * 0.34) - int((theme.TRIBES_W + 12) * scale), int(40)),
             "rail": (int(12 * scale), int(self._mon_h * 0.08)),
         }
         for name, (dx, dy) in defaults.items():
@@ -174,7 +183,7 @@ class OverlayWindow(Gtk.Window):
 
         # hud always shows; the rest only when they have something (or edit)
         self._set_content("hud", True)
-        for name in ("board", "hover", "buffs", "rail"):
+        for name in ("board", "hover", "buffs", "tribes", "rail"):
             self._set_content(name, False)
 
         if self.edit:
@@ -562,6 +571,19 @@ class OverlayWindow(Gtk.Window):
         for row in self._buff_rows:
             self.buffs.append(row)
         self._set_content("buffs", bool(self._buff_rows))
+
+    def set_tribes(self, tribes) -> None:
+        """One round icon per confirmed tribe; hidden until there is one."""
+        for icon in self._tribe_icons:
+            self.tribes.remove(icon)
+        self._tribe_icons.clear()
+        for tribe in tribes:
+            icon = RoundArt(theme.px(theme.TRIBE_D, self.scale), css="tribe-icon",
+                            zoom=1.0, focal=0.0, kind="tribe")
+            icon.load(cards.tribe_name(tribe).lower())
+            self._tribe_icons.append(icon)
+            self.tribes.append(icon)
+        self._set_content("tribes", bool(self._tribe_icons))
 
     def _buff_group(self, title: str) -> Gtk.Widget:
         label = Gtk.Label(label=title, xalign=0)
