@@ -20,25 +20,23 @@ Bob puts in the tavern is drawn from the lobby's pool, so a single-tribe
 offer is evidence that the tribe is in the lobby, not merely a count.
 
 Evidence: every session log from 2026-10-02 to 2026-10-10 (six sessions,
-~1.1 GB, nine games), replayed through `LiveGameProcessor`. Each minion was
-counted once per entity, and only if it was in `Zone.PLAY` under a controller
-other than ours while `BOARD_VISUAL_STATE` read shop. Its tribes were taken
-from the card DB's `races`.
+~1.1 GB, **31 games**), replayed with `bgtracker --replay` through the
+implementation below. A minion counts if it is in `Zone.PLAY` under a
+controller other than ours while `BOARD_VISUAL_STATE` reads shop. Its tribes
+come from the card DB's `races`.
 
-| Game | Tribes in first-seen order (turn) |
-|---|---|
-| 10-02 #1 | Dragon 1, Quilboar 2, Elemental 5, Murloc 7, Demon 8 |
-| 10-05 #1 | Aberration 1, Beast 1, Mech 1, Elemental 3, Undead 8 |
-| 10-08 #1 | Mech 1, Quilboar 1, Undead 1, Elemental 1, Pirate 2 |
-| 10-09a #1 | Beast 1, Mech 1, Pirate 1, Dragon 3, Elemental 8 |
-| 10-09a #2 | Quilboar 1, Undead 1, Pirate 2, Elemental 3, Aberration 4 |
-| 10-09a #3 | Beast 1, Quilboar 1, Murloc 1, Aberration 2, Mech 4 |
-| 10-09b #1 | Pirate 1, Undead 1, Dragon 1, Murloc 2, Elemental 3 |
-| 10-10 #1 | Pirate 1, Quilboar 1, Aberration 1, Beast 1, Elemental 2 |
-| 10-10 #2 | Aberration 1, Mech 1, Dragon 1, Pirate 2, Quilboar 4 |
+**Every one of the 31 games read exactly five tribes, and none ever read a
+sixth.** Nothing in this corpus put an out-of-lobby single-tribe minion in
+Bob's tavern. The turn the fifth tribe was confirmed:
 
-**Every game read exactly five tribes, and none ever read a sixth.** Nothing
-in this corpus put an out-of-lobby single-tribe minion in Bob's tavern.
+| Turn | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|
+| Games | 5 | 9 | 10 | 2 | 1 | 1 | 3 |
+
+So the list is complete by turn 4 in 24 of 31 games. The stragglers are a
+tribe Bob simply did not roll early. A first pass over the same logs, reading
+the entity tree only every 300 lines, missed later games in each session and
+found nine. The per-packet hook is what the table above measures.
 
 Two kinds of offer are excluded, and both exclusions matter:
 
@@ -55,8 +53,8 @@ Two kinds of offer are excluded, and both exclusions matter:
 
 Show only **confirmed** tribes: those seen at least once as a single-tribe
 pool minion in Bob's tavern this game. The panel starts empty and fills in
-as tribes are confirmed. Usually that is complete by turn 2–4, but three of
-the nine games took until turn 7–8.
+as tribes are confirmed: complete by turn 4 in 24 of 31 games, by turn 8 in
+all of them.
 
 That is deliberately not what the 2026-09-10 spec asks of `validTribes`.
 There a partial list is a *wrong* simulator input: it would exclude a real
