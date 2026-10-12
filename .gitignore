@@ -6,3 +6,6 @@ node_modules/
 # Ad-hoc screen captures from hover/overlay calibration
 screen*.png
 crop_*.png
+
+# 43MB raw capture kept locally for reference; no test reads it
+tests/fixtures/aberration-game.power.log
