@@ -65,8 +65,10 @@ class RoundArt(Gtk.Widget):
     """
 
     def __init__(self, diameter: int, css: str = "portrait",
-                 zoom: float = PORTRAIT_ZOOM, focal: float = PORTRAIT_FOCAL):
+                 zoom: float = PORTRAIT_ZOOM, focal: float = PORTRAIT_FOCAL,
+                 kind: str = "crop"):
         super().__init__()
+        self._kind = kind
         self.add_css_class(css)
         self.set_halign(Gtk.Align.CENTER)
         self.set_valign(Gtk.Align.CENTER)
@@ -113,7 +115,7 @@ class RoundArt(Gtk.Widget):
             self.queue_draw()
         if not card_id:
             return
-        cached = art.cached_art(card_id, "crop")
+        cached = art.cached_art(card_id, self._kind)
         if cached:
             self._set_texture(cached)
             return
@@ -124,7 +126,7 @@ class RoundArt(Gtk.Widget):
         self._task = loop.create_task(self._fetch(card_id))
 
     async def _fetch(self, card_id: str) -> None:
-        path = await art.fetch_art(card_id, "crop")
+        path = await art.fetch_art(card_id, self._kind)
         # A slow fetch can land after the widget has moved on to another card
         # (and possibly already drawn it from cache); only the current one wins.
         if path is not None and card_id == self._card_id:

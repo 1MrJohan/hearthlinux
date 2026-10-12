@@ -424,6 +424,8 @@ class OverlayApp:
                 st.status = f"{prefix} · {reason}" if reason else prefix
             case ev.Buffs(entries=e, shop=shop, gold_next_turn=g, free_rerolls=fr):
                 st.buffs = (e, shop, g, fr)
+            case ev.LobbyTribes(tribes=tribes):
+                st.tribes = tribes
             case ev.Standings(places=places):
                 st.standings = places
                 self._you = next((p for p in places if p.you), self._you)
@@ -539,6 +541,7 @@ class OverlayApp:
         st.next_forecast = None
         st.standings = ()
         st.buffs = ((), (), 0, 0)
+        st.tribes = ()
         st.hover_board = None
 
     @staticmethod

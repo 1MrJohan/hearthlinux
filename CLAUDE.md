@@ -619,8 +619,12 @@ and typography are final**; treat them as the source of truth and put every toke
 `overlay/theme.py`. `window.py` is layout and plumbing only.
 
 Panels: HUD (phase title, turn medallion, win/tie/loss bar, damage pills), tavern
-buffs, scout popout, and the leaderboard rail of hero portraits with effective
-health and live tavern tier. An
+buffs, lobby tribes, scout popout, and the leaderboard rail of hero portraits with
+effective health and live tavern tier. The tribes panel shows only tribes *confirmed*
+by a single-tribe pool minion in Bob's tavern, so it fills in over the first few
+turns. It is display-only and never feeds `validTribes`. Its icons are HDT's copies
+of Blizzard's tribe art, cached under `art/tribes/`. See
+`docs/superpowers/specs/2026-10-12-lobby-tribes-panel-design.md`. An
 enemy-board panel exists but is dormant: it duplicated the fight the game itself was
 showing, so nothing populates it — the scout popout is how a board gets reviewed.
 

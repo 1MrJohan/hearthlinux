@@ -61,6 +61,8 @@ class OverlayState:
     hover_board: BoardView | None = None
     standings: tuple = ()
     buffs: tuple[tuple, tuple, int, int] = ((), (), 0, 0)
+    # Card-DB tribe names confirmed so far this game; see LobbyTribes.
+    tribes: tuple[str, ...] = ()
     hot_place: int | None = None
     # The end-of-game "Record MMR" nudge. Lives here rather than in the widget
     # so an overlay_scale rebuild does not silently drop it.
@@ -127,6 +129,8 @@ def render(window, state: OverlayState, previous: OverlayState | None = None) ->
         window.set_standings(state.standings)
     if changed("buffs"):
         window.set_buffs(*state.buffs)
+    if changed("tribes"):
+        window.set_tribes(state.tribes)
     # After standings: the rail resolves the marker against the rows it has.
     if changed("next_opponent_id"):
         window.set_next_opponent(state.next_opponent_id)

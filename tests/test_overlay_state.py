@@ -80,7 +80,7 @@ def test_render_emits_everything_when_the_window_is_new():
     for name in (
         "set_phase", "set_status", "set_turn", "set_combat", "set_odds",
         "set_damage", "set_lethal", "set_result", "set_forecast_live",
-        "set_standings", "set_buffs", "set_hot_place", "set_mmr_prompt",
+        "set_standings", "set_buffs", "set_tribes", "set_hot_place", "set_mmr_prompt",
         "set_next_opponent",
     ):
         assert name in win.names(), f"{name} was never pushed to a fresh window"

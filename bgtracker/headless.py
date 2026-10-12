@@ -52,6 +52,8 @@ def print_event(event: ev.Event) -> None:
             print(f"  result: {outcome or 'unknown'}{swing}")
         case ev.NextOpponent(player_id=pid):
             print(f"next opponent: player {pid}")
+        case ev.LobbyTribes(tribes=tribes):
+            print("tribes: " + ", ".join(cards.tribe_name(t) for t in tribes))
         case ev.GameEnd(placement=p):
             print(f"=== game end — placement: {p if p else '?'} ===")
         case ev.RatingRead(rating=rating, delta=delta):
