@@ -103,6 +103,24 @@ BUFF_COLOURS = {
     "Free Reroll": "#5fa3d0",
 }
 
+# What each buff tile draws, as (art kind, id) for data/art.py. A tribe's own
+# buff uses its tribe icon, so it matches the Tribes panel; anything missing
+# here falls back to the tribe icon of the same name.
+#   * Spell Power has no icon of its own in the game. Sharing is Caring is a
+#     Tavern spell whose art is a plain green spell swirl, unlike every other
+#     tile. Shiny Ring, the obvious pick, is a red gem beside the Blood Gem.
+#   * HDT's "spell" tribe tile is a pile of gold coins, which is why gold uses
+#     it; The Coin's art is a blue arcane disc that reads as anything but gold.
+BUFF_ICONS = {
+    "Blood Gem": ("crop", "BG20_GEM"),
+    "Spell Power": ("crop", "BG31_889"),
+    "Beetle Army": ("crop", "BG28_603t"),
+    "Undead": ("tribe", "undead"),
+    "Elemental": ("tribe", "elemental"),
+    "Gold Next Turn": ("tribe", "spell"),
+    "Free Reroll": ("crop", "TB_BaconShop_8p_Reroll_Button"),
+}
+
 # The prototype stage every design token was drawn against. It is a full
 # gameplay screenshot, so monitor-height / stage-height reproduces the mock's
 # proportions on any display.
@@ -137,6 +155,7 @@ TILE_W = 80
 PORTRAIT_D = 52
 ORB_D = 40
 TRIBE_D = 28
+BUFF_ICON_D = 30
 HOVER_ORB_D = 38
 
 
@@ -417,23 +436,20 @@ $pip_rules
 }
 
 /* ---- tavern buffs ------------------------------------------------ */
-.buff-dot {
-    min-width: ${dot}px;
-    min-height: ${dot}px;
-    border-radius: ${dot}px;
+/* Same ring as a tribe icon; $buff_rules colours it per buff. */
+.buff-icon {
+    border-radius: ${buff}px;
+    border: ${b2}px solid rgba(212,175,55,.55);
+    background-image: radial-gradient(circle at 38% 30%,
+        rgba(255,255,255,.22), rgba(58,42,26,.9) 55%, rgba(0,0,0,.6));
 }
 $buff_rules
-/* Heading over the tavern-wide group. Quieter than the panel's own .title so
-   it reads as a division inside the panel rather than a second panel. */
-.buff-group {
-    font-size: ${f11}px;
-    font-weight: 700;
-    letter-spacing: ${ls1_5}px;
-    text-transform: uppercase;
-    color: $dim;
-    margin-top: ${b2}px;
+/* Between the board, tavern and this-turn groups: a division, not a heading. */
+.buff-rule {
+    background-color: $rule;
+    min-height: ${b1}px;
+    margin: ${b2}px 0;
 }
-.buff-label { color: $ink; font-weight: 600; font-size: ${f12_5}px; }
 .buff-val {
     font-family: $display;
     font-weight: 700;
@@ -718,7 +734,7 @@ def _dims(scale: float) -> dict[str, int]:
         "pad_x": 13, "pad_y": 11, "sh_y": 12, "sh_b": 34,
         "med": 58, "bar": 9, "tile": TILE_W, "portrait": PORTRAIT_D,
         "gem": 25, "pip": 13, "orb": ORB_D, "rank": 17, "dot": 8,
-        "tribe": TRIBE_D,
+        "tribe": TRIBE_D, "buff": BUFF_ICON_D,
         # Deliberately small: it is a hole in the overlay's click-through.
         "gear": 22,
     }
@@ -733,8 +749,8 @@ def stylesheet(scale: float = 1.0) -> str:
         for letter, colour in PIP_COLOURS.items()
     )
     buff_rules = "\n".join(
-        f".buff-dot.buff-{label.lower().replace(' ', '')} "
-        f"{{ background-color: {colour}; box-shadow: 0 0 {dims['p5']}px {colour}; }}"
+        f".buff-icon.buff-{label.lower().replace(' ', '')} "
+        f"{{ border-color: {colour}; box-shadow: 0 0 {dims['p5']}px {colour}; }}"
         for label, colour in BUFF_COLOURS.items()
     )
     return _CSS.substitute(
