@@ -47,7 +47,19 @@ tracker_alive() {
     [ -n "$p" ] && kill -0 "$p" 2>/dev/null
 }
 
+rotate_console_log() {
+    # tracker.log is the tracker's raw console — every board it prints — and
+    # appending forever took it to 143MB in four months. One previous file is
+    # kept; bgtracker.log is the rotating log anyone should actually read.
+    local f="$LOG_DIR/tracker.log" size
+    size="$(stat -c %s "$f" 2>/dev/null || echo 0)"
+    if [ "$size" -gt "${BGTRACKER_CONSOLE_LOG_MAX:-10485760}" ]; then
+        mv -f "$f" "$f.1"
+    fi
+}
+
 start_tracker() {
+    rotate_console_log
     # --replace guarantees this game gets a tracker running current code, and
     # that two overlays never end up stacked on screen.
     "$PY" -m bgtracker --overlay --replace >>"$LOG_DIR/tracker.log" 2>&1 &

@@ -69,8 +69,8 @@ interpreter — currently 3.14, above the `requires-python = ">=3.12"` floor.
 
 Tests run against synthetic `Power.log` content built by `tests/synthetic.py`, plus any
 real captured fixtures in `tests/fixtures/`. `test_sim_roundtrip.py` shells out to the
-real Node sidecar and self-skips when `node` is missing. The whole suite is ~560 tests
-in ~45s — fast enough that there is no reason to run a subset and call it done.
+real Node sidecar and self-skips when `node` is missing. The whole suite is ~630 tests
+in ~25s — fast enough that there is no reason to run a subset and call it done.
 
 ## How work gets done here
 
@@ -296,6 +296,7 @@ Everything is XDG, resolved in `config.py`; nothing is written beside the source
 ~/.cache/hs-bg-tracker/art/            downloaded card art
 ~/.cache/hs-bg-tracker/bgtracker.log   rotating tracker log (`log_to_file`)
 ~/.cache/hs-bg-tracker/launch.log      scripts/steam-launch.sh activity
+~/.cache/hs-bg-tracker/tracker.log     the launched tracker's raw console; rotated to .1 past 10MB
 ```
 
 Cache is disposable — deleting it costs one re-download. `history.db` is not, and
