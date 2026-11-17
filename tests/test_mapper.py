@@ -5,7 +5,8 @@ from dataclasses import replace
 
 from hearthstone.enums import CardType
 
-from bgtracker.state.game import BoardSnapshot, Minion, Secret
+from bgtracker.data import cards
+from bgtracker.state.game import BoardSnapshot, Minion, Quest, QuestReward, Secret
 
 from .synthetic import deity_bg_game, minimal_bg_game, secret_bg_game
 
@@ -359,3 +360,80 @@ def test_minion_tavern_tier_is_sent():
     info = to_battle_info(snapshot_from_synthetic())
     [mine] = info["playerBoard"]["board"]
     assert mine["tavernTier"] == 1
+
+
+_QUEST_CARDS = {
+    "BG24_Quest_313": {"id": "BG24_Quest_313", "mechanics": ["QUEST"],
+                       "text": "<b>Quest:</b> Buy 0 minions."},
+    "BG27_Quest_802": {"id": "BG27_Quest_802", "mechanics": ["QUEST"],
+                       "text": "<b>Quest:</b> Destroy 0 enemy minions."},
+    "BG24_Reward_111": {"id": "BG24_Reward_111", "text":
+                        "<b>Start of Combat:</b> Summon a copy of your highest-Health minion."},
+    "BG27_Reward_811": {"id": "BG27_Reward_811", "text": "Minions in the Tavern cost 2 Gold."},
+}
+
+
+def _with_quests(monkeypatch, quests=(), rewards=()) -> BoardSnapshot:
+    monkeypatch.setattr(cards, "_by_id", _QUEST_CARDS)
+    snap = snapshot_from_synthetic()
+    return replace(snap, friendly=replace(snap.friendly, quests=quests, quest_rewards=rewards))
+
+
+def test_a_tavern_quest_is_sent_but_asks_nothing_of_the_simulator(monkeypatch):
+    """"Buy 8 minions" cannot move during a fight.
+
+    Marking it combat behaviour is what cost 18 of 800 replayed fights their
+    odds: the package has no code for a quest that never acts.
+    """
+    snap = _with_quests(monkeypatch, quests=(
+        Quest(card_id="BG24_Quest_313", entity_id=9, reward_dbf_id=7, progress=2, total=8),))
+
+    assert simulation_blocker(snap) is None
+    info = to_battle_info(snap)
+    assert info["playerBoard"]["player"]["questEntities"] == [
+        {"CardId": "BG24_Quest_313", "RewardDbfId": 7, "ProgressCurrent": 2, "ProgressTotal": 8}]
+    assert "trackerCombatCardIds" not in info
+
+
+def test_a_quest_that_advances_in_combat_must_be_proven_by_the_package(monkeypatch):
+    snap = _with_quests(monkeypatch, quests=(
+        Quest(card_id="BG27_Quest_802", entity_id=9, reward_dbf_id=7, progress=29, total=30),))
+
+    assert to_battle_info(snap)["trackerCombatCardIds"] == ["BG27_Quest_802"]
+
+
+def test_a_quest_the_card_db_does_not_know_is_treated_as_the_dangerous_kind(monkeypatch):
+    snap = _with_quests(monkeypatch, quests=(
+        Quest(card_id="BG99_Quest_001", entity_id=9, reward_dbf_id=7, progress=0, total=3),))
+
+    assert to_battle_info(snap)["trackerCombatCardIds"] == ["BG99_Quest_001"]
+
+
+def test_a_stored_quest_without_counters_blocks_only_where_they_matter(monkeypatch):
+    """Rows from before quests were read kept the id and nothing else."""
+    tavern = _with_quests(monkeypatch, quests=(Quest(card_id="BG24_Quest_313", entity_id=9),))
+    assert simulation_blocker(tavern) is None
+    assert to_battle_info(tavern)["playerBoard"]["player"]["questEntities"] == []
+
+    combat = _with_quests(monkeypatch, quests=(Quest(card_id="BG27_Quest_802", entity_id=9),))
+    assert simulation_blocker(combat) == "quest state not recorded: BG27_Quest_802"
+    assert to_battle_info(combat) is None
+
+
+def test_rewards_go_out_in_both_of_firestones_shapes(monkeypatch):
+    """`questRewards` drives start of combat; the entities carry the counter."""
+    snap = _with_quests(monkeypatch, rewards=(
+        QuestReward(card_id="BG24_Reward_111", entity_id=10, num1=4),
+        QuestReward(card_id="BG27_Reward_811", entity_id=11),
+    ))
+
+    info = to_battle_info(snap)
+    player = info["playerBoard"]["player"]
+    assert player["questRewards"] == ["BG24_Reward_111", "BG27_Reward_811"]
+    assert player["questRewardEntities"] == [
+        {"CardId": "BG24_Reward_111", "ScriptDataNum1": 4},
+        {"CardId": "BG27_Reward_811", "ScriptDataNum1": 0},
+    ]
+    # only the one that acts in the fight needs package support
+    assert info["trackerCombatCardIds"] == ["BG24_Reward_111"]
+    assert "questRewards" not in info["opponentBoard"]["player"]

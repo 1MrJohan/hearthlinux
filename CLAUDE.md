@@ -412,7 +412,21 @@ closed as "deity secret incomplete". See
 **Damage cap** (`BACON_COMBAT_DAMAGE_CAP`) limits combat damage in the early game. The
 simulator reports uncapped numbers, so `app.py` clamps what is shown and recorded.
 
-**Anomalies / quests** exist in some seasons and are not currently mapped.
+**Quests and quest rewards.** Sire Denathrius's hero power hands out a quest, so these
+turn up in ordinary lobbies. **A quest in progress waits in `Zone.SECRET` beside the real
+secrets and has the same `CARDTYPE = SPELL`; only the `QUEST` tag separates them.** Filed
+as a secret it was marked combat behaviour and the forecast refused, for want of simulator
+code for "Buy 8 minions". It is `PlayerBoard.quests` and goes out as `questEntities`; only
+an objective that can advance mid-fight (deaths, attacks, summons) has to be proven by the
+package. A completed quest is replaced by a separate `BATTLEGROUND_QUEST_REWARD` entity
+in `PLAY` — `PlayerBoard.quest_rewards` — and as with trinkets the zone is what says it is
+equipped: a declined offer stays in `SETASIDE`. Firestone reads `questEntities` and
+`questRewardEntities` in **PascalCase** (`CardId`, `ScriptDataNum1`); camelCase is accepted
+and ignored. Combat rows stored before 2026-11-17 hold quests under `secrets` with no
+counters, refiled on read as `Quest(total=None)`, and never recorded a reward at all. See
+`docs/superpowers/specs/2026-11-17-quests-and-rewards-design.md`.
+
+**Anomalies** exist in some seasons and are not currently mapped.
 
 ## Log and tag facts that are easy to get wrong
 
@@ -525,8 +539,8 @@ tends to reintroduce a fixed bug.
 
 ## Odds accuracy workflow
 
-The mapper covers stats, keywords, tier, enchantments, hand, secrets, trinkets, and six
-allow-listed combat hero powers. Recruit-only unmapped features are already reflected in
+The mapper covers stats, keywords, tier, enchantments, hand, secrets, quests and their
+rewards, trinkets, and six allow-listed combat hero powers. Recruit-only unmapped features are already reflected in
 the live snapshot and degrade accuracy at most. Known current-fight state is different:
 combat-active hero powers off the allow-list and card effects absent from the pinned
 Firestone package fail closed as unavailable. `bgtracker stats`

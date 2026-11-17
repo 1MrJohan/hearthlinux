@@ -7,7 +7,9 @@ from bgtracker.sim.client import SimResult
 from bgtracker.history.db import HistoryDB, _board_json, board_from_json
 from bgtracker.history.stats import report
 from bgtracker.parse.exporter import LiveGameProcessor
-from bgtracker.state.game import BoardSnapshot, Enchantment, Minion, PlayerBoard, Secret, Trinket
+from bgtracker.state.game import (
+    BoardSnapshot, Enchantment, Minion, PlayerBoard, Quest, QuestReward, Secret, Trinket,
+)
 
 from .synthetic import minimal_bg_game
 
@@ -272,9 +274,34 @@ def test_a_stored_board_round_trips():
         hand=(Minion(entity_id=10, card_id="BG_X", position=0, attack=1, health=1),),
         trinkets=(Trinket(card_id="T1", entity_id=11, num1=1),),
         secrets=(Secret(card_id="TB_Bacon_Secrets_15", entity_id=12),),
+        quests=(Quest(card_id="BG27_Quest_802", entity_id=13, reward_dbf_id=104673,
+                      progress=21, total=30),),
+        quest_rewards=(QuestReward(card_id="BG24_Reward_111", entity_id=14, num1=4),),
         global_info={"BloodGemAttackBonus": 2},
     )
     assert board_from_json(_board_json(board)) == board
+
+
+def test_a_quest_stored_as_a_secret_is_refiled_when_the_row_loads():
+    """Until 2026-11-17 a quest was written under `secrets`.
+
+    Left there it would still be sent to the simulator as a combat secret and
+    still block the replay. Only the id was kept, so it comes back with no
+    counters (`total=None`) and the real secret beside it is untouched.
+    """
+    legacy = json.dumps({
+        "player_id": 1, "bg_player_id": 1, "hero_card_id": "H", "hero_entity_id": 1,
+        "health": 30, "armor": 0, "tier": 2, "minions": [],
+        "secrets": [
+            {"card_id": "BG24_Quest_313", "entity_id": 368, "num1": 0, "num2": 0,
+             "num3": 0, "num6": 0},
+            {"card_id": "TB_Bacon_Secrets_15", "entity_id": 12, "num1": 0, "num2": 0},
+        ],
+    })
+    board = board_from_json(legacy)
+    assert board.secrets == (Secret(card_id="TB_Bacon_Secrets_15", entity_id=12),)
+    assert board.quests == (Quest(card_id="BG24_Quest_313", entity_id=368),)
+    assert board.quests[0].total is None
 
 
 def test_a_board_from_an_older_schema_still_loads():
