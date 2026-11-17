@@ -173,3 +173,28 @@ def magnetize_fold(b: LogBuilder, ench: int, host: int, value: int) -> LogBuilde
     b.tag_change(host, "ZONE_POSITION", 1)
     b.tag_change("GameEntity", "TURN", 4)
     return b
+
+
+def quest_bg_game() -> LogBuilder:
+    """Combat where we hold a quest in progress and the opponent a reward.
+
+    Shapes are from the 2026-11-14 capture: an accepted quest is a SPELL in
+    Zone.SECRET tagged QUEST=1 with its counters on the entity, and a
+    completed one is replaced by a BATTLEGROUND_QUEST_REWARD in PLAY.
+    """
+    b = recruit_phase_game()
+    b.entity(7, "BG_EX1_506", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=1,
+             ATK=2, HEALTH=3, ZONE_POSITION=1)
+    b.entity(8, "BG_CS2_065", CARDTYPE="MINION", ZONE="PLAY", CONTROLLER=2,
+             ATK=1, HEALTH=7, ZONE_POSITION=1)
+    b.entity(9, "BG27_Quest_802", CARDTYPE="SPELL", ZONE="SECRET", CONTROLLER=1,
+             QUEST=1, QUEST_PROGRESS=21, QUEST_PROGRESS_TOTAL=30,
+             QUEST_REWARD_DATABASE_ID=104673)
+    b.entity(10, "BG24_Reward_111", CARDTYPE="BATTLEGROUND_QUEST_REWARD",
+             ZONE="PLAY", CONTROLLER=2, TAG_SCRIPT_DATA_NUM_1=4)
+    # an offered-but-declined reward waits in SETASIDE and is not equipped
+    b.entity(11, "BG24_Reward_312", CARDTYPE="BATTLEGROUND_QUEST_REWARD",
+             ZONE="SETASIDE", CONTROLLER=1)
+    b.tag_change("GameEntity", "TURN", 2)
+    b.tag_change("GameEntity", "BOARD_VISUAL_STATE", 2)
+    return b

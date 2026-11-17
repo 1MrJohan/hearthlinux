@@ -71,6 +71,41 @@ class Secret:
 
 
 @dataclass(frozen=True)
+class Quest:
+    """An accepted quest that has not been completed yet.
+
+    A quest is a SPELL that waits in `Zone.SECRET` like a combat secret, but
+    it is an objective, not an effect: "Buy 8 minions" does nothing in a
+    fight. The `QUEST` tag is what separates the two. Some objectives do
+    advance mid-combat (minions dying, attacking, being summoned) and can
+    complete there, which is why the progress counters are kept. See
+    docs/superpowers/specs/2026-11-17-quests-and-rewards-design.md.
+    """
+
+    card_id: str | None
+    entity_id: int
+    reward_dbf_id: int = 0
+    progress: int = 0
+    # None marks a quest recovered from a combat row stored while quests were
+    # still filed under `secrets`: the id survived, the counters did not.
+    total: int | None = None
+
+
+@dataclass(frozen=True)
+class QuestReward:
+    """A completed quest's reward, in play for the rest of the game.
+
+    A separate `BATTLEGROUND_QUEST_REWARD` entity created when the quest
+    completes; the quest itself leaves for REMOVEDFROMGAME. Visible for both
+    players. NUM_1 is the reward's own running value where it has one.
+    """
+
+    card_id: str
+    entity_id: int
+    num1: int = 0
+
+
+@dataclass(frozen=True)
 class Minion:
     entity_id: int
     card_id: str | None
@@ -146,6 +181,10 @@ class PlayerBoard:
     # them directly; dropping one can turn a real loss into a reported 100%
     # win (Pack Tactics, observed 2026-08-05).
     secrets: tuple[Secret, ...] = ()
+    # Quests in progress and the rewards of completed ones. Both used to be
+    # lost: the quest was mistaken for a secret and the reward was not read.
+    quests: tuple[Quest, ...] = ()
+    quest_rewards: tuple[QuestReward, ...] = ()
     # Visible active/passive power. The mapper omits it until the required
     # per-power state is modeled, and rejects a forecast if its text acts in
     # combat — silently dropping such a power can invert the odds.
@@ -440,6 +479,8 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
     hand: list[Card] = []
     trinkets: list[Card] = []
     secrets: list[Card] = []
+    quests: list[Card] = []
+    quest_rewards: list[Card] = []
     enchants: dict[int, list[Enchantment]] = {}
     board_buffs: dict[str, int] = {}
     for entity in game.entities:
@@ -454,9 +495,17 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
                 hand.append(entity)
             continue
         if zone == Zone.SECRET:
-            secrets.append(entity)
+            # Quests share the zone with combat secrets. The tag is the log's
+            # own answer; the card DB covers an entity that lost it.
+            if tag(entity, GameTag.QUEST) or cards.is_quest(entity.card_id):
+                quests.append(entity)
+            else:
+                secrets.append(entity)
             continue
         if zone != Zone.PLAY:
+            continue
+        if entity.type == CardType.BATTLEGROUND_QUEST_REWARD:
+            quest_rewards.append(entity)
             continue
         if _is_trinket(entity):
             trinkets.append(entity)
@@ -519,6 +568,25 @@ def project_player_board(game: Game, player_id: int) -> PlayerBoard | None:
                 num6=tag(s, GameTag.TAG_SCRIPT_DATA_NUM_6),
             )
             for s in sorted(secrets, key=lambda entity: entity.id)
+        ),
+        quests=tuple(
+            Quest(
+                card_id=q.card_id or None,
+                entity_id=q.id,
+                reward_dbf_id=tag(q, GameTag.QUEST_REWARD_DATABASE_ID),
+                progress=tag(q, GameTag.QUEST_PROGRESS),
+                total=tag(q, GameTag.QUEST_PROGRESS_TOTAL),
+            )
+            for q in sorted(quests, key=lambda entity: entity.id)
+        ),
+        quest_rewards=tuple(
+            QuestReward(
+                card_id=r.card_id,
+                entity_id=r.id,
+                num1=tag(r, GameTag.TAG_SCRIPT_DATA_NUM_1),
+            )
+            for r in sorted(quest_rewards, key=lambda entity: entity.id)
+            if r.card_id
         ),
         hero_power_id=hero_power.card_id if hero_power else None,
         hero_power_used=bool(tag(hero_power, GameTag.EXHAUSTED)) if hero_power else False,

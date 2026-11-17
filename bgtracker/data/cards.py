@@ -75,6 +75,21 @@ TRIBE_NAMES = {
 }
 
 
+def is_quest(card_id: str | None) -> bool:
+    """Whether a card is a quest objective rather than an effect.
+
+    Backs up the log's own `QUEST` tag, and is the only signal for combat
+    rows stored while quests were still filed under `secrets`. The id shape
+    is checked too so `--no-names` and a stale cache still answer.
+    """
+    if not card_id:
+        return False
+    card = _by_id.get(card_id)
+    if card is not None and "QUEST" in (card.get("mechanics") or ()):
+        return True
+    return "_Quest_" in card_id
+
+
 def tribe_name(tribe: str) -> str:
     return TRIBE_NAMES.get(tribe, tribe.title())
 

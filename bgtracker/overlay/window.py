@@ -541,36 +541,53 @@ class OverlayWindow(Gtk.Window):
     def set_buffs(self, entries, shop=(), gold_next_turn=0, free_rerolls=0) -> None:
         """Board buffs, then the Elemental tavern buff, then turn economy.
 
+        Icons, not words: each buff is its art with the value under it, so it
+        reads at a glance mid-turn. The three groups mean different things and
+        stay apart, separated by a rule instead of a heading.
+
         `shop` arrives carrying every tribe the reader recognises; the panel
         only ever draws the Elemental row out of it, because a minion sitting
         in Bob's tavern is a different quantity from one already on your
-        board — flattened into one list the two read as a single stacking
-        number.
+        board — run together the two read as a single stacking number.
         """
         for row in self._buff_rows:
             self.buffs.remove(row)
         self._buff_rows.clear()
-        for label, atk, hp in entries:
-            self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
-        shop = tuple(b for b in shop if b[0] == "Elemental")
-        if shop:
-            self._buff_rows.append(self._buff_group("In Bob's Tavern"))
-            for label, atk, hp in shop:
-                self._buff_rows.append(self._buff_chip(label, f"+{atk}/+{hp}"))
-        if gold_next_turn or free_rerolls:
-            self._buff_rows.append(self._buff_group("This Turn"))
-            if gold_next_turn:
-                sign = "+" if gold_next_turn > 0 else ""
-                self._buff_rows.append(
-                    self._buff_chip("Gold Next Turn", f"{sign}{gold_next_turn}")
-                )
-            if free_rerolls:
-                self._buff_rows.append(
-                    self._buff_chip("Free Reroll", f"{free_rerolls} available")
-                )
+        groups = [
+            [(label, _stat_value(atk, hp)) for label, atk, hp in entries],
+            [(label, _stat_value(atk, hp)) for label, atk, hp in shop if label == "Elemental"],
+            [("Gold Next Turn", f"{gold_next_turn:+d}")] * bool(gold_next_turn)
+            + [("Free Reroll", str(free_rerolls))] * bool(free_rerolls),
+        ]
+        for tiles in filter(None, groups):
+            if self._buff_rows:
+                rule = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+                rule.add_css_class("buff-rule")
+                self._buff_rows.append(rule)
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=theme.px(6, self.scale))
+            for label, value in tiles:
+                row.append(self._buff_tile(label, value))
+            self._buff_rows.append(row)
         for row in self._buff_rows:
             self.buffs.append(row)
         self._set_content("buffs", bool(self._buff_rows))
+
+    def _buff_tile(self, label: str, value: str) -> Gtk.Widget:
+        tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=theme.px(2, self.scale))
+        tile.add_css_class("buff-tile")
+        tile.buff = label  # what the tile stands for, now that no text says so
+        kind, art_id = theme.BUFF_ICONS.get(label) or (
+            "tribe", cards.tribe_name(label.upper()).lower()
+        )
+        icon = RoundArt(theme.px(theme.BUFF_ICON_D, self.scale), css="buff-icon",
+                        zoom=1.0, focal=0.0, kind=kind)
+        icon.add_css_class(f"buff-{label.lower().replace(' ', '')}")
+        icon.load(art_id)
+        amount = Gtk.Label(label=value)
+        amount.add_css_class("buff-val")
+        tile.append(icon)
+        tile.append(amount)
+        return tile
 
     def set_tribes(self, tribes) -> None:
         """One round icon per confirmed tribe; hidden until there is one."""
@@ -584,27 +601,6 @@ class OverlayWindow(Gtk.Window):
             self._tribe_icons.append(icon)
             self.tribes.append(icon)
         self._set_content("tribes", bool(self._tribe_icons))
-
-    def _buff_group(self, title: str) -> Gtk.Widget:
-        label = Gtk.Label(label=title, xalign=0)
-        label.add_css_class("buff-group")
-        return label
-
-    def _buff_chip(self, label: str, value: str) -> Gtk.Widget:
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=theme.px(7, self.scale))
-        dot = Gtk.Box()
-        dot.add_css_class("buff-dot")
-        dot.add_css_class(f"buff-{label.lower().replace(' ', '')}")
-        dot.set_valign(Gtk.Align.CENTER)
-        name = Gtk.Label(label=label, xalign=0)
-        name.add_css_class("buff-label")
-        name.set_hexpand(True)
-        amount = Gtk.Label(label=value, xalign=1)
-        amount.add_css_class("buff-val")
-        row.append(dot)
-        row.append(name)
-        row.append(amount)
-        return row
 
     def set_board(self, title: str, subtitle: str = "", board=None) -> None:
         self.board.show_board(title, subtitle, board)
@@ -634,3 +630,8 @@ class OverlayWindow(Gtk.Window):
 
     def set_hot_place(self, place: int | None) -> None:
         self.rail.set_hot(place)
+
+
+def _stat_value(atk: int, hp: int) -> str:
+    # Undead only ever buffs Attack; "+4/+0" would make you read a zero.
+    return f"+{atk}" if not hp else f"+{atk}/+{hp}"

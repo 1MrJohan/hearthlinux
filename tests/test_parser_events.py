@@ -3,7 +3,7 @@ from hearthstone.enums import GameTag
 from bgtracker.parse import events as ev
 from bgtracker.parse.exporter import LiveGameProcessor
 
-from .synthetic import LogBuilder, minimal_bg_game, secret_bg_game
+from .synthetic import LogBuilder, minimal_bg_game, quest_bg_game, secret_bg_game
 
 
 # Emitted whenever their underlying state moves, so how many arrive is a
@@ -471,3 +471,24 @@ def test_two_games_in_one_batch():
     assert kinds.count("GameStart") == 2
     assert kinds.count("GameEnd") == 2
     assert kinds.count("CombatStart") == 2
+
+
+def test_a_quest_is_not_a_secret_and_a_reward_in_play_is_read():
+    """Both wait in Zone.SECRET, and only one of them is a combat effect.
+
+    Filing the quest under `secrets` made the mapper demand simulator support
+    for "Buy 8 minions" and refuse the forecast; not reading the reward at all
+    simulated every later fight of that game without it.
+    """
+    _, events = feed_all(quest_bg_game().lines)
+    combat = next(e for e in events if isinstance(e, ev.CombatStart))
+
+    mine, theirs = combat.snapshot.friendly, combat.snapshot.opponent
+    assert mine.secrets == ()
+    [quest] = mine.quests
+    assert (quest.card_id, quest.reward_dbf_id, quest.progress, quest.total) == (
+        "BG27_Quest_802", 104673, 21, 30)
+    # the declined offer in SETASIDE is not ours
+    assert mine.quest_rewards == ()
+    [reward] = theirs.quest_rewards
+    assert (reward.card_id, reward.entity_id, reward.num1) == ("BG24_Reward_111", 10, 4)

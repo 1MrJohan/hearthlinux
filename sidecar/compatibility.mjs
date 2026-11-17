@@ -41,6 +41,9 @@ function inputEntities(input) {
             ...(side.player?.trinkets ?? []),
             ...(side.player?.secrets ?? []),
             ...(side.player?.heroPowers ?? []),
+            // Firestone's own shape for these two is PascalCase (`CardId`).
+            ...(side.player?.questEntities ?? []),
+            ...(side.player?.questRewardEntities ?? []),
         );
         for (const minion of minions) result.push(...(minion.enchantments ?? []));
     }
@@ -52,7 +55,7 @@ export function checkBattleCompatibility(input, allCards, implementedCards) {
     const unsupported = new Set();
     const combatCards = new Set(input?.trackerCombatCardIds ?? []);
     for (const entity of inputEntities(input)) {
-        const cardId = entity?.cardId;
+        const cardId = entity?.cardId ?? entity?.CardId;
         if (!cardId) continue;
         const implemented = implementedCards.has(cardId);
         const card = allCards.getCard(cardId);

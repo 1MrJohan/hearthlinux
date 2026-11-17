@@ -22,6 +22,8 @@ def _check(
     combat_ids: list[str] | None = None,
     secrets: list[str] | None = None,
     powers: list[str] | None = None,
+    quests: list[str] | None = None,
+    rewards: list[str] | None = None,
 ) -> dict:
     script = """
 import { checkBattleCompatibility } from './sidecar/compatibility.mjs';
@@ -34,6 +36,8 @@ const input = {
     player: {
       secrets: payload.secrets.map((cardId, entityId) => ({ cardId, entityId })),
       heroPowers: payload.powers.map((cardId, entityId) => ({ cardId, entityId })),
+      questEntities: payload.quests.map((CardId) => ({ CardId })),
+      questRewardEntities: payload.rewards.map((CardId) => ({ CardId })),
     },
     board: minions,
   },
@@ -49,6 +53,8 @@ console.log(JSON.stringify(checkBattleCompatibility(input, allCards, implemented
         "combatIds": combat_ids or [],
         "secrets": secrets or [],
         "powers": powers or [],
+        "quests": quests or [],
+        "rewards": rewards or [],
     })
     done = subprocess.run(
         ["node", "--input-type=module", "-e", script, payload],
@@ -183,3 +189,12 @@ console.log(JSON.stringify({
         "packageNewer": False,
         "cacheExpired": False,
     }
+
+
+def test_quests_and_rewards_are_checked_despite_firestones_pascal_case():
+    """These two carry `CardId`, not `cardId`; a walk that reads only the
+    latter would wave every unimplemented quest and reward through."""
+    assert _check(
+        {}, [], [], combat_ids=["NEW_QUEST", "NEW_REWARD"],
+        quests=["NEW_QUEST"], rewards=["NEW_REWARD"],
+    ) == {"missingData": [], "unsupported": ["NEW_QUEST", "NEW_REWARD"]}

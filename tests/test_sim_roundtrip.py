@@ -73,6 +73,30 @@ def test_partial_results_only_ever_grow():
     assert all(n <= final.sims_run for n in seen), f"partial exceeded final: {seen}"
 
 
+def test_a_quest_reward_reaches_the_simulator_and_changes_the_fight():
+    """The wiring check: `questRewards` is spelled the way Firestone reads it.
+
+    Without the reward our 2/3 loses to the 1/7 taunt every time (see
+    test_winning_board_wins). Staff of Origination gives it +12/+12 at the
+    start of combat, which wins every time — so anything short of 100% means
+    the reward was sent in a shape the simulator ignored.
+    """
+    async def run():
+        sim = SimClient(sims=500, workers=1, shop_workers=0)
+        info = to_battle_info(snapshot_from_synthetic())
+        info["playerBoard"]["player"]["questRewards"] = ["BG24_Reward_312"]
+        info["playerBoard"]["player"]["questRewardEntities"] = [
+            {"CardId": "BG24_Reward_312", "ScriptDataNum1": 0}]
+        info["trackerCombatCardIds"] = ["BG24_Reward_312"]
+        try:
+            result = await sim.simulate(info)
+            assert result.won_percent == 100
+        finally:
+            await sim.close()
+
+    asyncio.run(run())
+
+
 def test_unknown_future_combat_card_returns_structured_error():
     """A future combat effect must fail closed until Firestone implements it."""
     async def run():

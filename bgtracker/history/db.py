@@ -15,13 +15,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bgtracker.config import DATA_DIR
+from bgtracker.data import cards
 from bgtracker.sim.client import SimResult
 from bgtracker.state.game import (
-    GHOST_HERO_PREFIX,
     BoardSnapshot,
     Enchantment,
+    GHOST_HERO_PREFIX,
     Minion,
     PlayerBoard,
+    Quest,
+    QuestReward,
     Secret,
     Trinket,
     is_ghost,
@@ -115,13 +118,25 @@ def board_from_json(raw: str | None) -> PlayerBoard | None:
     if raw is None:
         return None
     d = json.loads(raw)
+    # Until 2026-11-17 a quest was stored as a secret, because both wait in
+    # Zone.SECRET. Refile those: the id is all that was kept, so the quest
+    # comes back with `total=None` and the mapper knows its state is missing.
+    stored_secrets = [Secret(**s) for s in d.get("secrets", ())]
+    quests = [Quest(**q) for q in d.get("quests", ())]
+    quests += [
+        Quest(card_id=s.card_id, entity_id=s.entity_id)
+        for s in stored_secrets
+        if cards.is_quest(s.card_id)
+    ]
     return PlayerBoard(
         **{
             **d,
             "minions": _minions_from(d.get("minions", ())),
             "hand": _minions_from(d.get("hand", ())),
             "trinkets": tuple(Trinket(**t) for t in d.get("trinkets", ())),
-            "secrets": tuple(Secret(**s) for s in d.get("secrets", ())),
+            "secrets": tuple(s for s in stored_secrets if not cards.is_quest(s.card_id)),
+            "quests": tuple(quests),
+            "quest_rewards": tuple(QuestReward(**r) for r in d.get("quest_rewards", ())),
             "global_info": d.get("global_info", {}),
             # JSON has no tuple; a list would make the frozen board unhashable.
             "hero_power_nums": (

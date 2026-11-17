@@ -115,9 +115,22 @@ def test_every_pip_and_buff_colour_reaches_the_stylesheet():
         assert f".buff-{label.lower().replace(' ', '')}" in css
 
 
-def test_the_buff_group_heading_is_styled():
-    """Unstyled it still renders — as an unreadable body-text line."""
-    assert ".buff-group" in theme.stylesheet(1.0)
+def test_the_buff_icons_and_group_rule_are_styled():
+    """Unstyled, the icon has no ring and the groups run together."""
+    css = theme.stylesheet(1.0)
+    assert ".buff-icon {" in css
+    assert ".buff-rule {" in css
+
+
+def test_every_coloured_buff_has_an_icon():
+    """A buff with a colour but no icon would fall back to a tribe icon that
+    may not exist, and render as an empty ring."""
+    from bgtracker.data import cards
+
+    tribes = set(cards.TRIBE_NAMES.values())
+    for label in theme.BUFF_COLOURS:
+        assert label in theme.BUFF_ICONS or label in tribes or label in (
+            "All minions", "Multi-tribe")
 
 
 def test_overlay_has_no_perpetual_animation():

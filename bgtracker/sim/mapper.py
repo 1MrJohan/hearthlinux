@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from bgtracker.data import cards
-from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard, Secret
+from bgtracker.state.game import BoardSnapshot, Minion, PlayerBoard, Quest, Secret
 
 
 _COMBAT_TRIGGER_TEXT = re.compile(
@@ -30,6 +30,16 @@ _COMBAT_EFFECT_TEXT = re.compile(
 _RECRUIT_ONLY_DESTINATION = re.compile(
     r"\b(?:in (?:the|bob's) tavern|tavern is|to your hand|next turn|"
     r"spellcraft|activate)\b",
+    re.IGNORECASE,
+)
+# Quest objectives that can advance while the boards fight, and so can hand
+# out their reward mid-combat. Everything else ("Buy 8 minions", "Spend 30
+# Gold") only moves in the tavern and is inert here. "cast" is a guess erring
+# toward failing closed: no captured fight shows whether a combat-cast spell
+# counts, and "Add cards to your hand" is known to.
+_COMBAT_QUEST_TEXT = re.compile(
+    r"\b(?:summon|dies?|attack(?:ed)?|destroy|deathrattles?|stats|"
+    r"to your hand|cast)\b",
     re.IGNORECASE,
 )
 # The Old God's hidden hero secret: counts friendly Aberration deaths and
@@ -57,6 +67,16 @@ def _combat_relevant(card_id: str | None) -> bool:
         ):
             return True
     return False
+
+
+def _quest_advances_in_combat(quest: Quest) -> bool:
+    card = cards.get(quest.card_id) if quest.card_id else None
+    if card is None:
+        # Nothing to read the objective from. Treat it as the dangerous kind,
+        # so the simulator package has to prove it knows the quest.
+        return True
+    text = re.sub(r"<[^>]+>", "", card.get("text") or "")
+    return bool(_COMBAT_QUEST_TEXT.search(text))
 
 
 def _power(board: PlayerBoard, used: bool = False, **info: int) -> dict:
@@ -163,6 +183,18 @@ def _combat_card_ids(snapshot: BoardSnapshot) -> list[str]:
         # wording falls outside the text heuristic so the exact Firestone
         # package/data pair has to prove it can model the entity.
         result.update(secret.card_id for secret in board.secrets if secret.card_id)
+        # A quest is the opposite: inert unless its objective moves in combat.
+        # One that does can complete mid-fight and grant its reward there, so
+        # the package must implement that exact quest.
+        result.update(
+            quest.card_id
+            for quest in board.quests
+            if quest.card_id and _quest_advances_in_combat(quest)
+        )
+        # Rewards are judged like trinkets: most are economy, some act.
+        for reward in board.quest_rewards:
+            if _combat_relevant(reward.card_id):
+                result.add(reward.card_id)
     return sorted(result)
 
 
@@ -189,6 +221,20 @@ def simulation_blocker(snapshot: BoardSnapshot) -> str | None:
         for secret in board.secrets
     ):
         return "combat secret identity hidden"
+    quests = tuple(
+        quest
+        for board in (snapshot.friendly, snapshot.opponent)
+        for quest in board.quests
+        if _quest_advances_in_combat(quest)
+    )
+    if any(not quest.card_id for quest in quests):
+        return "quest identity hidden"
+    # Rows stored while quests were filed as secrets kept the id and nothing
+    # else. Without the counters the simulator cannot tell a quest one kill
+    # from completing from one that has barely started.
+    unrecorded = tuple(q.card_id for q in quests if q.total is None)
+    if unrecorded:
+        return f"quest state not recorded: {', '.join(unrecorded)}"
     # Without NUM_6 Firestone awakens C'Thun whatever the lobby's deity is,
     # and without NUM_3 at 1 health. Live snapshots always carry both; combat
     # rows stored before they were read do not.
@@ -257,9 +303,31 @@ def _board(board: PlayerBoard, friendly: bool) -> dict:
         "hpLeft": board.health + board.armor,
         "tavernTier": board.tier,
         "heroPowers": _hero_powers(board),
-        "questEntities": [],
+        # PascalCase is Firestone's own shape for these two, not a typo: its
+        # setup reads `quest.CardId` and `reward.CardId` verbatim. A quest
+        # with no recorded state is left out; `simulation_blocker` has already
+        # refused the ones where that would matter.
+        "questEntities": [
+            {
+                "CardId": q.card_id,
+                "RewardDbfId": q.reward_dbf_id,
+                "ProgressCurrent": q.progress,
+                "ProgressTotal": q.total,
+            }
+            for q in board.quests
+            if q.card_id and q.total is not None
+        ],
         "friendly": friendly,
     }
+    # Both lists, because the simulator reads both: `questRewards` drives the
+    # start-of-combat pass and every `includes()` check, the entities carry
+    # each reward's own counter.
+    if board.quest_rewards:
+        player["questRewards"] = [r.card_id for r in board.quest_rewards]
+        player["questRewardEntities"] = [
+            {"CardId": r.card_id, "ScriptDataNum1": r.num1}
+            for r in board.quest_rewards
+        ]
     if board.global_info:
         player["globalInfo"] = board.global_info
     # Start-of-combat cards act from hand (Flighty Scout summons itself,
