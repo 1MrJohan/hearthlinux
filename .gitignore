@@ -9,3 +9,6 @@ crop_*.png
 
 # 43MB raw capture kept locally for reference; no test reads it
 tests/fixtures/aberration-game.power.log
+
+# Local agent skills, not part of the project
+.agents/
