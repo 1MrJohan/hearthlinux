@@ -8,11 +8,12 @@ dependencies = [
     # Not a transitive detail: this package *is* the GameTag table, and an
     # unknown tag makes hslog raise, which drops the whole TAG_CHANGE line.
     # A patch that ships new tags therefore silently loses log lines until
-    # this floor moves — 9.21.0 is what covers the 2026-09-15 patch's
-    # WAR_MODE_ACTIVE, BACON_GLOBAL_OLD_GOD_DBID and the ABERRATION race, which
-    # 9.20.12 choked on. hslog itself requires it unpinned, so an existing
-    # venv never upgrades on its own.
-    "hearthstone>=9.21.0",
+    # this floor moves — 9.22.0 is what covers the 2026-11-10 patch's
+    # THO_DEFEATED_ALLY, ACTIVATABLE_MINION_ABILITY_USED_1..4,
+    # BACON_DUO_NOTPASSABLE and BACON_LINKED_CARD_IN_HAND_ID, which 9.21.1
+    # choked on (4795 dropped lines in a week of play). hslog itself requires
+    # it unpinned, so an existing venv never upgrades on its own.
+    "hearthstone>=9.22.0",
     "platformdirs>=4",
 ]
 
